@@ -35,11 +35,31 @@ const ArchivedToken = require('./models/ArchivedToken');
 const app = express();
 const server = http.createServer(app);
 
+const allowedOrigins = [
+  'https://hospital-automation-wine.vercel.app',
+  'https://www.hospital-automation-wine.vercel.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:5000',
+  'http://127.0.0.1:5000'
+];
+
 // CORS configuration
 app.use(cors({
-  origin: '*', // Allow all origins for dev/prototype
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    // Remove trailing slashes for comparison
+    const cleanOrigin = origin.replace(/\/+$/, '');
+    const isAllowed = allowedOrigins.some(o => o.replace(/\/+$/, '') === cleanOrigin);
+    if (!isAllowed) {
+      const msg = `The CORS policy for this site does not allow access from origin: ${origin}`;
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
 app.use(express.json());
@@ -47,8 +67,9 @@ app.use(express.json());
 // Socket.io initialization
 const io = socketIo(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
