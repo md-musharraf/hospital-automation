@@ -8,7 +8,7 @@ import {
   ChevronRight, Lock, Calendar, RefreshCw, Volume2
 } from 'lucide-react';
 
-const BACKEND_URL = import.meta.env.PROD ? 'https://hospital-automation-8u5m.onrender.com' : 'http://localhost:5000';
+const BACKEND_URL = import.meta.env.PROD ? 'https://hospital-automation-nc4h.onrender.com' : 'http://localhost:5000';
 
 // Global Socket Instance
 const socket = io(BACKEND_URL);
