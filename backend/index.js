@@ -85,6 +85,15 @@ app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/staff', staffRoutes);
 app.use('/api/v1/doctor', doctorRoutes);
 
+// Health check endpoint
+app.get('/api/v1/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
+
 // Socket.io Connection Logic
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);

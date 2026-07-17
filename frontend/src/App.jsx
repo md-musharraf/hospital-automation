@@ -462,6 +462,20 @@ function PatientPortal() {
           </div>
         </header>
 
+        {/* Mobile Token Banner */}
+        {myToken && (
+          <div className="lg:hidden px-6 py-3.5 bg-gradient-to-r from-[var(--secondary-color)] to-[var(--primary-container)] text-white flex justify-between items-center shadow-md relative z-10 border-b border-white/10">
+            <div>
+              <p className="text-[9px] text-white/80 uppercase tracking-widest font-extrabold mb-0.5">Active Ticket</p>
+              <h4 className="text-sm font-black text-white">Token {myToken.tokenNumber} • Cabin A</h4>
+            </div>
+            <div className="flex items-center space-x-2 bg-white/10 px-3 py-1.5 rounded-lg border border-white/10 backdrop-blur-md">
+              <span className="material-symbols-outlined text-white text-[15px]">hourglass_empty</span>
+              <span className="text-xs font-black text-white">{myToken.estimatedWaitTime} mins wait</span>
+            </div>
+          </div>
+        )}
+
         {/* Chat Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 chat-container bg-gradient-to-br from-[var(--bg-color)] via-[var(--bg-color)] to-[var(--border-color)]/5">
           {/* Time Separator */}
@@ -630,7 +644,7 @@ function PatientPortal() {
       </section>
 
       {/* Right Token Card Details Sidebar */}
-      <aside className="w-80 bg-[var(--bg-color)] p-6 border-l border-[var(--border-color)]/30 flex flex-col space-y-5 shadow-inner">
+      <aside className="hidden lg:flex flex-col w-80 bg-[var(--bg-color)] p-6 border-l border-[var(--border-color)]/30 space-y-5 shadow-inner">
         <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Active Patient Token</h3>
         
         {myToken ? (
@@ -1118,7 +1132,7 @@ function StaffDashboard({ staffToken, staffUser, onLogout }) {
     <div className="flex-1 flex overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] font-sans transition-colors duration-200">
       
       {/* 1. Left Sidebar Navigation Panel */}
-      <div className="w-64 bg-[var(--card-bg)] text-[var(--text-color)] flex flex-col justify-between shrink-0 shadow-lg border-r border-[var(--border-color)]/30">
+      <div className="hidden md:flex w-64 bg-[var(--card-bg)] text-[var(--text-color)] flex-col justify-between shrink-0 shadow-lg border-r border-[var(--border-color)]/30">
         <div className="flex flex-col">
           {/* CareSync Sidebar Logo header */}
           <div className="p-6 border-b border-[var(--border-color)]/30 flex items-center space-x-3">
@@ -1209,6 +1223,37 @@ function StaffDashboard({ staffToken, staffUser, onLogout }) {
               <span className="material-symbols-outlined text-[24px]">account_circle</span>
             </button>
           </div>
+        </div>
+
+        {/* Mobile Navigation tab bar */}
+        <div className="md:hidden flex items-center space-x-2 overflow-x-auto px-6 py-3 bg-[var(--card-bg)] border-b border-[var(--border-color)]/30 sticky top-[62px] z-20 no-scrollbar">
+          {[
+            { id: 'dashboard', label: 'Overview', tab: 'dashboard' },
+            { id: 'patients', label: 'Patients Directory', tab: 'patients' },
+            { id: 'queues', label: 'Live Queue Monitor', tab: 'monitor' },
+            { id: 'followups', label: 'SMS Reminders', tab: 'reminders' }
+          ].map(item => (
+            <button
+              key={item.id}
+              onClick={() => {
+                setActiveSidebarTab(item.tab);
+                if (item.tab === 'reminders') loadReminders();
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
+                activeSidebarTab === item.tab 
+                  ? 'bg-[var(--secondary-color)] text-white shadow-sm' 
+                  : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:text-[var(--text-color)]'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+          <button
+            onClick={onLogout}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold text-rose-500 bg-rose-500/10 border border-rose-500/20 whitespace-nowrap shrink-0 transition-all ml-auto"
+          >
+            Logout
+          </button>
         </div>
 
         <div className="p-8 flex-1 flex flex-col">
