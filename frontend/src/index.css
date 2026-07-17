@@ -1,0 +1,146 @@
+/* Google Material Symbols & Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0..1,0&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+:root {
+  /* Stitch Light Mode ("Clinical Precision") */
+  --bg-color: #faf8ff;
+  --text-color: #131b2e;
+  --text-secondary: #42474f;
+  --border-color: #c2c7d1;
+  --card-bg: #ffffff;
+  --card-shadow: 0 4px 20px 0 rgba(15, 76, 129, 0.05);
+  
+  --primary-color: #00355f;
+  --primary-container: #0f4c81;
+  --primary-text: #ffffff;
+  
+  --secondary-color: #0051d5;
+  --secondary-container: #316bf3;
+  --secondary-text: #ffffff;
+  
+  --tertiary-color: #003b34;
+  --tertiary-container: #00544b;
+  --tertiary-text: #ffffff;
+  
+  --error-color: #ba1a1a;
+  --error-bg: #ffdad6;
+  --error-text: #93000a;
+  
+  --success-color: #0f766e;
+  --success-bg: #ccfbf1;
+  
+  --input-bg: #f8fafc;
+  --input-focus-border: #0051d5;
+}
+
+.dark {
+  /* Next.js Dark Mode ("Zinc Dark") */
+  --bg-color: #09090b;
+  --text-color: #fafafa;
+  --text-secondary: #a1a1aa;
+  --border-color: #27272a;
+  --card-bg: #18181b;
+  --card-shadow: 0 4px 30px 0 rgba(0, 0, 0, 0.4);
+  
+  --primary-color: #ffffff;
+  --primary-container: #27272a;
+  --primary-text: #09090b;
+  
+  --secondary-color: #3f3f46;
+  --secondary-container: #52525b;
+  --secondary-text: #fafafa;
+  
+  --tertiary-color: #14b8a6;
+  --tertiary-container: #115e59;
+  --tertiary-text: #ffffff;
+  
+  --error-color: #ef4444;
+  --error-bg: #450a0a;
+  --error-text: #fecaca;
+  
+  --success-color: #10b981;
+  --success-bg: #064e3b;
+  
+  --input-bg: #09090b;
+  --input-focus-border: #ffffff;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: 'Inter', sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Material Symbols alignment helper */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Custom scrollbars for chat */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Slide up animation for new messages */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-enter {
+  animation: slideUp 0.25s ease-out forwards;
+}
+
+/* Flashing Emergency Animation */
+@keyframes flashing-emergency {
+  0%, 100% {
+    border-color: rgba(239, 68, 68, 0.3);
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.1);
+  }
+  50% {
+    border-color: rgba(239, 68, 68, 0.8);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
+  }
+}
+
+.animate-flashing-emergency {
+  animation: flashing-emergency 2s infinite ease-in-out;
+}

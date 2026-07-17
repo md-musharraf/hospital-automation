@@ -1,0 +1,20 @@
+# Node modules
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Production builds
+frontend/dist/
+
+# Local env file containing secrets
+backend/.env
+
+# System / IDE files
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
