@@ -282,6 +282,22 @@ function PatientPortal() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    // Send a silent init message to get the initial language options
+    fetch(`${BACKEND_URL}/api/v1/chat/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, message: 'hi' })
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.options) {
+        setOptions(data.options);
+      }
+    })
+    .catch(err => console.error('Error auto-initializing chat options:', err));
+  }, [sessionId]);
+
   const loadWaitTimes = async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/chat/queues/public-status`);
@@ -543,7 +559,7 @@ function PatientPortal() {
             const isBot = msg.sender === 'bot';
             
             // Wait! Does this message contain booking details to render doctor cards or token cards?
-            const isSelectDoctorPrompt = msg.text.includes("Select an available doctor to book your token:");
+            const isSelectDoctorPrompt = msg.text.includes("Select an available doctor to book your token:") || msg.text.includes("टोकन बुक करने के लिए उपलब्ध डॉक्टर का चयन करें:");
             
             return (
               <div key={i} className={`flex flex-col ${isBot ? 'items-start' : 'items-end'} message-enter`}>
