@@ -296,13 +296,14 @@ const seedMockData = async () => {
   }
 };
 
+server.listen(PORT, () => {
+  console.log(`Backend server listening on port ${PORT}`);
+});
+
 mongoose.connect(MONGODB_URI)
   .then(async () => {
     console.log('Successfully connected to MongoDB.');
     await seedMockData();
-    server.listen(PORT, () => {
-      console.log(`Backend server listening on port ${PORT}`);
-    });
   })
   .catch((err) => {
     console.error('Database connection error:', err);
