@@ -109,23 +109,26 @@ function AppContent() {
 
           <button 
             onClick={() => navigate('/')} 
-            className={`px-3 py-1.5 rounded-md font-semibold transition-all ${location.pathname === '/' ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname === '/' ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
-            Patient Portal
+            <MessageSquare className="h-4 w-4 shrink-0" />
+            <span className="hidden sm:inline-block">Patient Portal</span>
           </button>
           
           <button 
             onClick={() => navigate(staffToken ? '/staff/dashboard' : '/staff/login')} 
-            className={`px-3 py-1.5 rounded-md font-semibold transition-all ${location.pathname.startsWith('/staff') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/staff') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
-            Staff Dashboard
+            <Shield className="h-4 w-4 shrink-0" />
+            <span className="hidden sm:inline-block">Staff Dashboard</span>
           </button>
           
           <button 
             onClick={() => navigate(doctorToken ? '/doctor/dashboard' : '/doctor/login')} 
-            className={`px-3 py-1.5 rounded-md font-semibold transition-all ${location.pathname.startsWith('/doctor') ? 'bg-amber-600 text-white shadow-lg shadow-amber-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/doctor') ? 'bg-amber-600 text-white shadow-lg shadow-amber-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
-            Doctor Console
+            <Stethoscope className="h-4 w-4 shrink-0" />
+            <span className="hidden sm:inline-block">Doctor Console</span>
           </button>
         </div>
       </div>
