@@ -8,44 +8,85 @@ const Queue = require('../models/Queue');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 
-// Public endpoint for live department wait times
-router.get('/queues/public-status', async (req, res) => {
-  try {
-    const queues = await Queue.find().populate('doctor').populate('activeQueue');
-    const deptWaitTimes = {
-      'Emergency': 0,
-      'General Practice': 0,
-      'Pediatrics': 0
-    };
-    
-    queues.forEach(q => {
-      if (!q.doctor) return;
-      const dept = q.doctor.department || 'General Practice';
-      
-      const avgCheckup = q.doctor.averageCheckupTime || 10;
-      const queueLength = q.activeQueue ? q.activeQueue.length : 0;
-      const buffer = q.bufferDelay || 0;
-      const estWait = (queueLength * avgCheckup) + buffer;
-      
-      // If department doesn't exist, initialize it
-      if (deptWaitTimes[dept] === undefined) {
-        deptWaitTimes[dept] = estWait;
-      } else {
-        // Take the max wait time among doctors in that department
-        deptWaitTimes[dept] = Math.max(deptWaitTimes[dept], estWait);
-      }
-    });
-    
-    // Emergency is always dynamic, let's keep a mock minimum of 10 or calculate if there are emergency tokens
-    let emergencyCount = await Token.countDocuments({ status: 'Waiting', tokenType: 'Emergency' });
-    deptWaitTimes['Emergency'] = Math.max(10, emergencyCount * 15);
-
-    res.json(deptWaitTimes);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Error fetching queue status' });
+// Bilingual Translation Dictionary
+const dictionary = {
+  en: {
+    welcome: 'Welcome to CareSync AI Assistant! 🏥',
+    selectOption: 'Please select an option below to proceed:',
+    options: [
+      'Book New Appointment / Generate Token',
+      'Re-visit (Existing Patient)',
+      'Emergency SOS Token',
+      'Check Live Queue Status'
+    ],
+    enterPhone: "To begin, please enter the Patient's Phone Number (e.g. +91 9876543210):",
+    invalidPhone: 'Please enter a valid Phone Number (minimum 7 characters):',
+    welcomeBackPhone: "Welcome back! Please enter your registered Phone Number to locate your file:",
+    emergencyPhone: "🚨 EMERGENCY SOS TRIGGERED. Please enter the Patient's Phone Number immediately:",
+    welcomeBackText: (name, age, gender) => `Welcome back, ${name}! I located your details (Age: ${age}, Gender: ${gender}).`,
+    describeSymptoms: 'Please describe your current symptoms (e.g. high fever, throat pain):',
+    phoneNotFound: "I couldn't find a registration for this number. Let's register you as a new patient.",
+    enterFullName: "Please enter the Patient's Full Name:",
+    enterFullNameGeneric: "Thank you. Now, please enter the Patient's Full Name:",
+    enterAge: (name) => `Got it. What is the age of ${name}?`,
+    invalidAge: 'Please enter a valid age (a number between 1 and 130):',
+    selectGender: "Select the patient's gender:",
+    genderOptions: ['Male', 'Female', 'Other'],
+    invalidGender: 'Please choose one of the options below:',
+    describeSymptomsLong: 'Please describe the symptoms (e.g., high fever, chest tightness, coughing):',
+    noDoctors: 'No doctors are currently available. Type "Hi" to try again later.',
+    selectDoctorPrompt: 'Select an available doctor to book your token:',
+    invalidDoctor: 'Invalid doctor selection. Please choose from the list:',
+    bookingCompleteHeader: 'Booking Complete! 🎉',
+    bookingCompleteBody: (tokenNumber, doctor, room, wait) => `• Token Number: ${tokenNumber}\n• Doctor: ${doctor}\n• Cabin: ${room}\n• Estimated Wait: ${wait} mins.`,
+    defaultCatchAll: 'Your previous booking is complete. Type "Hi" to start a new inquiry!',
+    enterTokenToCheck: 'Please enter your Token Number (e.g., T-101 or T-102):',
+    tokenNotFound: 'Token not found. Please verify the token number and try again, or type "Hi" to restart.',
+    statusInCabin: 'You are currently inside the cabin! Please proceed.',
+    statusWaiting: (position, wait) => `There are ${position - 1} patient(s) ahead of you. Estimated wait: ${wait} mins.`,
+    statusCompleted: (status) => `Status: ${status}. Checkup complete or token cancelled.`,
+    tokenDetailsHeader: (tokenNumber) => `Token Details for ${tokenNumber}:`,
+    tokenDetailsBody: (patient, doctor, dept, statusText) => `• Patient: ${patient}\n• Doctor: ${doctor} (${dept})\n• Live Status: ${statusText}`
+  },
+  hi: {
+    welcome: 'केयरसिंक एआई असिस्टेंट में आपका स्वागत है! 🏥',
+    selectOption: 'कृपया आगे बढ़ने के लिए नीचे दिए गए विकल्पों में से एक चुनें:',
+    options: [
+      'नया अपॉइंटमेंट बुक करें / टोकन जेनरेट करें',
+      'दोबारा विजिट (मौजूदा मरीज)',
+      'इमरजेंसी एसओएस टोकन',
+      'लाइव क्यू स्टेटस जांचें'
+    ],
+    enterPhone: "शुरू करने के लिए, कृपया मरीज का मोबाइल नंबर दर्ज करें (उदा. +91 9876543210):",
+    invalidPhone: 'कृपया एक सही मोबाइल नंबर दर्ज करें (कम से कम 7 अंक):',
+    welcomeBackPhone: "वापसी पर आपका स्वागत है! अपनी फ़ाइल ढूँढने के लिए अपना पंजीकृत मोबाइल नंबर दर्ज करें:",
+    emergencyPhone: "🚨 इमरजेंसी एसओएस। कृपया तुरंत मरीज का मोबाइल नंबर दर्ज करें:",
+    welcomeBackText: (name, age, gender) => `वापसी पर आपका स्वागत है, ${name}! मुझे आपकी जानकारी मिल गई है (उम्र: ${age}, लिंग: ${gender === 'Male' ? 'पुरुष' : gender === 'Female' ? 'महिला' : 'अन्य'}).`,
+    describeSymptoms: 'कृपया अपने वर्तमान लक्षणों का वर्णन करें (जैसे: तेज़ बुखार, गले में दर्द):',
+    phoneNotFound: "मुझे इस नंबर का कोई रजिस्ट्रेशन नहीं मिला। आइए आपको एक नए मरीज के रूप में पंजीकृत करें।",
+    enterFullName: "कृपया मरीज का पूरा नाम दर्ज करें:",
+    enterFullNameGeneric: "धन्यवाद। अब, कृपया मरीज का पूरा नाम दर्ज करें:",
+    enterAge: (name) => `ठीक है। ${name} की उम्र क्या है?`,
+    invalidAge: 'कृपया एक सही उम्र दर्ज करें (1 से 130 के बीच की संख्या):',
+    selectGender: 'मरीज का लिंग चुनें:',
+    genderOptions: ['पुरुष', 'महिला', 'अन्य'],
+    invalidGender: 'कृपया नीचे दिए गए विकल्पों में से एक चुनें:',
+    describeSymptomsLong: 'कृपया अपने लक्षणों का संक्षेप में वर्णन करें (जैसे: तेज़ बुखार, सांस लेने में तकलीफ, खांसी):',
+    noDoctors: 'वर्तमान में कोई डॉक्टर उपलब्ध नहीं हैं। बाद में पुनः प्रयास करने के लिए "Hi" टाइप करें।',
+    selectDoctorPrompt: 'टोकन बुक करने के लिए उपलब्ध डॉक्टर का चयन करें:',
+    invalidDoctor: 'गलत डॉक्टर का चयन। कृपया सूची में से चुनें:',
+    bookingCompleteHeader: 'बुकिंग पूरी हो गई! 🎉',
+    bookingCompleteBody: (tokenNumber, doctor, room, wait) => `• टोकन नंबर: ${tokenNumber}\n• डॉक्टर: ${doctor}\n• केबिन: ${room}\n• अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
+    defaultCatchAll: 'आपकी पिछली बुकिंग पूरी हो चुकी है। नया टोकन बनाने के लिए "Hi" टाइप करें!',
+    enterTokenToCheck: 'कृपया अपना टोकन नंबर दर्ज करें (उदा. T-101 या T-102):',
+    tokenNotFound: 'टोकन नहीं मिला। कृपया टोकन नंबर की जांच करें और पुनः प्रयास करें, या पुनरारंभ करने के लिए "Hi" टाइप करें।',
+    statusInCabin: 'आप वर्तमान में केबिन के अंदर हैं! कृपया आगे बढ़ें।',
+    statusWaiting: (position, wait) => `आपसे आगे ${position - 1} मरीज हैं। अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
+    statusCompleted: (status) => `स्थिति: ${status === 'Completed' ? 'पूर्ण' : status}. चेकअप पूरा हो चुका है या टोकन रद्द कर दिया गया है.`,
+    tokenDetailsHeader: (tokenNumber) => `टोकन विवरण ${tokenNumber} के लिए:`,
+    tokenDetailsBody: (patient, doctor, dept, statusText) => `• मरीज: ${patient}\n• डॉक्टर: ${doctor} (${dept})\n• लाइव स्थिति: ${statusText}`
   }
-});
+};
 
 // Chatbot interaction endpoint
 router.post('/message', async (req, res) => {
@@ -58,71 +99,90 @@ router.post('/message', async (req, res) => {
     // Find or create session
     let session = await ChatSession.findOne({ sessionId });
     if (!session) {
-      session = new ChatSession({ sessionId, currentState: 'WELCOME' });
+      session = new ChatSession({ sessionId, currentState: 'LANGUAGE' });
     }
 
     const cleanMsg = message ? message.trim() : '';
 
-    // If user says "Hi", "Hello", or "reset", reset the session
-    const resetTriggers = ['hi', 'hello', 'hey', 'start', 'reset', 'restart'];
+    // Reset session triggers
+    const resetTriggers = ['hi', 'hello', 'hey', 'start', 'reset', 'restart', 'नमस्ते'];
     if (resetTriggers.includes(cleanMsg.toLowerCase())) {
-      session.currentState = 'WELCOME';
+      session.currentState = 'LANGUAGE';
       session.tempData = {};
       await session.save();
 
       return res.json({
         messages: [
-          { sender: 'bot', text: 'Welcome to the Smart Hospital AI Assistant! 🏥' },
-          { sender: 'bot', text: 'Please select an option below to proceed:' }
+          { sender: 'bot', text: 'Welcome to CareSync AI Assistant! 🏥\nPlease select your preferred language:\n\nकेयरसिंक एआई असिस्टेंट में आपका स्वागत है! कृपया अपनी पसंदीदा भाषा चुनें:' }
         ],
-        options: [
-          'Book New Appointment / Generate Token',
-          'Re-visit (Existing Patient)',
-          'Emergency SOS Token',
-          'Check Live Queue Status'
-        ]
+        options: ['English', 'हिन्दी']
       });
     }
 
+    // Handshake for language choice at the start
+    if (session.currentState === 'LANGUAGE') {
+      const selectedLanguage = cleanMsg === 'हिन्दी' ? 'hi' : 'en';
+      session.tempData = { language: selectedLanguage };
+      session.currentState = 'WELCOME';
+      await session.save();
+
+      const langText = dictionary[selectedLanguage];
+      return res.json({
+        messages: [
+          { sender: 'bot', text: langText.welcome },
+          { sender: 'bot', text: langText.selectOption }
+        ],
+        options: langText.options
+      });
+    }
+
+    // Fetch current language
+    const lang = session.tempData.language || 'en';
+    const text = dictionary[lang];
     const state = session.currentState;
 
     // WELCOME state processing
     if (state === 'WELCOME') {
-      if (cleanMsg === 'Book New Appointment / Generate Token') {
+      const isRegular = cleanMsg === 'Book New Appointment / Generate Token' || cleanMsg === 'नया अपॉइंटमेंट बुक करें / टोकन जेनरेट करें';
+      const isRevisit = cleanMsg === 'Re-visit (Existing Patient)' || cleanMsg === 'दोबारा विजिट (मौजूदा मरीज)';
+      const isEmergency = cleanMsg === 'Emergency SOS Token' || cleanMsg === 'इमरजेंसी एसओएस टोकन';
+      const isCheckStatus = cleanMsg === 'Check Live Queue Status' || cleanMsg === 'लाइव क्यू स्टेटस जांचें';
+
+      if (isRegular) {
         session.currentState = 'AWAITING_PHONE';
-        session.tempData = { tokenType: 'Regular' };
+        session.tempData = { ...session.tempData, tokenType: 'Regular' };
         await session.save();
         return res.json({
-          messages: [{ sender: 'bot', text: "To begin, please enter the Patient's Phone Number (e.g. +1 555-0100):" }],
+          messages: [{ sender: 'bot', text: text.enterPhone }],
           options: []
         });
       } 
       
-      else if (cleanMsg === 'Re-visit (Existing Patient)') {
+      else if (isRevisit) {
         session.currentState = 'AWAITING_PHONE';
-        session.tempData = { tokenType: 'Re-visit' };
+        session.tempData = { ...session.tempData, tokenType: 'Re-visit' };
         await session.save();
         return res.json({
-          messages: [{ sender: 'bot', text: "Welcome back! Please enter your registered Phone Number to locate your file:" }],
+          messages: [{ sender: 'bot', text: text.welcomeBackPhone }],
           options: []
         });
       } 
       
-      else if (cleanMsg === 'Emergency SOS Token') {
+      else if (isEmergency) {
         session.currentState = 'AWAITING_PHONE';
-        session.tempData = { tokenType: 'Emergency' };
+        session.tempData = { ...session.tempData, tokenType: 'Emergency' };
         await session.save();
         return res.json({
-          messages: [{ sender: 'bot', text: "🚨 EMERGENCY SOS TRIGGERED. Please enter the Patient's Phone Number immediately:" }],
+          messages: [{ sender: 'bot', text: text.emergencyPhone }],
           options: []
         });
       } 
       
-      else if (cleanMsg === 'Check Live Queue Status') {
-        session.tempData = { checkingStatus: true };
+      else if (isCheckStatus) {
+        session.tempData = { ...session.tempData, checkingStatus: true };
         await session.save();
         return res.json({
-          messages: [{ sender: 'bot', text: 'Please enter your Token Number (e.g., T-101 or T-102):' }],
+          messages: [{ sender: 'bot', text: text.enterTokenToCheck }],
           options: []
         });
       } 
@@ -134,7 +194,7 @@ router.post('/message', async (req, res) => {
 
         if (!token) {
           return res.json({
-            messages: [{ sender: 'bot', text: 'Token not found. Please verify the token number and try again, or type "Hi" to restart.' }],
+            messages: [{ sender: 'bot', text: text.tokenNotFound }],
             options: []
           });
         }
@@ -143,7 +203,7 @@ router.post('/message', async (req, res) => {
         let position = -1;
         if (queue) {
           if (queue.currentToken && queue.currentToken.toString() === token._id.toString()) {
-            position = 0; // Currently inside cabin
+            position = 0; // In cabin
           } else {
             position = queue.activeQueue.findIndex(id => id.toString() === token._id.toString()) + 1;
           }
@@ -151,37 +211,31 @@ router.post('/message', async (req, res) => {
 
         let statusText = '';
         if (position === 0) {
-          statusText = 'You are currently inside the cabin! Please proceed.';
+          statusText = text.statusInCabin;
         } else if (position > 0) {
-          statusText = `There are ${position - 1} patient(s) ahead of you. Estimated wait: ${token.estimatedWaitTime} mins.`;
+          statusText = text.statusWaiting(position, token.estimatedWaitTime);
         } else {
-          statusText = `Status: ${token.status}. Checkup complete or token cancelled.`;
+          statusText = text.statusCompleted(token.status);
         }
 
-        // Reset state
-        session.tempData = {};
+        // Reset checkup status state
+        session.tempData = { language: lang };
+        session.currentState = 'WELCOME';
         await session.save();
 
         return res.json({
           messages: [
-            { sender: 'bot', text: `Token Details for ${token.tokenNumber}:` },
-            { sender: 'bot', text: `• Patient: ${token.patient.name}\n• Doctor: ${token.doctor.name} (${token.doctor.department})\n• Live Status: ${statusText}` }
+            { sender: 'bot', text: text.tokenDetailsHeader(token.tokenNumber) },
+            { sender: 'bot', text: text.tokenDetailsBody(token.patient.name, token.doctor.name, token.doctor.department, statusText) }
           ],
-          options: ['Check Live Queue Status', 'Book New Appointment / Generate Token']
+          options: text.options
         });
       } 
       
       else {
         return res.json({
-          messages: [
-            { sender: 'bot', text: "I didn't quite catch that. Type 'Hi' to start over, or select an option below:" }
-          ],
-          options: [
-            'Book New Appointment / Generate Token',
-            'Re-visit (Existing Patient)',
-            'Emergency SOS Token',
-            'Check Live Queue Status'
-          ]
+          messages: [{ sender: 'bot', text: text.catchAll }],
+          options: text.options
         });
       }
     }
@@ -190,7 +244,7 @@ router.post('/message', async (req, res) => {
     if (state === 'AWAITING_PHONE') {
       if (!cleanMsg || cleanMsg.length < 7) {
         return res.json({
-          messages: [{ sender: 'bot', text: 'Please enter a valid Phone Number (minimum 7 characters):' }]
+          messages: [{ sender: 'bot', text: text.invalidPhone }]
         });
       }
 
@@ -209,8 +263,8 @@ router.post('/message', async (req, res) => {
 
           return res.json({
             messages: [
-              { sender: 'bot', text: `Welcome back, ${patient.name}! I located your details (Age: ${patient.age}, Gender: ${patient.gender}).` },
-              { sender: 'bot', text: 'Please describe your current symptoms (e.g. high fever, throat pain):' }
+              { sender: 'bot', text: text.welcomeBackText(patient.name, patient.age, patient.gender) },
+              { sender: 'bot', text: text.describeSymptoms }
             ],
             options: []
           });
@@ -220,8 +274,8 @@ router.post('/message', async (req, res) => {
           await session.save();
           return res.json({
             messages: [
-              { sender: 'bot', text: "I couldn't find a registration for this number. Let's register you as a new patient." },
-              { sender: 'bot', text: "Please enter the Patient's Full Name:" }
+              { sender: 'bot', text: text.phoneNotFound },
+              { sender: 'bot', text: text.enterFullName }
             ],
             options: []
           });
@@ -232,7 +286,7 @@ router.post('/message', async (req, res) => {
       session.currentState = 'AWAITING_NAME';
       await session.save();
       return res.json({
-        messages: [{ sender: 'bot', text: "Thank you. Now, please enter the Patient's Full Name:" }],
+        messages: [{ sender: 'bot', text: text.enterFullNameGeneric }],
         options: []
       });
     }
@@ -241,14 +295,14 @@ router.post('/message', async (req, res) => {
     if (state === 'AWAITING_NAME') {
       if (!cleanMsg) {
         return res.json({
-          messages: [{ sender: 'bot', text: 'Please enter a valid name:' }]
+          messages: [{ sender: 'bot', text: text.invalidName }]
         });
       }
       session.tempData.name = cleanMsg;
       session.currentState = 'AWAITING_AGE';
       await session.save();
       return res.json({
-        messages: [{ sender: 'bot', text: `Got it. What is the age of ${cleanMsg}?` }],
+        messages: [{ sender: 'bot', text: text.enterAge(cleanMsg) }],
         options: []
       });
     }
@@ -258,31 +312,35 @@ router.post('/message', async (req, res) => {
       const age = parseInt(cleanMsg);
       if (isNaN(age) || age <= 0 || age > 130) {
         return res.json({
-          messages: [{ sender: 'bot', text: 'Please enter a valid age (a number between 1 and 130):' }]
+          messages: [{ sender: 'bot', text: text.invalidAge }]
         });
       }
       session.tempData.age = age;
       session.currentState = 'AWAITING_GENDER';
       await session.save();
       return res.json({
-        messages: [{ sender: 'bot', text: 'Select the patient\'s gender:' }],
-        options: ['Male', 'Female', 'Other']
+        messages: [{ sender: 'bot', text: text.selectGender }],
+        options: text.genderOptions
       });
     }
 
     // AWAITING_GENDER state
     if (state === 'AWAITING_GENDER') {
-      if (!['Male', 'Female', 'Other'].includes(cleanMsg)) {
+      const isMale = cleanMsg === 'Male' || cleanMsg === 'पुरुष';
+      const isFemale = cleanMsg === 'Female' || cleanMsg === 'महिला';
+      const isOther = cleanMsg === 'Other' || cleanMsg === 'अन्य';
+
+      if (!isMale && !isFemale && !isOther) {
         return res.json({
-          messages: [{ sender: 'bot', text: 'Please choose one of the options below:' }],
-          options: ['Male', 'Female', 'Other']
+          messages: [{ sender: 'bot', text: text.invalidGender }],
+          options: text.genderOptions
         });
       }
-      session.tempData.gender = cleanMsg;
+      session.tempData.gender = isMale ? 'Male' : isFemale ? 'Female' : 'Other';
       session.currentState = 'AWAITING_SYMPTOMS';
       await session.save();
       return res.json({
-        messages: [{ sender: 'bot', text: 'Please describe the symptoms (e.g., high fever, chest tightness, coughing):' }],
+        messages: [{ sender: 'bot', text: text.describeSymptomsLong }],
         options: []
       });
     }
@@ -297,14 +355,14 @@ router.post('/message', async (req, res) => {
         const doctors = await Doctor.find({ availabilityStatus: { $ne: 'Unavailable' } });
         if (doctors.length === 0) {
           return res.json({
-            messages: [{ sender: 'bot', text: 'No doctors are currently available. Type "Hi" to try again later.' }],
+            messages: [{ sender: 'bot', text: text.noDoctors }],
             options: []
           });
         }
 
         const docNames = doctors.map(d => `${d.name} (${d.department})`);
         return res.json({
-          messages: [{ sender: 'bot', text: 'Select an available doctor to book your token:' }],
+          messages: [{ sender: 'bot', text: text.selectDoctorPrompt }],
           options: docNames
         });
       } 
@@ -317,13 +375,12 @@ router.post('/message', async (req, res) => {
         if (!selectedDoc) {
           const docNames = doctors.map(d => `${d.name} (${d.department})`);
           return res.json({
-            messages: [{ sender: 'bot', text: 'Invalid doctor selection. Please choose from the list:' }],
+            messages: [{ sender: 'bot', text: text.invalidDoctor }],
             options: docNames
           });
         }
 
         // Complete the booking!
-        // Retrieve collected patient phone number
         const phone = session.tempData.phone || `+1 555-${session.sessionId.slice(-4)}`;
         let patient = await Patient.findOne({ phone });
         if (!patient) {
@@ -335,7 +392,6 @@ router.post('/message', async (req, res) => {
           });
         } else {
           patient.visitCount += 1;
-          // Sync details if updated
           patient.name = session.tempData.name || patient.name;
           patient.age = session.tempData.age || patient.age;
           patient.gender = session.tempData.gender || patient.gender;
@@ -365,10 +421,8 @@ router.post('/message', async (req, res) => {
 
         // Push to queue
         if (token.tokenType === 'Emergency') {
-          // Push emergency to top (index 0) of the activeQueue
           queue.activeQueue.unshift(token._id);
         } else {
-          // Push regular/re-visit to end
           queue.activeQueue.push(token._id);
         }
         await queue.save();
@@ -383,8 +437,9 @@ router.post('/message', async (req, res) => {
         // Fetch refreshed token details with Wait Time
         const refreshedToken = await Token.findById(token._id);
 
-        // Auto alert message: WhatsApp booking confirmation
-        const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is successfully booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Your estimated wait time is ${refreshedToken.estimatedWaitTime} mins. Track your status online at: https://hospital-automation-wine.vercel.app/`;
+        // Auto alert message: WhatsApp booking confirmation (with live tracker link)
+        const trackerLink = `https://hospital-automation-wine.vercel.app/track/${refreshedToken._id}`;
+        const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked successfully for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Estimated wait time: ${refreshedToken.estimatedWaitTime} mins. Track live: ${trackerLink}`;
         await sendWhatsAppNotification(patient.phone, bookingMessage);
 
         // Broadcast updates via Socket.io if available
@@ -395,10 +450,10 @@ router.post('/message', async (req, res) => {
 
         return res.json({
           messages: [
-            { sender: 'bot', text: 'Booking Complete! 🎉' },
-            { sender: 'bot', text: `• Token Number: ${refreshedToken.tokenNumber}\n• Doctor: ${selectedDoc.name}\n• Cabin: ${selectedDoc.currentRoom}\n• Estimated Wait: ${refreshedToken.estimatedWaitTime} mins.` }
+            { sender: 'bot', text: text.bookingCompleteHeader },
+            { sender: 'bot', text: text.bookingCompleteBody(refreshedToken.tokenNumber, selectedDoc.name, selectedDoc.currentRoom, refreshedToken.estimatedWaitTime) }
           ],
-          options: ['Check Live Queue Status', 'Book New Appointment / Generate Token'],
+          options: text.options,
           token: {
             id: refreshedToken._id,
             tokenNumber: refreshedToken.tokenNumber,
@@ -410,13 +465,40 @@ router.post('/message', async (req, res) => {
 
     // Default catch-all
     return res.json({
-      messages: [{ sender: 'bot', text: 'Your previous booking is complete. Type "Hi" to start a new inquiry!' }],
-      options: ['Book New Appointment / Generate Token', 'Check Live Queue Status']
+      messages: [{ sender: 'bot', text: text.defaultCatchAll }],
+      options: text.options
     });
 
   } catch (error) {
     console.error('Chat error:', error);
     res.status(500).json({ message: 'Server error in chatbot' });
+  }
+});
+
+// GET token details and queue position by Mongo ID
+router.get('/token/:tokenId', async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+    const token = await Token.findById(tokenId).populate('patient').populate('doctor', '-passwordHash');
+    if (!token) {
+      return res.status(404).json({ message: 'Token not found' });
+    }
+
+    const queue = await Queue.findOne({ doctor: token.doctor._id });
+    let position = -1;
+    if (queue) {
+      if (queue.currentToken && queue.currentToken.toString() === token._id.toString()) {
+        position = 0; // Currently inside the cabin
+      } else {
+        // Find position index in the active queue array
+        position = queue.activeQueue.findIndex(id => id.toString() === token._id.toString()) + 1;
+      }
+    }
+
+    res.json({ token, position });
+  } catch (err) {
+    console.error('Error fetching token details:', err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

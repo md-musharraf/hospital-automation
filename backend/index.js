@@ -26,6 +26,8 @@ const authRoutes = require('./routes/auth');
 const chatRoutes = require('./routes/chat');
 const staffRoutes = require('./routes/staff');
 const doctorRoutes = require('./routes/doctor');
+const labRoutes = require('./routes/lab');
+const messageRoutes = require('./routes/messages');
 
 const Token = require('./models/Token');
 const Queue = require('./models/Queue');
@@ -84,6 +86,8 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/staff', staffRoutes);
 app.use('/api/v1/doctor', doctorRoutes);
+app.use('/api/v1/lab', labRoutes);
+app.use('/api/v1/messages', messageRoutes);
 
 // Health check endpoint
 app.get('/api/v1/health', (req, res) => {
@@ -274,6 +278,15 @@ const seedMockData = async () => {
           username: 'bob_staff',
           passwordHash,
           counterNumber: 'Reception Counter 2'
+        }
+      ]);
+
+      const LabAssistant = require('./models/LabAssistant');
+      await LabAssistant.insertMany([
+        {
+          name: 'CareSync Lab Tech',
+          username: 'lab_assistant',
+          passwordHash
         }
       ]);
       console.log('[Mock DB] Seeding completed successfully. Login ready.');

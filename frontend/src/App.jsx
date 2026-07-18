@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { 
   MessageSquare, User, Shield, Stethoscope, 
   Send, Users, Activity, Flame, Clock, 
@@ -35,6 +35,15 @@ function AppContent() {
   const [doctorUser, setDoctorUser] = useState(() => {
     try {
       const u = localStorage.getItem('doctorUser');
+      return u && u !== 'undefined' ? JSON.parse(u) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const [labToken, setLabToken] = useState(localStorage.getItem('labToken') || '');
+  const [labUser, setLabUser] = useState(() => {
+    try {
+      const u = localStorage.getItem('labUser');
       return u && u !== 'undefined' ? JSON.parse(u) : null;
     } catch (e) {
       return null;
@@ -80,6 +89,14 @@ function AppContent() {
     setDoctorToken('');
     setDoctorUser(null);
     navigate('/doctor/login');
+  };
+
+  const handleLabLogout = () => {
+    localStorage.removeItem('labToken');
+    localStorage.removeItem('labUser');
+    setLabToken('');
+    setLabUser(null);
+    navigate('/lab/login');
   };
 
   return (
@@ -129,6 +146,14 @@ function AppContent() {
           >
             <Stethoscope className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline-block">Doctor Console</span>
+          </button>
+
+          <button 
+            onClick={() => navigate(labToken ? '/lab/dashboard' : '/lab/login')} 
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/lab') ? 'bg-teal-600 text-white shadow-lg shadow-teal-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+          >
+            <span className="material-symbols-outlined text-[16px] shrink-0">science</span>
+            <span className="hidden sm:inline-block">Lab Console</span>
           </button>
         </div>
       </div>
@@ -193,6 +218,37 @@ function AppContent() {
               )
             } 
           />
+          <Route 
+            path="/lab/login" 
+            element={
+              labToken ? (
+                <Navigate to="/lab/dashboard" replace />
+              ) : (
+                <LabLogin 
+                  setLabToken={setLabToken} 
+                  setLabUser={setLabUser} 
+                  onSuccess={() => navigate('/lab/dashboard')} 
+                />
+              )
+            } 
+          />
+          <Route 
+            path="/lab/dashboard" 
+            element={
+              labToken ? (
+                <LabDashboard 
+                  labToken={labToken} 
+                  labUser={labUser} 
+                  onLogout={handleLabLogout} 
+                />
+              ) : (
+                <Navigate to="/lab/login" replace />
+              )
+            } 
+          />
+          <Route path="/track/:tokenId" element={<PatientLiveTracker />} />
+          <Route path="/prescription/:tokenId" element={<DigitalPrescriptionViewer />} />
+          <Route path="/public-display" element={<PublicTVDisplay />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
@@ -1413,6 +1469,11 @@ function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
               </div>
 
+              {/* Intercom Row */}
+              <div className="grid grid-cols-1 gap-8 max-w-2xl mt-8">
+                <InternalChatBox token={staffToken} user={staffUser} role="Staff" />
+              </div>
+
             </div>
           )}
 
@@ -2116,6 +2177,35 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [revisitSelection, setRevisitSelection] = useState('none');
   const [customRevisitDays, setCustomRevisitDays] = useState('30');
+  
+  // Custom prescription and lab integrations
+  const [medicines, setMedicines] = useState([{ name: '', dosage: '1-0-1', duration: '5 days', instructions: 'After food' }]);
+  const [advice, setAdvice] = useState('');
+  const [history, setHistory] = useState([]);
+  const [labTestName, setLabTestName] = useState('Complete Blood Count (CBC)');
+  const [customLabTest, setCustomLabTest] = useState('');
+
+  // Fetch patient visit history when token changes
+  useEffect(() => {
+    if (queue?.currentToken?.patient?._id) {
+      const fetchHistory = async () => {
+        try {
+          const res = await fetch(`${BACKEND_URL}/api/v1/doctor/patients/${queue.currentToken.patient._id}/history`, {
+            headers: { 'Authorization': `Bearer ${doctorToken}` }
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setHistory(data);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      };
+      fetchHistory();
+    } else {
+      setHistory([]);
+    }
+  }, [queue?.currentToken?.patient?._id, doctorToken]);
 
   const loadQueue = async () => {
     try {
@@ -2192,7 +2282,7 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
     }
   };
 
-  const handleComplete = async (revisitDays = 0) => {
+  const handleComplete = async (revisitDays = null, medicines = [], advice = '') => {
     try {
       await fetch(`${BACKEND_URL}/api/v1/doctor/queue/complete`, {
         method: 'POST',
@@ -2200,7 +2290,7 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${doctorToken}` 
         },
-        body: JSON.stringify({ revisitDays })
+        body: JSON.stringify({ revisitDays, medicines, advice })
       });
       loadQueue();
     } catch (err) {
@@ -2231,6 +2321,32 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
         body: JSON.stringify({ minutes: parseInt(mins) })
       });
       loadQueue();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleRequestLabTest = async (e) => {
+    e.preventDefault();
+    const name = labTestName === 'Custom Test...' ? customLabTest : labTestName;
+    if (!name) return;
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/lab-request`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${doctorToken}`
+        },
+        body: JSON.stringify({ testName: name })
+      });
+      if (res.ok) {
+        setCustomLabTest('');
+        loadQueue();
+      } else {
+        const data = await res.json();
+        alert(data.message);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -2386,6 +2502,92 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                         )}
                       </div>
                     </div>
+
+                    {/* Active Lab Tests Section */}
+                    {queue.currentToken.labTests && queue.currentToken.labTests.length > 0 && (
+                      <div className="bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/50 text-xs">
+                        <span className="text-xs text-[var(--text-secondary)] font-bold">Ordered Lab Tests & Diagnostics</span>
+                        <div className="mt-2 space-y-1.5">
+                          {queue.currentToken.labTests.map((t, idx) => (
+                            <div key={idx} className="flex justify-between items-center bg-[var(--card-bg)] p-2 rounded-lg border border-[var(--border-color)]/20">
+                              <span className="font-bold text-[var(--text-color)]">{t.testName}</span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide border ${
+                                t.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                              }`}>
+                                {t.status === 'Completed' ? `Completed: ${t.remarks}` : 'Pending Lab'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Order Lab Tests panel */}
+                    <div className="bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/50 text-xs">
+                      <span className="text-xs text-[var(--text-secondary)] font-bold">Order Lab Diagnostics</span>
+                      <form onSubmit={handleRequestLabTest} className="mt-2 flex flex-col sm:flex-row gap-2">
+                        <select
+                          value={labTestName}
+                          onChange={(e) => setLabTestName(e.target.value)}
+                          className="flex-1 px-3 py-2 border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--text-color)] rounded-xl outline-none font-bold"
+                        >
+                          <option>Complete Blood Count (CBC)</option>
+                          <option>Chest X-Ray</option>
+                          <option>Electrocardiogram (ECG)</option>
+                          <option>Lipid Panel</option>
+                          <option>Thyroid Panel (TSH)</option>
+                          <option>Custom Test...</option>
+                        </select>
+
+                        {labTestName === 'Custom Test...' && (
+                          <input
+                            type="text"
+                            placeholder="Enter test name..."
+                            value={customLabTest}
+                            onChange={(e) => setCustomLabTest(e.target.value)}
+                            className="flex-1 px-3 py-2 border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--text-color)] rounded-xl outline-none font-bold animate-fade-in"
+                            required
+                          />
+                        )}
+
+                        <button
+                          type="submit"
+                          className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl shadow-sm transition-all active:scale-[0.97]"
+                        >
+                          Order Test
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* Visit History Section */}
+                    <div className="bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/50 text-xs">
+                      <span className="text-xs text-[var(--text-secondary)] font-bold">Patient Visit History ({history.length} past visits)</span>
+                      {history.length === 0 ? (
+                        <p className="text-[10px] text-[var(--text-secondary)]/50 italic mt-1 font-medium">No past checkups registered in CareSync directory.</p>
+                      ) : (
+                        <div className="mt-2 max-h-40 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
+                          {history.map((h, idx) => (
+                            <div key={idx} className="bg-[var(--card-bg)] p-2.5 rounded-lg border border-[var(--border-color)]/30 space-y-1">
+                              <div className="flex justify-between items-center text-[10px] text-[var(--text-secondary)]">
+                                <span className="font-bold">{new Date(h.completedAt).toLocaleDateString()}</span>
+                                <span className="font-extrabold uppercase text-orange-600">{h.tokenNumber}</span>
+                              </div>
+                              <p className="font-medium text-[var(--text-color)]"><span className="font-bold text-[var(--text-secondary)] text-zinc-400">Symptoms:</span> {h.symptoms}</p>
+                              {h.prescription && h.prescription.medicines && h.prescription.medicines.length > 0 && (
+                                <div className="text-[10px] text-[var(--text-secondary)] border-t border-[var(--border-color)]/10 pt-1">
+                                  <span className="font-bold text-zinc-400">Prescription:</span> {h.prescription.medicines.map(m => `${m.name} (${m.dosage})`).join(', ')}
+                                </div>
+                              )}
+                              {h.labTests && h.labTests.length > 0 && (
+                                <div className="text-[10px] text-teal-650 mt-1">
+                                  <span className="font-bold text-teal-650">Tests:</span> {h.labTests.map(t => `${t.testName} (${t.status === 'Completed' ? t.remarks : 'Pending'})`).join(', ')}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="py-12 flex flex-col items-center justify-center text-center text-[var(--text-secondary)]/50 border border-dashed border-[var(--border-color)] rounded-xl bg-[var(--bg-color)]/30">
@@ -2488,12 +2690,15 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
 
               </div>
 
+              {/* Internal Intercom Chatbox */}
+              <InternalChatBox token={doctorToken} user={doctorUser} role="Doctor" />
+
               {/* Informative Stats Box */}
               <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 text-xs text-[var(--text-secondary)] space-y-2 shadow-sm">
                 <h5 className="font-bold text-[var(--text-color)]">Quick Reference</h5>
-                <p>• **Emergency SOS** tokens are automatically prioritized and pushed above regular tokens in the waiting list.</p>
-                <p>• **Speech Synthesis** automatically announces tokens to patients when called.</p>
-                <p>• **Midnight reset** cron clears active databases daily at 12:00 AM.</p>
+                <p>• **Emergency SOS** tokens are prioritized and pushed above regular tokens.</p>
+                <p>• **Speech Synthesis** automatically announces tokens when called.</p>
+                <p>• **Midnight reset** cron clears active databases daily.</p>
               </div>
 
             </div>
@@ -2505,13 +2710,110 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
       {/* Complete Checkup & Re-visit Reminder Modal Overlay */}
       {showCompleteModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-fade-in relative text-[var(--text-color)]">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl max-w-xl w-full p-6 shadow-2xl animate-fade-in relative text-[var(--text-color)] max-h-[90vh] overflow-y-auto">
             <h3 className="font-extrabold text-[var(--text-color)] text-lg mb-2">Complete Patient Checkup</h3>
-            <p className="text-xs text-[var(--text-secondary)] mb-4">You are concluding the checkup for **{queue?.currentToken?.patient?.name || 'the patient'}**. Would you like to schedule a re-visit reminder?</p>
+            <p className="text-xs text-[var(--text-secondary)] mb-6">Conclude checkup for **{queue?.currentToken?.patient?.name || 'the patient'}**. Please review digital prescription details below.</p>
             
-            <div className="space-y-3 mb-6 text-sm">
-              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider">Re-visit Reminder Interval</label>
-              <div className="grid grid-cols-2 gap-2">
+            {/* Prescription Form Section */}
+            <div className="space-y-4 mb-6 pb-6 border-b border-[var(--border-color)]/30 text-xs text-left">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider">Prescribe Medications</span>
+                <button
+                  type="button"
+                  onClick={() => setMedicines(prev => [...prev, { name: '', dosage: '1-0-1', duration: '5 days', instructions: 'After food' }])}
+                  className="px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-550 rounded-lg hover:bg-amber-500 hover:text-white transition-all font-bold"
+                >
+                  + Add Medicine
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {medicines.map((med, idx) => (
+                  <div key={idx} className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/30 relative text-left">
+                    <div>
+                      <label className="block text-[10px] text-[var(--text-secondary)] font-bold mb-0.5">Medicine Name</label>
+                      <input
+                        type="text"
+                        placeholder="Paracetamol"
+                        value={med.name}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setMedicines(prev => prev.map((m, i) => i === idx ? { ...m, name: val } : m));
+                        }}
+                        className="w-full bg-[var(--card-bg)] border border-[var(--border-color)]/60 rounded-lg px-2 py-1 text-xs text-[var(--text-color)] outline-none font-bold"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-[var(--text-secondary)] font-bold mb-0.5">Dosage</label>
+                      <input
+                        type="text"
+                        placeholder="1-0-1"
+                        value={med.dosage}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setMedicines(prev => prev.map((m, i) => i === idx ? { ...m, dosage: val } : m));
+                        }}
+                        className="w-full bg-[var(--card-bg)] border border-[var(--border-color)]/60 rounded-lg px-2 py-1 text-xs text-[var(--text-color)] outline-none font-bold"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-[var(--text-secondary)] font-bold mb-0.5">Duration</label>
+                      <input
+                        type="text"
+                        placeholder="5 days"
+                        value={med.duration}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setMedicines(prev => prev.map((m, i) => i === idx ? { ...m, duration: val } : m));
+                        }}
+                        className="w-full bg-[var(--card-bg)] border border-[var(--border-color)]/60 rounded-lg px-2 py-1 text-xs text-[var(--text-color)] outline-none font-bold"
+                        required
+                      />
+                    </div>
+                    <div className="flex items-end space-x-1.5 text-left">
+                      <div className="flex-1">
+                        <label className="block text-[10px] text-[var(--text-secondary)] font-bold mb-0.5">Instructions</label>
+                        <input
+                          type="text"
+                          placeholder="After food"
+                          value={med.instructions}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setMedicines(prev => prev.map((m, i) => i === idx ? { ...m, instructions: val } : m));
+                          }}
+                          className="w-full bg-[var(--card-bg)] border border-[var(--border-color)]/60 rounded-lg px-2 py-1 text-xs text-[var(--text-color)] outline-none font-bold"
+                        />
+                      </div>
+                      {medicines.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setMedicines(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-1.5 bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-500 rounded-lg border border-rose-500/20 transition-all shrink-0 mb-0.5"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">delete</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-1.5 text-left">Doctor's Advice & Directives</label>
+                <textarea
+                  placeholder="Drink plenty of water, avoid cold items..."
+                  value={advice}
+                  onChange={(e) => setAdvice(e.target.value)}
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/65 focus:border-amber-500 rounded-xl px-4 py-2.5 text-xs text-[var(--text-color)] outline-none font-semibold min-h-[64px]"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-6 text-sm text-left">
+              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider text-left">Re-visit Reminder Interval</label>
+              <div className="grid grid-cols-2 gap-2 text-left">
                 {[
                   { label: 'No Re-visit / No Reminder', value: 'none' },
                   { label: 'Today (Immediate Test)', value: '0' },
@@ -2536,7 +2838,7 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
               </div>
 
               {revisitSelection === 'custom' && (
-                <div className="mt-3 animate-fade-in">
+                <div className="mt-3 animate-fade-in text-left">
                   <label className="block text-xs font-bold text-[var(--text-secondary)] mb-1">Enter Custom Days</label>
                   <input
                     type="number"
@@ -2566,9 +2868,11 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                   if (revisitSelection !== 'none') {
                     days = revisitSelection === 'custom' ? parseInt(customRevisitDays) : parseInt(revisitSelection);
                   }
-                  await handleComplete(days);
+                  await handleComplete(days, medicines, advice);
                   setShowCompleteModal(false);
                   setRevisitSelection('none');
+                  setMedicines([{ name: '', dosage: '1-0-1', duration: '5 days', instructions: 'After food' }]);
+                  setAdvice('');
                 }}
                 className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/10 transition-all"
               >
@@ -2579,6 +2883,716 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
         </div>
       )}
 
+    </div>
+  );
+}
+
+/* ==========================================================================
+   LAB LOGIN COMPONENT
+   ========================================================================== */
+function LabLogin({ setLabToken, setLabUser, onSuccess }) {
+  const [username, setUsername] = useState('lab_assistant');
+  const [password, setPassword] = useState('password123');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/lab/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || 'Login failed');
+      }
+
+      localStorage.setItem('labToken', data.token);
+      localStorage.setItem('labUser', JSON.stringify(data.user));
+      setLabToken(data.token);
+      setLabUser(data.user);
+      onSuccess();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex items-center justify-center p-4 bg-[var(--bg-color)]">
+      <div className="w-full max-w-md bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-8 shadow-[var(--card-shadow)] relative overflow-hidden">
+        <div className="flex items-center space-x-2 mb-6">
+          <div className="bg-teal-500/10 border border-teal-500/20 p-2 rounded-lg text-teal-500">
+            <span className="material-symbols-outlined">science</span>
+          </div>
+          <h2 className="text-xl font-extrabold text-[var(--text-color)] tracking-tight">Lab Assistant Portal Login</h2>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-lg flex items-center space-x-2">
+            <span className="material-symbols-outlined text-[16px] text-rose-500">error</span>
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleLogin} className="space-y-4 text-sm font-semibold">
+          <div>
+            <label className="block text-[var(--text-secondary)] mb-1">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border border-[var(--border-color)] bg-[var(--bg-color)] text-[var(--text-color)] focus:ring-1 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-[var(--text-secondary)] mb-1">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border border-[var(--border-color)] bg-[var(--bg-color)] text-[var(--text-color)] focus:ring-1 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
+              required
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-teal-500/10 hover:shadow-teal-500/20 flex items-center justify-center space-x-2 active:scale-[0.98]"
+          >
+            {loading ? <span>Logging in...</span> : <span>Access Lab Console</span>}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   LAB DASHBOARD COMPONENT
+   ========================================================================== */
+function LabDashboard({ labToken, labUser, onLogout }) {
+  const [tokens, setTokens] = useState([]);
+  const [selectedToken, setSelectedToken] = useState(null);
+  const [remarks, setRemarks] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  const fetchPendingTests = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/lab/queues/pending-tests`, {
+        headers: {
+          'Authorization': `Bearer ${labToken}`
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTokens(data);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPendingTests();
+
+    // Join Socket Room
+    socket.emit('join-room', 'queue:global');
+    socket.on('queue-updated', () => {
+      fetchPendingTests();
+    });
+
+    return () => {
+      socket.off('queue-updated');
+    };
+  }, []);
+
+  const handleCompleteTest = async (tokenId, testName) => {
+    try {
+      const testRemarks = remarks[`${tokenId}-${testName}`] || 'Completed successfully.';
+      const res = await fetch(`${BACKEND_URL}/api/v1/lab/tests/${tokenId}/complete`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${labToken}`
+        },
+        body: JSON.stringify({ testName, remarks: testRemarks })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchPendingTests();
+        if (selectedToken && selectedToken._id === tokenId) {
+          // Refresh details in card
+          const updatedToken = data.token;
+          const pending = updatedToken.labTests.filter(t => t.status === 'Pending');
+          if (pending.length === 0) {
+            setSelectedToken(null);
+          } else {
+            setSelectedToken(updatedToken);
+          }
+        }
+      } else {
+        alert(data.message || 'Error completing test');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  return (
+    <div className="flex-grow flex flex-col md:flex-row overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
+      {/* Left panel: list of patient tokens with pending lab tests */}
+      <div className="w-full md:w-80 max-h-[35vh] md:max-h-none bg-[var(--card-bg)] border-b md:border-b-0 md:border-r border-[var(--border-color)]/30 p-5 flex flex-col space-y-5 overflow-y-auto shadow-inner shrink-0 text-left">
+        <div className="flex justify-between items-center pb-2 border-b border-[var(--border-color)]/30">
+          <div>
+            <h3 className="font-extrabold text-[var(--text-color)] text-base">{labUser?.name}</h3>
+            <p className="text-[10px] text-teal-600 font-bold uppercase tracking-wider mt-0.5">Lab Assistant</p>
+          </div>
+          <button 
+            onClick={onLogout}
+            className="px-2.5 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-500 text-[10px] font-extrabold rounded-lg hover:bg-rose-500 hover:text-white transition-all shrink-0 active:scale-95 duration-100"
+          >
+            Logout
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <h4 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Patients Queue ({tokens.length})</h4>
+          {loading ? (
+            <div className="text-xs text-[var(--text-secondary)] italic">Loading active test orders...</div>
+          ) : tokens.length === 0 ? (
+            <div className="text-xs text-[var(--text-secondary)]/50 italic py-4">No pending lab test requests.</div>
+          ) : (
+            <div className="space-y-2">
+              {tokens.map(tok => {
+                const pendingCount = tok.labTests.filter(t => t.status === 'Pending').length;
+                return (
+                  <div
+                    key={tok._id}
+                    onClick={() => setSelectedToken(tok)}
+                    className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between active:scale-[0.98] ${
+                      selectedToken?._id === tok._id
+                        ? 'bg-teal-500/10 border-teal-500 text-[var(--text-color)] shadow-sm'
+                        : 'bg-[var(--card-bg)] border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/10'
+                    }`}
+                  >
+                    <div>
+                      <p className="font-extrabold text-xs">{tok.tokenNumber}</p>
+                      <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5">{tok.patient?.name}</p>
+                    </div>
+                    <span className="bg-teal-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">
+                      {pendingCount} Test{pendingCount > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Right workstation pane */}
+      <div className="flex-1 p-4 md:p-6 overflow-y-auto flex flex-col space-y-6 bg-[var(--bg-color)] text-left">
+        <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Lab Testing Station</h3>
+
+        {selectedToken ? (
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] space-y-6">
+            <div className="flex justify-between items-start pb-4 border-b border-[var(--border-color)]/30">
+              <div>
+                <span className="text-xs font-bold text-teal-600 uppercase tracking-wider">Active Patient under Test</span>
+                <h2 className="text-3xl font-extrabold tracking-tight mt-1">{selectedToken.patient?.name}</h2>
+                <p className="text-xs text-[var(--text-secondary)] mt-1 font-medium">
+                  Age: {selectedToken.patient?.age} | Gender: {selectedToken.patient?.gender} | Phone: {selectedToken.patient?.phone}
+                </p>
+              </div>
+              <div className="bg-teal-500/10 border border-teal-500/30 rounded-2xl px-4 py-2 text-center shrink-0">
+                <span className="text-[10px] text-[var(--text-secondary)] uppercase font-semibold">Token Number</span>
+                <p className="text-xl font-black text-teal-600">{selectedToken.tokenNumber}</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h4 className="text-sm font-bold text-[var(--text-color)]">Requested Diagnoses / Clinical Tests</h4>
+              <div className="space-y-3">
+                {selectedToken.labTests.filter(t => t.status === 'Pending').map(test => (
+                  <div key={test.testName} className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center space-x-3">
+                      <span className="material-symbols-outlined text-teal-600 text-[20px]">science</span>
+                      <span className="font-bold text-sm">{test.testName}</span>
+                    </div>
+                    <div className="flex-1 max-w-md flex items-center space-x-3">
+                      <input
+                        type="text"
+                        placeholder="Enter results / remarks..."
+                        value={remarks[`${selectedToken._id}-${test.testName}`] || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setRemarks(prev => ({ ...prev, [`${selectedToken._id}-${test.testName}`]: val }));
+                        }}
+                        className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-teal-500 transition-all font-semibold"
+                      />
+                      <button
+                        onClick={() => handleCompleteTest(selectedToken._id, test.testName)}
+                        className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap"
+                      >
+                        Submit Results
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="py-16 flex flex-col items-center justify-center text-center text-[var(--text-secondary)]/50 border border-dashed border-[var(--border-color)] rounded-2xl bg-[var(--card-bg)]/20">
+            <span className="material-symbols-outlined text-[48px] mb-3 text-[var(--text-secondary)]/30">science</span>
+            <p className="text-sm font-bold text-[var(--text-color)]">Testing Station is Idle</p>
+            <p className="text-xs text-[var(--text-secondary)] max-w-xs mt-1.5 font-medium">Select a patient queue ticket on the left rail to register and upload diagnostic remarks.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   PATIENT LIVE TRACKER COMPONENT (URL: /track/:tokenId)
+   ========================================================================== */
+function PatientLiveTracker() {
+  const { tokenId } = useParams();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadTracker = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/chat/token/${tokenId}`);
+      const d = await res.json();
+      if (res.ok) {
+        setData(d);
+      } else {
+        setError(d.message || 'Token details not found');
+      }
+    } catch (err) {
+      setError('Connection error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTracker();
+
+    socket.emit('join-room', 'queue:global');
+    const handleUpdate = () => {
+      loadTracker();
+    };
+    socket.on('queue-updated', handleUpdate);
+
+    return () => {
+      socket.off('queue-updated', handleUpdate);
+    };
+  }, [tokenId]);
+
+  if (loading) {
+    return (
+      <div className="flex-grow flex items-center justify-center p-6 bg-[var(--bg-color)]">
+        <div className="text-[var(--text-secondary)] font-bold text-sm">Synchronizing queue tracker...</div>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="flex-grow flex items-center justify-center p-6 bg-[var(--bg-color)]">
+        <div className="text-rose-500 font-bold text-sm border border-rose-500/20 bg-rose-500/5 px-4 py-3 rounded-xl">{error || 'Tracker failed'}</div>
+      </div>
+    );
+  }
+
+  const { token, position } = data;
+  const inCabin = position === 0;
+  const positionText = inCabin 
+    ? 'Please proceed inside' 
+    : position > 0 
+      ? `${position - 1} patient(s) ahead of you` 
+      : 'Checkup complete';
+
+  return (
+    <div className="flex-grow flex items-center justify-center p-4 bg-[var(--bg-color)]">
+      <div className="w-full max-w-md bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-3xl p-6 shadow-[var(--card-shadow)] relative overflow-hidden text-[var(--text-color)]">
+        
+        {/* Hospital Branding Header */}
+        <div className="flex justify-between items-center pb-4 border-b border-[var(--border-color)]/30 mb-6">
+          <div className="flex items-center space-x-2">
+            <span className="material-symbols-outlined text-orange-650 text-[22px]">health_and_safety</span>
+            <span className="font-extrabold text-sm tracking-tight text-left">CareSync Live Tracker</span>
+          </div>
+          <span className="bg-emerald-600 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">Live Connection</span>
+        </div>
+
+        {/* Big Ticket Token Box */}
+        <div className="bg-gradient-to-br from-[var(--secondary-color)] to-[var(--primary-container)] text-white rounded-2xl p-6 shadow-md relative overflow-hidden border border-white/10 text-center mb-6">
+          <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
+          <p className="text-[9px] text-white/70 uppercase tracking-widest font-bold mb-1 relative z-10">Active Ticket</p>
+          <h2 className="text-5xl font-black relative z-10 leading-none">{token.tokenNumber}</h2>
+          
+          <div className="mt-4 pt-4 border-t border-white/10 flex justify-around text-xs font-semibold relative z-10">
+            <div>
+              <p className="text-white/60 text-[9px]">Cabin Room</p>
+              <p className="text-white font-bold mt-0.5">{token.doctor?.currentRoom || 'Cabin A'}</p>
+            </div>
+            <div>
+              <p className="text-white/60 text-[9px]">Consultant</p>
+              <p className="text-white font-bold mt-0.5">{token.doctor?.name}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Wait Status Card */}
+        <div className="space-y-4">
+          <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-4 flex items-center justify-between shadow-inner">
+            <div className="flex items-center space-x-3 text-left">
+              <span className={`material-symbols-outlined text-[26px] ${inCabin ? 'text-emerald-500 animate-pulse' : 'text-orange-500'}`}>
+                {inCabin ? 'check_circle' : 'hourglass_empty'}
+              </span>
+              <div>
+                <p className="text-[10px] text-[var(--text-secondary)] uppercase font-extrabold">Queue Position</p>
+                <p className="text-sm font-extrabold text-[var(--text-color)] mt-0.5">{positionText}</p>
+              </div>
+            </div>
+            {!inCabin && position > 0 && (
+              <span className="text-lg font-black text-orange-650 shrink-0">{token.estimatedWaitTime} <span className="text-[9px] font-medium text-[var(--text-secondary)]">mins</span></span>
+            )}
+          </div>
+
+          <div className="text-center">
+            <p className="text-[10px] text-[var(--text-secondary)] font-bold">Please wait in the reception lounge until called.</p>
+            <p className="text-[9px] text-[var(--text-secondary)]/50 mt-1">Refreshes automatically when the queue updates.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   DIGITAL PRESCRIPTION VIEWER (URL: /prescription/:tokenId)
+   ========================================================================== */
+function DigitalPrescriptionViewer() {
+  const { tokenId } = useParams();
+  const [token, setToken] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadPrescription = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/chat/token/${tokenId}`);
+      const data = await res.json();
+      if (res.ok) {
+        setToken(data.token);
+      } else {
+        setError(data.message || 'Prescription details not found');
+      }
+    } catch (err) {
+      setError('Connection error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPrescription();
+  }, [tokenId]);
+
+  if (loading) {
+    return (
+      <div className="flex-grow flex items-center justify-center p-6 bg-[var(--bg-color)]">
+        <div className="text-[var(--text-secondary)] font-bold text-sm">Retrieving prescription profile...</div>
+      </div>
+    );
+  }
+
+  if (error || !token) {
+    return (
+      <div className="flex-grow flex items-center justify-center p-6 bg-[var(--bg-color)]">
+        <div className="text-rose-500 font-bold text-sm border border-rose-500/20 bg-rose-500/5 px-4 py-3 rounded-xl">{error || 'Prescription not found'}</div>
+      </div>
+    );
+  }
+
+  const { patient, doctor, prescription, labTests } = token;
+
+  return (
+    <div className="flex-grow bg-[var(--bg-color)] p-4 md:p-8 overflow-y-auto flex items-start justify-center text-left">
+      <div className="w-full max-w-2xl bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-3xl p-6 md:p-8 shadow-[var(--card-shadow)] relative space-y-6 text-[var(--text-color)]" id="printable-prescription">
+        
+        {/* Prescription Invoice Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-6 border-b border-[var(--border-color)]/30 gap-4">
+          <div className="flex items-center space-x-2.5">
+            <div className="bg-orange-600 p-2 rounded-xl text-white">
+              <span className="material-symbols-outlined text-[24px]">clinical_notes</span>
+            </div>
+            <div>
+              <h2 className="text-xl font-black tracking-tight">CareSync General Hospital</h2>
+              <p className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">Clinical Care & Diagnostics</p>
+            </div>
+          </div>
+          <button
+            onClick={() => window.print()}
+            className="px-4 py-2 bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 border border-[var(--border-color)] text-[var(--text-color)] text-xs font-bold rounded-xl shadow-sm transition-all active:scale-95 duration-100 flex items-center space-x-1.5 print:hidden"
+          >
+            <span className="material-symbols-outlined text-[16px]">print</span>
+            <span>Print / Save PDF</span>
+          </button>
+        </div>
+
+        {/* Patient & Doctor metadata grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 bg-[var(--bg-color)]/50 p-4 rounded-2xl border border-[var(--border-color)]/35 text-xs font-semibold">
+          <div className="space-y-1.5">
+            <span className="text-[10px] text-[var(--text-secondary)] uppercase font-extrabold tracking-wider">Patient Details</span>
+            <p className="text-sm font-extrabold text-[var(--text-color)]">{patient?.name}</p>
+            <p className="text-[var(--text-secondary)]">Age: {patient?.age} yrs | Gender: {patient?.gender}</p>
+            <p className="text-[var(--text-secondary)]">Phone: {patient?.phone}</p>
+          </div>
+          <div className="space-y-1.5 sm:text-right">
+            <span className="text-[10px] text-[var(--text-secondary)] uppercase font-extrabold tracking-wider">Consultant Details</span>
+            <p className="text-sm font-extrabold text-[var(--text-color)]">{doctor?.name}</p>
+            <p className="text-[var(--text-secondary)]">{doctor?.department} Department</p>
+            <p className="text-[var(--text-secondary)]">Room: {doctor?.currentRoom || 'Cabin A'}</p>
+          </div>
+        </div>
+
+        {/* Symptoms Section */}
+        <div className="space-y-2">
+          <h4 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Reported Symptoms</h4>
+          <p className="text-sm font-medium leading-relaxed bg-[var(--bg-color)]/30 p-3.5 rounded-xl border border-[var(--border-color)]/30">{token.symptoms}</p>
+        </div>
+
+        {/* Prescription Table */}
+        <div className="space-y-2">
+          <h4 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Prescribed Medications</h4>
+          {prescription && prescription.medicines && prescription.medicines.length > 0 ? (
+            <div className="overflow-x-auto border border-[var(--border-color)]/30 rounded-xl">
+              <table className="w-full text-left text-xs font-semibold border-collapse">
+                <thead>
+                  <tr className="bg-[var(--bg-color)]/50 border-b border-[var(--border-color)]/30 text-[var(--text-secondary)] uppercase font-bold text-[9px] tracking-wider">
+                    <th className="p-3.5">Medicine Name</th>
+                    <th className="p-3.5">Dosage</th>
+                    <th className="p-3.5">Duration</th>
+                    <th className="p-3.5">Instructions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-color)]/20">
+                  {prescription.medicines.map((med, idx) => (
+                    <tr key={idx} className="hover:bg-[var(--border-color)]/5 transition-colors">
+                      <td className="p-3.5 font-bold text-[var(--text-color)]">{med.name}</td>
+                      <td className="p-3.5 font-bold text-[var(--text-color)]">{med.dosage}</td>
+                      <td className="p-3.5 text-[var(--text-secondary)]">{med.duration}</td>
+                      <td className="p-3.5 text-[var(--text-secondary)]">{med.instructions || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--text-secondary)]/50 italic py-2">No medications prescribed.</p>
+          )}
+        </div>
+
+        {/* Lab Reports Section */}
+        {labTests && labTests.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Clinical Lab Diagnoses</h4>
+            <div className="space-y-2">
+              {labTests.map((test, idx) => (
+                <div key={idx} className="bg-[var(--bg-color)]/30 p-3.5 rounded-xl border border-[var(--border-color)]/30 flex items-start justify-between text-xs gap-3">
+                  <div className="flex items-center space-x-2">
+                    <span className="material-symbols-outlined text-[18px] text-teal-650">science</span>
+                    <div>
+                      <span className="font-bold text-[var(--text-color)]">{test.testName}</span>
+                      {test.status === 'Completed' && (
+                        <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">Results: <span className="font-semibold text-[var(--text-color)]">{test.remarks}</span></p>
+                      )}
+                    </div>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide shrink-0 ${
+                    test.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                  }`}>
+                    {test.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Doctor Advice / Footer */}
+        {prescription && prescription.advice && (
+          <div className="space-y-2 pt-2">
+            <h4 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Doctor's Advice</h4>
+            <p className="text-sm font-medium leading-relaxed italic bg-zinc-500/5 p-3.5 rounded-xl border border-[var(--border-color)]/20">{prescription.advice}</p>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   PUBLIC TV DISPLAY COMPONENT
+   ========================================================================== */
+function PublicTVDisplay() {
+  const [queues, setQueues] = useState([]);
+  const [calledToken, setCalledToken] = useState(null);
+
+  const fetchQueues = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/staff/queues`);
+      const data = await res.json();
+      if (res.ok) {
+        setQueues(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchQueues();
+
+    socket.emit('join-room', 'queue:global');
+    const handleUpdate = () => {
+      fetchQueues();
+    };
+    socket.on('queue-updated', handleUpdate);
+
+    // Listen for voice call announcements
+    const handleTokenCalled = (payload) => {
+      if (payload.status === 'Active') {
+        const textToSpeak = `Token number ${payload.tokenNumber.replace('-', ' ')}, please proceed directly to ${payload.roomName || 'Cabin A'}.`;
+        
+        // Voice announce
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(textToSpeak);
+          utterance.rate = 0.85; // speak slightly slower for clarity
+          window.speechSynthesis.speak(utterance);
+        }
+        
+        // Trigger fullscreen visual alert
+        setCalledToken({
+          tokenNumber: payload.tokenNumber,
+          roomName: payload.roomName || 'Cabin A'
+        });
+        
+        setTimeout(() => {
+          setCalledToken(null);
+        }, 8000);
+      }
+    };
+    socket.on('token-called', handleTokenCalled);
+
+    return () => {
+      socket.off('queue-updated', handleUpdate);
+      socket.off('token-called', handleTokenCalled);
+    };
+  }, []);
+
+  return (
+    <div className="flex-grow bg-zinc-950 text-white p-8 flex flex-col justify-between h-[calc(100vh-62px)] relative overflow-hidden font-sans text-left">
+      
+      {/* Fullscreen Announcement Banner Overlay */}
+      {calledToken && (
+        <div className="absolute inset-0 bg-orange-600 flex flex-col items-center justify-center text-center p-8 z-50 animate-fade-in border-4 border-orange-500 text-left">
+          <span className="material-symbols-outlined text-[100px] text-white animate-bounce">volume_up</span>
+          <h2 className="text-[12vw] font-black leading-none mt-4 text-white tracking-tight uppercase animate-pulse">{calledToken.tokenNumber}</h2>
+          <p className="text-[4vw] font-extrabold mt-6 text-orange-100 uppercase tracking-widest">Proceed to {calledToken.roomName}</p>
+        </div>
+      )}
+
+      {/* Normal TV View */}
+      <div className="flex-1 flex flex-col space-y-8 text-left">
+        {/* Header */}
+        <div className="flex justify-between items-center pb-6 border-b border-white/10">
+          <div className="flex items-center space-x-3.5">
+            <span className="material-symbols-outlined text-[36px] text-orange-500 animate-pulse">volume_up</span>
+            <div>
+              <h2 className="text-3xl font-black tracking-tight">CareSync Waiting Lounge</h2>
+              <p className="text-xs text-zinc-400 font-extrabold uppercase tracking-widest mt-0.5">Real-time Cabin Admissions</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-black text-zinc-300">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+            <p className="text-[9px] text-zinc-500 uppercase tracking-widest font-bold">Live Status Monitor</p>
+          </div>
+        </div>
+
+        {/* Queues grid */}
+        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-8">
+          {queues.map(q => {
+            const isConsulting = q.currentToken !== null;
+            return (
+              <div key={q._id} className="bg-zinc-900 border border-white/5 rounded-3xl p-6 flex flex-col justify-between shadow-2xl relative overflow-hidden">
+                <div className="absolute -top-10 -right-10 w-28 h-28 bg-white/5 rounded-full blur-2xl"></div>
+                
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="material-symbols-outlined text-zinc-400 text-[18px]">stethoscope</span>
+                    <span className="text-xs text-zinc-400 font-bold uppercase tracking-wide">{q.doctor?.department}</span>
+                  </div>
+                  <h3 className="text-xl font-extrabold text-white">{q.doctor?.name}</h3>
+                  <p className="text-xs text-orange-550 font-extrabold uppercase tracking-widest">{q.doctor?.currentRoom || 'Cabin A'}</p>
+                </div>
+
+                <div className="py-6 border-t border-b border-white/5 my-6 flex flex-col items-center justify-center min-h-[140px]">
+                  {isConsulting ? (
+                    <div className="text-center">
+                      <p className="text-[10px] text-zinc-400 uppercase font-extrabold tracking-widest">Active Patient</p>
+                      <h4 className="text-6xl font-black text-orange-500 mt-2 tracking-tight uppercase animate-pulse">{q.currentToken.tokenNumber}</h4>
+                      <p className="text-xs font-semibold text-zinc-300 mt-2 truncate max-w-[200px]">{q.currentToken.patient?.name}</p>
+                    </div>
+                  ) : (
+                    <div className="text-center text-zinc-500">
+                      <span className="material-symbols-outlined text-[36px] text-zinc-650 mb-2">sensor_door</span>
+                      <p className="text-xs font-bold text-zinc-400">Cabin is Idle</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2.5 text-xs font-semibold">
+                  <span className="text-[9px] text-zinc-400 uppercase font-extrabold tracking-widest block mb-1">Queue Status</span>
+                  <div className="flex justify-between items-center bg-zinc-950 p-2.5 rounded-xl border border-white/5">
+                    <span className="text-zinc-500">Waiting Patients</span>
+                    <span className="text-white font-bold">{q.activeQueue?.length || 0}</span>
+                  </div>
+                  <div className="flex justify-between items-center bg-zinc-950 p-2.5 rounded-xl border border-white/5">
+                    <span className="text-zinc-500">Next In Line</span>
+                    <span className="text-orange-500 font-bold">
+                      {q.activeQueue && q.activeQueue[0] ? q.activeQueue[0].tokenNumber : 'None'}
+                    </span>
+                  </div>
+                </div>
+
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

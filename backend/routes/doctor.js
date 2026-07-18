@@ -124,40 +124,50 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
       return res.status(400).json({ message: 'No active patient is currently inside the cabin' });
     }
 
-    const { revisitDays } = req.body;
+    const { revisitDays, medicines, advice } = req.body;
 
     const token = await Token.findById(queue.currentToken).populate('patient');
     if (token) {
       token.status = 'Completed';
       token.completedAt = new Date();
+      if (medicines || advice) {
+        token.prescription = {
+          medicines: medicines || [],
+          advice: advice || ''
+        };
+      }
       await token.save();
 
-      // If revisit days are specified, create a pending reminder
-      if (revisitDays !== undefined && revisitDays !== null && parseInt(revisitDays) >= 0) {
-        const doctor = await Doctor.findById(doctorId);
-        const doctorName = doctor ? doctor.name : 'your doctor';
-        
-        const scheduledDate = new Date();
-        scheduledDate.setDate(scheduledDate.getDate() + parseInt(revisitDays));
-        scheduledDate.setHours(9, 0, 0, 0); // 9:00 AM
+      // Trigger automatic WhatsApp message with Prescription Receipt link
+      if (token.patient && token.patient.phone) {
+        const prescriptionLink = `https://hospital-automation-wine.vercel.app/prescription/${token._id}`;
+        let completeMsg = `Hello ${token.patient.name || 'Patient'}, your checkup is completed. You can view your digital prescription receipt at: ${prescriptionLink}.`;
 
-        const reminder = new Reminder({
-          patient: token.patient._id,
-          doctor: doctorId,
-          token: token._id,
-          scheduledDate,
-          revisitDays: parseInt(revisitDays),
-          status: 'Pending',
-          message: `Hello ${token.patient.name || 'Patient'}, this is a reminder for your scheduled re-visit to see ${doctorName} ${parseInt(revisitDays) === 0 ? 'today' : `in ${revisitDays} days (scheduled for ${scheduledDate.toLocaleDateString()})`}.`
-        });
-        await reminder.save();
-        console.log(`[REMINDER CREATED] scheduled for ${scheduledDate} for patient ${token.patient.name}`);
+        // If revisit days are specified, create a pending reminder
+        if (revisitDays !== undefined && revisitDays !== null && parseInt(revisitDays) >= 0) {
+          const doctor = await Doctor.findById(doctorId);
+          const doctorName = doctor ? doctor.name : 'your doctor';
+          
+          const scheduledDate = new Date();
+          scheduledDate.setDate(scheduledDate.getDate() + parseInt(revisitDays));
+          scheduledDate.setHours(9, 0, 0, 0); // 9:00 AM
 
-        // Auto alert message: WhatsApp follow-up registration confirmation
-        if (token.patient && token.patient.phone) {
-          const followUpConf = `Hello ${token.patient.name || 'Patient'}, your checkup is completed. A re-visit reminder has been successfully scheduled for ${scheduledDate.toLocaleDateString()} (${revisitDays} days from now). Get well soon!`;
-          await sendWhatsAppNotification(token.patient.phone, followUpConf);
+          const reminder = new Reminder({
+            patient: token.patient._id,
+            doctor: doctorId,
+            token: token._id,
+            scheduledDate,
+            revisitDays: parseInt(revisitDays),
+            status: 'Pending',
+            message: `Hello ${token.patient.name || 'Patient'}, this is a reminder for your scheduled re-visit to see ${doctorName} ${parseInt(revisitDays) === 0 ? 'today' : `in ${revisitDays} days (scheduled for ${scheduledDate.toLocaleDateString()})`}.`
+          });
+          await reminder.save();
+          console.log(`[REMINDER CREATED] scheduled for ${scheduledDate} for patient ${token.patient.name}`);
+          
+          completeMsg += ` A re-visit reminder has been scheduled for ${scheduledDate.toLocaleDateString()} (${revisitDays} days from now). Get well soon!`;
         }
+        
+        await sendWhatsAppNotification(token.patient.phone, completeMsg);
       }
     }
 
@@ -293,6 +303,65 @@ router.put('/availability', authenticateToken, ensureDoctor, async (req, res) =>
     res.json({ message: 'Doctor details updated successfully', doctor });
   } catch (error) {
     console.error('Error updating doctor details:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST request lab tests for active patient
+router.post('/queue/lab-request', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const { testName } = req.body;
+
+    if (!testName) {
+      return res.status(400).json({ message: 'testName is required' });
+    }
+
+    const queue = await Queue.findOne({ doctor: doctorId });
+    if (!queue || !queue.currentToken) {
+      return res.status(400).json({ message: 'No active patient is currently inside the cabin' });
+    }
+
+    const token = await Token.findById(queue.currentToken);
+    if (!token) {
+      return res.status(404).json({ message: 'Active token not found' });
+    }
+
+    // Add test if not already requested
+    const exists = token.labTests.some(t => t.testName.toLowerCase() === testName.toLowerCase());
+    if (exists) {
+      return res.status(400).json({ message: `Test "${testName}" has already been requested for this patient` });
+    }
+
+    token.labTests.push({ testName, status: 'Pending' });
+    await token.save();
+
+    // Broadcast updates
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId });
+      req.io.to(`doctor:${doctorId}`).emit('queue-updated');
+    }
+
+    res.json({ message: `Requested lab test "${testName}" successfully.`, token });
+  } catch (err) {
+    console.error('Error requesting lab test:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET patient visit history
+router.get('/patients/:patientId/history', authenticateToken, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const history = await Token.find({
+      patient: patientId,
+      status: 'Completed'
+    })
+    .populate('doctor', 'name department')
+    .sort({ completedAt: -1 });
+    res.json(history);
+  } catch (err) {
+    console.error('Error fetching patient history:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });

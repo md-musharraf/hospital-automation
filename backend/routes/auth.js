@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Doctor = require('../models/Doctor');
 const Staff = require('../models/Staff');
+const LabAssistant = require('../models/LabAssistant');
 const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
 
 // Doctor Login
@@ -89,6 +90,45 @@ router.post('/staff/login', async (req, res) => {
   }
 });
 
+// Lab Assistant Login
+router.post('/lab/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ message: 'Username and password are required' });
+    }
+
+    const lab = await LabAssistant.findOne({ username });
+    if (!lab) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const isMatch = await bcrypt.compare(password, lab.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      { id: lab._id, username: lab.username, role: 'lab' },
+      JWT_SECRET,
+      { expiresIn: '12h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: lab._id,
+        name: lab.name,
+        username: lab.username,
+        role: 'lab'
+      }
+    });
+  } catch (error) {
+    console.error('Lab login error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get currently logged-in user
 router.get('/me', authenticateToken, async (req, res) => {
   try {
@@ -100,6 +140,10 @@ router.get('/me', authenticateToken, async (req, res) => {
       const staff = await Staff.findById(req.user.id).select('-passwordHash');
       if (!staff) return res.status(404).json({ message: 'Staff member not found' });
       return res.json({ user: { ...staff.toObject(), role: 'staff' } });
+    } else if (req.user.role === 'lab') {
+      const lab = await LabAssistant.findById(req.user.id).select('-passwordHash');
+      if (!lab) return res.status(404).json({ message: 'Lab Assistant not found' });
+      return res.json({ user: { ...lab.toObject(), role: 'lab' } });
     }
     res.status(400).json({ message: 'Invalid role' });
   } catch (error) {

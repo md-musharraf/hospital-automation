@@ -21,6 +21,21 @@ const TokenSchema = new mongoose.Schema({
     message: { type: String },
     timestamp: { type: Date, default: Date.now }
   }],
+  labTests: [{
+    testName: { type: String, required: true },
+    status: { type: String, enum: ['Pending', 'Completed'], default: 'Pending' },
+    remarks: { type: String },
+    completedAt: { type: Date }
+  }],
+  prescription: {
+    medicines: [{
+      name: { type: String },
+      dosage: { type: String },
+      duration: { type: String },
+      instructions: { type: String }
+    }],
+    advice: { type: String }
+  },
   estimatedWaitTime: { type: Number, default: 0 }, // in minutes
   calledAt: { type: Date },
   completedAt: { type: Date }

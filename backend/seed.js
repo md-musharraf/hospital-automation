@@ -11,6 +11,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const Doctor = require('./models/Doctor');
 const Staff = require('./models/Staff');
+const LabAssistant = require('./models/LabAssistant');
 const Queue = require('./models/Queue');
 const Token = require('./models/Token');
 const Patient = require('./models/Patient');
@@ -28,6 +29,7 @@ async function seedData() {
     console.log('Clearing old collections...');
     await Doctor.deleteMany({});
     await Staff.deleteMany({});
+    await LabAssistant.deleteMany({});
     await Queue.deleteMany({});
     await Token.deleteMany({});
     await Patient.deleteMany({});
@@ -104,6 +106,17 @@ async function seedData() {
     const insertedStaff = await Staff.insertMany(staffData);
     console.log(`Inserted ${insertedStaff.length} Staff members.`);
 
+    // Create Lab Assistant
+    const labData = [
+      {
+        name: 'CareSync Lab Tech',
+        username: 'lab_assistant',
+        passwordHash
+      }
+    ];
+    const insertedLab = await LabAssistant.insertMany(labData);
+    console.log(`Inserted ${insertedLab.length} Lab Assistants.`);
+
     console.log('Database seeding successfully completed! 🎉');
     console.log('\n--- Login Credentials ---');
     console.log('Doctor logins:');
@@ -113,6 +126,10 @@ async function seedData() {
     console.log('Staff logins:');
     for (const st of insertedStaff) {
       console.log(`  Username: ${st.username} | Password: password123`);
+    }
+    console.log('Lab Assistant logins:');
+    for (const lb of insertedLab) {
+      console.log(`  Username: ${lb.username} | Password: password123`);
     }
     console.log('-------------------------');
 
