@@ -1260,14 +1260,14 @@ function StaffDashboard({ staffToken, staffUser, onLogout }) {
           </button>
         </div>
 
-        <div className="p-8 flex-1 flex flex-col">
+        <div className="p-4 md:p-8 flex-1 flex flex-col">
           
           {/* TAB 1: HEALIGHT-STYLE DASHBOARD OVERVIEW */}
           {activeSidebarTab === 'dashboard' && (
             <div className="space-y-8 animate-fade-in">
               
               {/* Widescreen KPI cards */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 {[
                   { label: "Today's Patients", count: totalPatientsCount, icon: 'groups', sub: 'Total registered in directory', color: 'text-[var(--primary-color)]', bg: 'bg-[var(--primary-color)]/10' },
                   { label: 'Waiting', count: activeAppointmentsCount, icon: 'hourglass_empty', sub: 'Live active queue volume', color: 'text-[var(--secondary-color)]', bg: 'bg-[var(--secondary-color)]/10' },
@@ -1418,7 +1418,7 @@ function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
           {/* TAB 2: ACTIVE QUEUE MONITOR & WALK-IN REGISTRATION */}
           {activeSidebarTab === 'monitor' && (
-            <div className="flex-1 flex flex-col lg:flex-row overflow-hidden space-y-6 lg:space-y-0 lg:space-x-8 animate-fade-in">
+            <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden space-y-6 lg:space-y-0 lg:space-x-8 animate-fade-in no-scrollbar">
               {/* Left Form: Walk-in Registration */}
               <div className="w-full lg:w-80 bg-[var(--card-bg)] border border-[var(--border-color)]/30 p-5 rounded-2xl shadow-[var(--card-shadow)] shrink-0 text-sm">
                 <h3 className="font-extrabold text-[var(--text-color)] text-base mb-4">Walk-in Registry</h3>
@@ -1539,7 +1539,7 @@ function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </div>
 
               {/* Right List: Live Doctor queue monitor cards */}
-              <div className="flex-1 overflow-y-auto space-y-6">
+              <div className="flex-1 lg:overflow-y-auto space-y-6">
                 {queues.length === 0 ? (
                   <div className="text-[var(--text-secondary)] text-sm italic py-8">No hospital queues initialized.</div>
                 ) : (
@@ -2240,7 +2240,7 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
     <div className="flex-1 flex flex-col md:flex-row overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
       
       {/* Left Sidebar - Doctor status & Live queue list */}
-      <div className="w-full md:w-80 bg-[var(--card-bg)] border-b md:border-b-0 md:border-r border-[var(--border-color)]/30 p-5 flex flex-col space-y-5 overflow-y-auto shadow-inner">
+      <div className="w-full md:w-80 max-h-[35vh] md:max-h-none bg-[var(--card-bg)] border-b md:border-b-0 md:border-r border-[var(--border-color)]/30 p-5 flex flex-col space-y-5 overflow-y-auto shadow-inner shrink-0">
         <div className="flex justify-between items-center pb-2 border-b border-[var(--border-color)]/30">
           <div>
             <h3 className="font-extrabold text-[var(--text-color)] text-base">{doctorUser?.name}</h3>
@@ -2316,7 +2316,7 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
       </div>
 
       {/* Right Core Cabin Controls & Active Patient Card */}
-      <div className="flex-1 p-6 overflow-y-auto flex flex-col space-y-6 bg-[var(--bg-color)]">
+      <div className="flex-1 p-4 md:p-6 overflow-y-auto flex flex-col space-y-6 bg-[var(--bg-color)]">
         <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Active Cabin Workstation</h3>
 
         {loading ? (
