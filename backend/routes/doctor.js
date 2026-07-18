@@ -6,6 +6,7 @@ const Queue = require('../models/Queue');
 const Reminder = require('../models/Reminder');
 const { authenticateToken } = require('../middleware/auth');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
+const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 
 // Middleware to ensure the user is a doctor
 const ensureDoctor = (req, res, next) => {
@@ -91,6 +92,13 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
     // Recalculate wait times for remaining queue
     await recalculateQueueTimes(doctorId);
 
+    // Send automated WhatsApp alert for Called Token
+    if (token.patient && token.patient.phone) {
+      const room = req.user.currentRoom || 'Cabin A';
+      const callMsg = `ALERT: Hello ${token.patient.name || 'Patient'}, your token ${token.tokenNumber} is now ACTIVE! Please proceed immediately to ${room} for your checkup.`;
+      await sendWhatsAppNotification(token.patient.phone, callMsg);
+    }
+
     // Broadcast updates
     if (req.io) {
       req.io.to('queue:global').emit('queue-updated', { doctorId });
@@ -144,6 +152,12 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
         });
         await reminder.save();
         console.log(`[REMINDER CREATED] scheduled for ${scheduledDate} for patient ${token.patient.name}`);
+
+        // Auto alert message: WhatsApp follow-up registration confirmation
+        if (token.patient && token.patient.phone) {
+          const followUpConf = `Hello ${token.patient.name || 'Patient'}, your checkup is completed. A re-visit reminder has been successfully scheduled for ${scheduledDate.toLocaleDateString()} (${revisitDays} days from now). Get well soon!`;
+          await sendWhatsAppNotification(token.patient.phone, followUpConf);
+        }
       }
     }
 

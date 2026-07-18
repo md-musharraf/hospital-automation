@@ -183,6 +183,19 @@ cron.schedule('0 9 * * *', async () => {
   }
 });
 
+// Periodic auto follow-up notifications checker (runs every 5 minutes)
+setInterval(async () => {
+  try {
+    const { processPendingReminders } = require('./utils/reminderHelper');
+    const processed = await processPendingReminders();
+    if (processed.length > 0) {
+      console.log(`[AUTO-REMINDERS] Automatically processed and sent ${processed.length} pending follow-up notifications.`);
+    }
+  } catch (error) {
+    console.error('[AUTO-REMINDERS] Background auto follow-up process encountered an error:', error);
+  }
+}, 5 * 60 * 1000); // 5 minutes
+
 // Serve frontend build in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../frontend/dist')));

@@ -1,4 +1,5 @@
 const Reminder = require('../models/Reminder');
+const { sendWhatsAppNotification } = require('./whatsappHelper');
 
 /**
  * Searches the database for pending reminders scheduled for today or earlier,
@@ -24,8 +25,9 @@ async function processPendingReminders() {
     const patientName = reminder.patient ? reminder.patient.name : 'Patient';
     const doctorName = reminder.doctor ? reminder.doctor.name : 'Doctor';
 
-    // Simulate sending SMS/message
+    // Send automated SMS & WhatsApp notification
     console.log(`[SIMULATED SMS SENT] To: ${phone} | Msg: "${reminder.message}"`);
+    await sendWhatsAppNotification(phone, reminder.message);
 
     // Update status to Sent
     reminder.status = 'Sent';

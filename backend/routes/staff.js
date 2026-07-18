@@ -8,6 +8,7 @@ const Reminder = require('../models/Reminder');
 const { processPendingReminders } = require('../utils/reminderHelper');
 const { authenticateToken } = require('../middleware/auth');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
+const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 
 // Middleware to ensure the user is staff
 const ensureStaff = (req, res, next) => {
@@ -99,6 +100,15 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     }
 
     const createdToken = await Token.findById(token._id).populate('patient').populate('doctor');
+
+    // Auto alert message: WhatsApp booking confirmation for Walk-in Patient
+    if (createdToken.patient && createdToken.patient.phone) {
+      const docName = createdToken.doctor ? createdToken.doctor.name : 'Doctor';
+      const roomName = createdToken.doctor ? (createdToken.doctor.currentRoom || 'Cabin A') : 'Cabin A';
+      const walkInMsg = `Hello ${createdToken.patient.name}, your walk-in token ${createdToken.tokenNumber} has been successfully generated for ${docName} in ${roomName}. Estimated wait time is ${createdToken.estimatedWaitTime} mins.`;
+      await sendWhatsAppNotification(createdToken.patient.phone, walkInMsg);
+    }
+
     res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken });
   } catch (error) {
     console.error('Error booking walk-in:', error);

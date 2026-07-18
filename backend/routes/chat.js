@@ -6,6 +6,7 @@ const Doctor = require('../models/Doctor');
 const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
+const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 
 // Public endpoint for live department wait times
 router.get('/queues/public-status', async (req, res) => {
@@ -381,6 +382,10 @@ router.post('/message', async (req, res) => {
 
         // Fetch refreshed token details with Wait Time
         const refreshedToken = await Token.findById(token._id);
+
+        // Auto alert message: WhatsApp booking confirmation
+        const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is successfully booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Your estimated wait time is ${refreshedToken.estimatedWaitTime} mins. Track your status online at: https://hospital-automation-wine.vercel.app/`;
+        await sendWhatsAppNotification(patient.phone, bookingMessage);
 
         // Broadcast updates via Socket.io if available
         if (req.io) {
