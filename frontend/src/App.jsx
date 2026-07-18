@@ -527,7 +527,7 @@ function PatientPortal() {
 
                 {/* Rich Triage Component: Doctor Bento Cards (If select doctor prompt) */}
                 {isBot && isSelectDoctorPrompt && options.length > 0 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3 ml-10 w-full max-w-[500px]">
+                  <div className="flex overflow-x-auto gap-4 mt-3 ml-0 sm:ml-10 w-full max-w-[500px] no-scrollbar pb-2 shrink-0">
                     {options.map((opt, idx) => {
                       // Parse Doctor Name and Dept
                       const parts = opt.match(/(Dr\.\s+[^\(]+)\s*\(([^\)]+)\)/);
@@ -539,12 +539,12 @@ function PatientPortal() {
                       const imageUrl = isSarah 
                         ? 'https://lh3.googleusercontent.com/aida-public/AB6AXuBWdRlyEiC2Yx0HWgBSOach1egGcQ0IkKHDKXiKW95RHy3l-ZXQzsKhEAACSuq7LLYYYXPqx19hTAtvRNbRFPiF1dFioOaElurSxNksTJJp8UUTrgGOSBjZ6UY0RBLaNP2I2bjLyVD1Owse2cXuKTyp9Z5bNIwSTp8vM3fyy1dQfm8PHbYKXCDfUC_1IzepbJC7ByV-s4jkJQht1CncmvPAVtCo2eQDPjp8Eqn9wUxEMbXyMmhBcQLvpR0HL8CHTq3fHlK3pTgo4NyX'
                         : 'https://lh3.googleusercontent.com/aida-public/AB6AXuBr7a9IwJ3lVwmiEIptsdjdBnkbqAq5y-oH7FGBDywOkQbEyKCpD5eqUJXGzZI8Sldi_VWAmtMDivwX3GBC7v4iGEam3qMA_cYxaFUo9OK9XAPj2knsB0UpcTz67MZV2MNojcCs30U58z1NBROK_R73S5k2pHk5I3J_VatiyypolMqf1A0fsLbjXqoN8Nl0-9GpZRISI3rxF1pIQwFCB1DIOLj26MIYOMDzj4P8JlhIo83exsG_D1jLKaZLV51cokSPWqrEXCTLy90N';
-
+ 
                       return (
                         <div 
                           key={idx}
                           onClick={() => handleSendMessage(opt)}
-                          className="bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)]/40 p-4 shadow-[var(--card-shadow)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer relative overflow-hidden group border-l-4 border-l-[var(--secondary-color)] active:scale-[0.98] duration-100"
+                          className="bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)]/40 p-4 shadow-[var(--card-shadow)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer relative overflow-hidden group border-l-4 border-l-[var(--secondary-color)] active:scale-[0.98] duration-100 w-56 shrink-0"
                         >
                           <div className="flex items-center space-x-3 mb-3">
                             <div className="w-11 h-11 rounded-full overflow-hidden bg-zinc-200 border border-[var(--border-color)]/20 shrink-0">
@@ -619,21 +619,26 @@ function PatientPortal() {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                if (e.key === 'Enter' && !e.shiftKey && options.length === 0) {
                   e.preventDefault();
                   handleSendMessage();
                 }
               }}
               rows={1}
-              placeholder="Type a message or select an option..." 
-              className="w-full bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[40px] py-2 font-medium text-sm text-[var(--text-color)] placeholder-[var(--text-secondary)]/50 outline-none"
+              disabled={options.length > 0}
+              placeholder={options.length > 0 ? "Select an option from the list above..." : "Type a message..."}
+              className="flex-1 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[40px] py-2 font-medium text-sm text-[var(--text-color)] placeholder-[var(--text-secondary)]/50 outline-none disabled:opacity-60 disabled:cursor-not-allowed"
             />
-            <button className="p-2 text-[var(--text-secondary)] hover:text-[var(--primary-color)] rounded-full transition-colors shrink-0 flex items-center justify-center">
+            <button 
+              disabled={options.length > 0}
+              className="p-2 text-[var(--text-secondary)] hover:text-[var(--primary-color)] rounded-full transition-colors shrink-0 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+            >
               <span className="material-symbols-outlined text-[20px]">mic</span>
             </button>
             <button 
               onClick={() => handleSendMessage()}
-              className="p-2 bg-[var(--primary-color)] text-[var(--primary-text)] hover:bg-[var(--primary-container)] rounded-xl transition-colors shrink-0 shadow-sm flex items-center justify-center"
+              disabled={options.length > 0}
+              className="p-2 bg-[var(--primary-color)] text-[var(--primary-text)] hover:bg-[var(--primary-container)] rounded-xl transition-colors shrink-0 shadow-sm flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <span className="material-symbols-outlined text-[20px]">send</span>
             </button>
