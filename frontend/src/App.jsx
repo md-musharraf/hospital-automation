@@ -83,7 +83,7 @@ function AppContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--bg-color)] text-[var(--text-color)] flex flex-col font-sans transition-colors duration-200">
+    <div className="h-screen overflow-hidden bg-[var(--bg-color)] text-[var(--text-color)] flex flex-col font-sans transition-colors duration-200">
       {/* Floating Demo Navigation Bar */}
       <div className="bg-[var(--card-bg)] border-b border-[var(--border-color)]/60 px-4 py-2.5 flex items-center justify-between z-50 shadow-lg shadow-black/5">
         <div className="flex items-center space-x-2">
@@ -208,12 +208,7 @@ function PatientPortal() {
     { sender: 'bot', text: 'Welcome to the CareSync AI Assistant! 🏥' },
     { sender: 'bot', text: "I can help you book an appointment, check live queues, or trigger emergency tokens. Send a message like 'Hi' or 'Hello' to begin!" }
   ]);
-  const [options, setOptions] = useState([
-    'Book New Appointment / Generate Token',
-    'Re-visit (Existing Patient)',
-    'Emergency SOS Token',
-    'Check Live Queue Status'
-  ]);
+  const [options, setOptions] = useState([]);
   const [inputText, setInputText] = useState('');
   const [sessionId] = useState(() => 'session_' + Math.random().toString(36).substr(2, 9));
   const [myToken, setMyToken] = useState(null);
@@ -628,7 +623,7 @@ function PatientPortal() {
               rows={1}
               disabled={options.length > 0}
               placeholder={options.length > 0 ? "Select an option from the list above..." : "Type a message..."}
-              className="flex-1 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[40px] py-2 font-medium text-sm text-[var(--text-color)] placeholder-[var(--text-secondary)]/50 outline-none disabled:opacity-60 disabled:cursor-not-allowed"
+              className="flex-1 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[40px] py-2 font-medium text-sm text-[var(--text-color)] placeholder-[var(--text-secondary)]/50 outline-none disabled:opacity-60 disabled:cursor-not-allowed no-scrollbar"
             />
             <button 
               disabled={options.length > 0}
