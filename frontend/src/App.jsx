@@ -293,13 +293,22 @@ function PatientPortal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, message: 'hi' })
     })
-    .then(res => res.json())
+    .then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || `Status ${res.status}`);
+      }
+      return data;
+    })
     .then(data => {
       if (data.options) {
         setOptions(data.options);
       }
     })
-    .catch(err => console.error('Error auto-initializing chat options:', err));
+    .catch(err => {
+      console.error('Error auto-initializing chat options:', err);
+      setMessages(prev => [...prev, { sender: 'bot', text: `⚠️ Startup notice: ${err.message}` }]);
+    });
   }, [sessionId]);
 
   const loadWaitTimes = async () => {
@@ -401,6 +410,9 @@ function PatientPortal() {
         body: JSON.stringify({ sessionId, message: text })
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || `Server returned status ${res.status}`);
+      }
 
       if (data.messages) {
         data.messages.forEach(msg => {
@@ -424,7 +436,7 @@ function PatientPortal() {
       }
     } catch (err) {
       console.error(err);
-      setMessages(prev => [...prev, { sender: 'bot', text: 'Error contacting AI assistant. Make sure backend is running.' }]);
+      setMessages(prev => [...prev, { sender: 'bot', text: `⚠️ Error: ${err.message || 'Make sure backend is running.'}` }]);
     }
   };
 

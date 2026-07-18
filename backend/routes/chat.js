@@ -88,9 +88,15 @@ const dictionary = {
   }
 };
 
-// Chatbot interaction endpoint
 router.post('/message', async (req, res) => {
   try {
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1 && process.env.USE_MOCK_DB !== 'true') {
+      return res.status(503).json({
+        message: 'Database connection is offline. Please verify you have whitelisted all IP addresses (0.0.0.0/0) in your MongoDB Atlas Network Access panel.'
+      });
+    }
+
     const { sessionId, message } = req.body;
     if (!sessionId) {
       return res.status(400).json({ message: 'sessionId is required' });
