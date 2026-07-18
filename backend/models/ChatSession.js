@@ -4,8 +4,8 @@ const ChatSessionSchema = new mongoose.Schema({
   sessionId: { type: String, required: true, unique: true, index: true }, // e.g. Socket ID or phone number
   currentState: { 
     type: String, 
-    enum: ['WELCOME', 'AWAITING_PHONE', 'AWAITING_NAME', 'AWAITING_AGE', 'AWAITING_GENDER', 'AWAITING_SYMPTOMS', 'COMPLETED'], 
-    default: 'WELCOME' 
+    enum: ['LANGUAGE', 'WELCOME', 'AWAITING_PHONE', 'AWAITING_NAME', 'AWAITING_AGE', 'AWAITING_GENDER', 'AWAITING_SYMPTOMS', 'COMPLETED'], 
+    default: 'LANGUAGE' 
   },
   tempData: {
     phone: { type: String },
