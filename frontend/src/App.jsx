@@ -358,7 +358,7 @@ function PatientPortal() {
   };
 
   return (
-    <div className="flex-1 flex w-full max-w-[1440px] mx-auto h-[calc(100vh-62px)] overflow-hidden bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
+    <div className="flex-1 flex w-full max-w-[1440px] mx-auto h-[calc(100vh-62px)] overflow-hidden bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 min-w-0">
       {/* Left Sidebar: Hospital Info & Wait Times */}
       <aside className="hidden lg:flex flex-col w-80 bg-[var(--card-bg)] border-r border-[var(--border-color)]/30 p-6 overflow-y-auto no-scrollbar shadow-[inset_-10px_0_20px_rgba(0,0,0,0.01)] relative z-10">
         <div className="mb-6">
@@ -442,7 +442,7 @@ function PatientPortal() {
       </aside>
 
       {/* Center Chat Area */}
-      <section className="flex-1 flex flex-col bg-[var(--bg-color)] relative z-0">
+      <section className="flex-1 flex flex-col bg-[var(--bg-color)] relative z-0 min-w-0">
         {/* Chat Header */}
         <header className="px-6 py-4 border-b border-[var(--border-color)]/50 flex items-center justify-between sticky top-0 z-20 bg-[var(--card-bg)]/80 backdrop-blur-md">
           <div className="flex items-center space-x-3">
@@ -595,16 +595,17 @@ function PatientPortal() {
 
         {/* Input Footer */}
         <div className="p-4 bg-[var(--card-bg)] border-t border-[var(--border-color)]/30 relative z-20 shadow-[0_-4px_20px_rgba(0,0,0,0.01)]">
-          {/* Quick Replies Chips */}
+          {/* Quick Replies Options */}
           {options.length > 0 && !options[0].startsWith('Dr.') && (
-            <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar pb-1">
+            <div className="flex flex-col gap-2 mb-3">
               {options.map((opt, i) => (
                 <button
                   key={i}
                   onClick={() => handleSendMessage(opt)}
-                  className="whitespace-nowrap px-4 py-1.5 rounded-full border border-[var(--border-color)]/60 font-bold text-xs text-[var(--primary-color)] bg-[var(--card-bg)] hover:bg-[var(--border-color)]/25 transition-all shadow-sm shrink-0 active:scale-95 duration-100"
+                  className="w-full text-left px-4 py-2.5 rounded-xl border border-[var(--border-color)]/60 font-bold text-xs text-[var(--primary-color)] bg-[var(--card-bg)] hover:bg-[var(--border-color)]/25 transition-all shadow-sm active:scale-95 duration-100 flex items-center justify-between"
                 >
-                  {opt}
+                  <span>{opt}</span>
+                  <span className="material-symbols-outlined text-[16px] text-[var(--primary-color)]/50">chevron_right</span>
                 </button>
               ))}
             </div>
