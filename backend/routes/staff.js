@@ -18,10 +18,13 @@ const ensureStaff = (req, res, next) => {
   next();
 };
 
-// GET all live queues for all doctors (Staff Overview)
+// GET all live queues for doctors in the staff member's hospital (Staff Overview)
 router.get('/queues', authenticateToken, ensureStaff, async (req, res) => {
   try {
-    const queues = await Queue.find()
+    const doctors = await Doctor.find({ hospital: req.user.hospital });
+    const docIds = doctors.map(d => d._id);
+
+    const queues = await Queue.find({ doctor: { $in: docIds } })
       .populate('doctor', '-passwordHash')
       .populate('currentToken')
       .populate({

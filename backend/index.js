@@ -274,13 +274,15 @@ const seedMockData = async () => {
           name: 'Alice Smith',
           username: 'alice_staff',
           passwordHash,
-          counterNumber: 'Reception Counter 1'
+          counterNumber: 'Reception Counter 1',
+          hospital: 'general-hospital'
         },
         {
           name: 'Bob Jones',
           username: 'bob_staff',
           passwordHash,
-          counterNumber: 'Reception Counter 2'
+          counterNumber: 'Reception Counter 2',
+          hospital: 'pediatrics-clinic'
         }
       ]);
 
@@ -289,7 +291,14 @@ const seedMockData = async () => {
         {
           name: 'CareSync Lab Tech',
           username: 'lab_assistant',
-          passwordHash
+          passwordHash,
+          hospital: 'general-hospital'
+        },
+        {
+          name: 'St. Jude Lab Tech',
+          username: 'ped_lab_assistant',
+          passwordHash,
+          hospital: 'pediatrics-clinic'
         }
       ]);
       console.log('[Mock DB] Seeding completed successfully. Login ready.');

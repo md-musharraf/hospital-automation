@@ -1136,8 +1136,24 @@ function PatientPortal() {
 function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
   const [username, setUsername] = useState('alice_staff');
   const [password, setPassword] = useState('password123');
+  const [hospitals, setHospitals] = useState([
+    { id: 'general-hospital', name: 'CareSync General Hospital' },
+    { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
+  ]);
+  const [selectedHospital, setSelectedHospital] = useState('general-hospital');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setHospitals(data);
+        }
+      })
+      .catch(err => console.error('Error fetching hospitals for login:', err));
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -1148,7 +1164,7 @@ function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
       const res = await fetch(`${BACKEND_URL}/api/v1/auth/staff/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password, hospital: selectedHospital })
       });
       const data = await res.json();
 
@@ -1186,6 +1202,18 @@ function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
         )}
 
         <form onSubmit={handleLogin} className="space-y-4 text-sm font-semibold">
+          <div>
+            <label className="block text-[var(--text-secondary)] mb-1">Select Hospital</label>
+            <select
+              value={selectedHospital}
+              onChange={(e) => setSelectedHospital(e.target.value)}
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-indigo-500 rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold cursor-pointer"
+            >
+              {hospitals.map(h => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="block text-[var(--text-secondary)] mb-1">Username</label>
             <input
@@ -2438,8 +2466,24 @@ function StaffDashboard({ staffToken, staffUser, onLogout }) {
 function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
   const [email, setEmail] = useState('sarah.jenkins@hospital.com');
   const [password, setPassword] = useState('password123');
+  const [hospitals, setHospitals] = useState([
+    { id: 'general-hospital', name: 'CareSync General Hospital' },
+    { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
+  ]);
+  const [selectedHospital, setSelectedHospital] = useState('general-hospital');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setHospitals(data);
+        }
+      })
+      .catch(err => console.error('Error fetching hospitals for doctor login:', err));
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -2450,7 +2494,7 @@ function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
       const res = await fetch(`${BACKEND_URL}/api/v1/auth/doctor/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, hospital: selectedHospital })
       });
       const data = await res.json();
 
@@ -2488,6 +2532,18 @@ function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
         )}
 
         <form onSubmit={handleLogin} className="space-y-4 text-sm font-semibold">
+          <div>
+            <label className="block text-[var(--text-secondary)] mb-1">Select Hospital</label>
+            <select
+              value={selectedHospital}
+              onChange={(e) => setSelectedHospital(e.target.value)}
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold cursor-pointer"
+            >
+              {hospitals.map(h => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="block text-[var(--text-secondary)] mb-1">Email address</label>
             <input
@@ -3258,8 +3314,24 @@ function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
 function LabLogin({ setLabToken, setLabUser, onSuccess }) {
   const [username, setUsername] = useState('lab_assistant');
   const [password, setPassword] = useState('password123');
+  const [hospitals, setHospitals] = useState([
+    { id: 'general-hospital', name: 'CareSync General Hospital' },
+    { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
+  ]);
+  const [selectedHospital, setSelectedHospital] = useState('general-hospital');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setHospitals(data);
+        }
+      })
+      .catch(err => console.error('Error fetching hospitals for lab login:', err));
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -3270,7 +3342,7 @@ function LabLogin({ setLabToken, setLabUser, onSuccess }) {
       const res = await fetch(`${BACKEND_URL}/api/v1/auth/lab/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password, hospital: selectedHospital })
       });
       const data = await res.json();
 
@@ -3308,6 +3380,19 @@ function LabLogin({ setLabToken, setLabUser, onSuccess }) {
         )}
 
         <form onSubmit={handleLogin} className="space-y-4 text-sm font-semibold">
+          <div>
+            <label className="block text-[var(--text-secondary)] mb-1">Select Hospital</label>
+            <select
+              value={selectedHospital}
+              onChange={(e) => setSelectedHospital(e.target.value)}
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:ring-1 focus:ring-teal-500 focus:border-teal-500 rounded-xl px-4 py-3 outline-none text-[var(--text-color)] font-bold cursor-pointer"
+            >
+              {hospitals.map(h => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
+          </div>
+
           <div>
             <label className="block text-[var(--text-secondary)] mb-1">Username</label>
             <input

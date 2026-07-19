@@ -11,11 +11,16 @@ const ensureLab = (req, res, next) => {
   next();
 };
 
-// GET all tokens with pending lab tests
+// GET all tokens with pending lab tests in the lab assistant's hospital
 router.get('/queues/pending-tests', authenticateToken, ensureLab, async (req, res) => {
   try {
+    const Doctor = require('../models/Doctor');
+    const doctors = await Doctor.find({ hospital: req.user.hospital });
+    const docIds = doctors.map(d => d._id);
+
     const tokens = await Token.find({
-      'labTests.status': 'Pending'
+      'labTests.status': 'Pending',
+      doctor: { $in: docIds }
     })
     .populate('patient')
     .populate('doctor', '-passwordHash');

@@ -10,14 +10,14 @@ const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
 // Doctor Login
 router.post('/doctor/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password are required' });
+    const { email, password, hospital } = req.body;
+    if (!email || !password || !hospital) {
+      return res.status(400).json({ message: 'Email, password, and hospital selection are required' });
     }
 
-    const doctor = await Doctor.findOne({ email });
+    const doctor = await Doctor.findOne({ email, hospital });
     if (!doctor) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid credentials for the selected hospital' });
     }
 
     const isMatch = await bcrypt.compare(password, doctor.passwordHash);
@@ -26,7 +26,7 @@ router.post('/doctor/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: doctor._id, email: doctor.email, role: 'doctor' },
+      { id: doctor._id, email: doctor.email, role: 'doctor', hospital: doctor.hospital },
       JWT_SECRET,
       { expiresIn: '12h' }
     );
@@ -41,6 +41,7 @@ router.post('/doctor/login', async (req, res) => {
         specialization: doctor.specialization,
         availabilityStatus: doctor.availabilityStatus,
         currentRoom: doctor.currentRoom,
+        hospital: doctor.hospital,
         role: 'doctor'
       }
     });
@@ -53,14 +54,14 @@ router.post('/doctor/login', async (req, res) => {
 // Staff Login
 router.post('/staff/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ message: 'Username and password are required' });
+    const { username, password, hospital } = req.body;
+    if (!username || !password || !hospital) {
+      return res.status(400).json({ message: 'Username, password, and hospital selection are required' });
     }
 
-    const staff = await Staff.findOne({ username });
+    const staff = await Staff.findOne({ username, hospital });
     if (!staff) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid credentials for the selected hospital' });
     }
 
     const isMatch = await bcrypt.compare(password, staff.passwordHash);
@@ -69,7 +70,7 @@ router.post('/staff/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: staff._id, username: staff.username, role: 'staff' },
+      { id: staff._id, username: staff.username, role: 'staff', hospital: staff.hospital },
       JWT_SECRET,
       { expiresIn: '12h' }
     );
@@ -81,6 +82,7 @@ router.post('/staff/login', async (req, res) => {
         name: staff.name,
         username: staff.username,
         counterNumber: staff.counterNumber,
+        hospital: staff.hospital,
         role: 'staff'
       }
     });
@@ -93,14 +95,14 @@ router.post('/staff/login', async (req, res) => {
 // Lab Assistant Login
 router.post('/lab/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ message: 'Username and password are required' });
+    const { username, password, hospital } = req.body;
+    if (!username || !password || !hospital) {
+      return res.status(400).json({ message: 'Username, password, and hospital selection are required' });
     }
 
-    const lab = await LabAssistant.findOne({ username });
+    const lab = await LabAssistant.findOne({ username, hospital });
     if (!lab) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid credentials for the selected hospital' });
     }
 
     const isMatch = await bcrypt.compare(password, lab.passwordHash);
@@ -109,7 +111,7 @@ router.post('/lab/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: lab._id, username: lab.username, role: 'lab' },
+      { id: lab._id, username: lab.username, role: 'lab', hospital: lab.hospital },
       JWT_SECRET,
       { expiresIn: '12h' }
     );
@@ -120,6 +122,7 @@ router.post('/lab/login', async (req, res) => {
         id: lab._id,
         name: lab.name,
         username: lab.username,
+        hospital: lab.hospital,
         role: 'lab'
       }
     });
