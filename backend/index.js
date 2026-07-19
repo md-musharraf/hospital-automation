@@ -238,7 +238,8 @@ const seedMockData = async () => {
           specialization: 'Heart Failure & Arrhythmias',
           availabilityStatus: 'Available',
           averageCheckupTime: 12,
-          currentRoom: 'Cabin 101'
+          currentRoom: 'Cabin 101',
+          hospital: 'general-hospital'
         },
         {
           name: 'Dr. Robert Chen',
@@ -248,7 +249,8 @@ const seedMockData = async () => {
           specialization: 'Child Healthcare',
           availabilityStatus: 'Available',
           averageCheckupTime: 8,
-          currentRoom: 'Cabin 102'
+          currentRoom: 'Cabin 102',
+          hospital: 'pediatrics-clinic'
         },
         {
           name: 'Dr. Emily Taylor',
@@ -258,7 +260,8 @@ const seedMockData = async () => {
           specialization: 'General Diagnosis',
           availabilityStatus: 'Available',
           averageCheckupTime: 10,
-          currentRoom: 'Cabin 103'
+          currentRoom: 'Cabin 103',
+          hospital: 'general-hospital'
         }
       ]);
 

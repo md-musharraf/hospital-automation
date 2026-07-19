@@ -8,10 +8,34 @@ const Queue = require('../models/Queue');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 
+// Hospitals Configuration
+const hospitals = [
+  {
+    id: 'general-hospital',
+    name: 'CareSync General Hospital',
+    slug: 'general-hospital',
+    address: '123 Healthcare Blvd, Medical District',
+    phone: '+1 (555) 123-4567',
+    whatsappNumber: process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886',
+    coverImage: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA1x4Ta8X_Leb2KfTzTMhRKsT439crOzzOgCCfSQH3UNSJlkdZTlRZT13ai7p8kN9f7_vHvbO7z2snijUJmc30zd6loDlIMh8Uth9PitBK4Q9fgbf17IwSVaxF8O9WHyaQvTAvo-ILHCBdZnJT8Yhu4iOlLxRG6irdb1Gnl_7dsWd1s1hLWea_09I6kOuw8kjUH9psbS4v-OXZXFH7mVJ9A8DwUUtxXqxAK0RcJIlWbR2K3O1vo3ZCrbqgnr5Egw0jJOTNYtRgR1lFx',
+    description: 'Full-service tertiary care facility specializing in cardiology, internal medicine, and emergency care.'
+  },
+  {
+    id: 'pediatrics-clinic',
+    name: 'St. Jude Pediatrics Clinic',
+    slug: 'pediatrics-clinic',
+    address: '456 Kids Care Way, Suite B',
+    phone: '+1 (555) 987-6543',
+    whatsappNumber: '+15550199999',
+    coverImage: 'https://images.unsplash.com/photo-1502740479091-635887520276?q=80&w=800&auto=format&fit=crop',
+    description: 'Dedicated children health center providing comprehensive pediatric checkups and childcare solutions.'
+  }
+];
+
 // Bilingual Translation Dictionary
 const dictionary = {
   en: {
-    welcome: 'Welcome to CareSync AI Assistant! 🏥',
+    welcome: 'Welcome to CareSync AI Assistant! 🏥 (You can also chat with us on WhatsApp at ' + (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886').replace(/^whatsapp:/i, '') + ')',
     selectOption: 'Please select an option below to proceed:',
     options: [
       'Book New Appointment / Generate Token',
@@ -49,7 +73,7 @@ const dictionary = {
     tokenDetailsBody: (patient, doctor, dept, statusText) => `• Patient: ${patient}\n• Doctor: ${doctor} (${dept})\n• Live Status: ${statusText}`
   },
   hi: {
-    welcome: 'केयरसिंक एआई असिस्टेंट में आपका स्वागत है! 🏥',
+    welcome: 'केयरसिंक एआई असिस्टेंट में आपका स्वागत है! 🏥 (आप हमसे सीधे व्हाट्सएप पर ' + (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886').replace(/^whatsapp:/i, '') + ' पर भी चैट कर सकते हैं)',
     selectOption: 'कृपया आगे बढ़ने के लिए नीचे दिए गए विकल्पों में से एक चुनें:',
     options: [
       'नया अपॉइंटमेंट बुक करें / टोकन जेनरेट करें',
@@ -97,7 +121,7 @@ router.post('/message', async (req, res) => {
       });
     }
 
-    const { sessionId, message } = req.body;
+    const { sessionId, message, hospitalId } = req.body;
     if (!sessionId) {
       return res.status(400).json({ message: 'sessionId is required' });
     }
@@ -106,6 +130,13 @@ router.post('/message', async (req, res) => {
     let session = await ChatSession.findOne({ sessionId });
     if (!session) {
       session = new ChatSession({ sessionId, currentState: 'LANGUAGE' });
+    }
+
+    // Store hospitalId context if provided by frontend
+    if (hospitalId) {
+      session.tempData.hospitalId = hospitalId;
+      session.markModified('tempData');
+      await session.save();
     }
 
     const cleanMsg = message ? message.trim() : '';
@@ -117,9 +148,10 @@ router.post('/message', async (req, res) => {
       session.tempData = {};
       await session.save();
 
+      const num = (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886').replace(/^whatsapp:/i, '');
       return res.json({
         messages: [
-          { sender: 'bot', text: 'Welcome to CareSync AI Assistant! 🏥\nPlease select your preferred language:\n\nकेयरसिंक एआई असिस्टेंट में आपका स्वागत है! कृपया अपनी पसंदीदा भाषा चुनें:' }
+          { sender: 'bot', text: `Welcome to CareSync AI Assistant! 🏥\n(You can also chat with us on WhatsApp at ${num})\n\nPlease select your preferred language:\n\nकेयरसिंक एआई असिस्टेंट में आपका स्वागत है! (आप हमसे व्हाट्सएप पर भी ${num} पर चैट कर सकते हैं)\nकृपया अपनी पसंदीदा भाषा चुनें:` }
         ],
         options: ['English', 'हिन्दी']
       });
@@ -358,7 +390,11 @@ router.post('/message', async (req, res) => {
         session.tempData.symptoms = cleanMsg;
         await session.save();
 
-        const doctors = await Doctor.find({ availabilityStatus: { $ne: 'Unavailable' } });
+        const currentHospId = session.tempData.hospitalId || 'general-hospital';
+        const doctors = await Doctor.find({ 
+          hospital: currentHospId, 
+          availabilityStatus: { $ne: 'Unavailable' } 
+        });
         if (doctors.length === 0) {
           return res.json({
             messages: [{ sender: 'bot', text: text.noDoctors }],
@@ -375,7 +411,11 @@ router.post('/message', async (req, res) => {
       
       // If we already have symptoms, cleanMsg should match one of the doctor names
       else {
-        const doctors = await Doctor.find({ availabilityStatus: { $ne: 'Unavailable' } });
+        const currentHospId = session.tempData.hospitalId || 'general-hospital';
+        const doctors = await Doctor.find({ 
+          hospital: currentHospId, 
+          availabilityStatus: { $ne: 'Unavailable' } 
+        });
         const selectedDoc = doctors.find(d => `${d.name} (${d.department})` === cleanMsg);
 
         if (!selectedDoc) {
@@ -481,6 +521,58 @@ router.post('/message', async (req, res) => {
   }
 });
 
+// GET public queue wait times and WhatsApp config
+router.get('/queues/public-status', async (req, res) => {
+  try {
+    const { hospitalId } = req.query;
+    
+    const filter = {};
+    if (hospitalId) {
+      const doctors = await Doctor.find({ hospital: hospitalId });
+      const docIds = doctors.map(d => d._id);
+      filter.doctor = { $in: docIds };
+    }
+
+    const queues = await Queue.find(filter).populate('doctor');
+    const deptTimes = {
+      'Emergency': 15,
+      'General Practice': 15,
+      'Pediatrics': 10
+    };
+
+    queues.forEach(q => {
+      if (!q.doctor) return;
+      const dept = q.doctor.department;
+      const count = q.activeQueue ? q.activeQueue.length : 0;
+      const avgCheckup = q.doctor.averageCheckupTime || 10;
+      const buffer = q.bufferDelay || 0;
+      const wait = (count * avgCheckup) + buffer;
+
+      let frontendDept = dept;
+      if (dept === 'General Medicine' || dept === 'Cardiology') {
+        frontendDept = 'General Practice';
+      }
+      
+      deptTimes[frontendDept] = wait > 0 ? wait : (frontendDept === 'Pediatrics' ? 10 : 15);
+    });
+
+    const activeHospId = hospitalId || 'general-hospital';
+    const hospital = hospitals.find(h => h.id === activeHospId) || hospitals[0];
+    const rawWhatsapp = hospital.id === 'general-hospital'
+      ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
+      : hospital.whatsappNumber;
+    const cleanWhatsapp = rawWhatsapp.replace(/^whatsapp:/i, '');
+
+    res.json({
+      ...deptTimes,
+      whatsappNumber: cleanWhatsapp
+    });
+  } catch (error) {
+    console.error('Error fetching public status:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // GET token details and queue position by Mongo ID
 router.get('/token/:tokenId', async (req, res) => {
   try {
@@ -506,6 +598,36 @@ router.get('/token/:tokenId', async (req, res) => {
     console.error('Error fetching token details:', err);
     res.status(500).json({ message: 'Server error' });
   }
+});
+
+// GET all registered hospitals
+router.get('/hospitals', (req, res) => {
+  const formattedHospitals = hospitals.map(h => {
+    const rawWhatsapp = h.id === 'general-hospital' 
+      ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
+      : h.whatsappNumber;
+    return {
+      ...h,
+      whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
+    };
+  });
+  res.json(formattedHospitals);
+});
+
+// GET single hospital details
+router.get('/hospital/:hospitalId', (req, res) => {
+  const { hospitalId } = req.params;
+  const hospital = hospitals.find(h => h.id === hospitalId);
+  if (!hospital) {
+    return res.status(404).json({ message: 'Hospital not found' });
+  }
+  const rawWhatsapp = hospital.id === 'general-hospital'
+    ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
+    : hospital.whatsappNumber;
+  res.json({
+    ...hospital,
+    whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
+  });
 });
 
 module.exports = router;

@@ -165,7 +165,8 @@ function AppContent() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col relative overflow-hidden">
         <Routes>
-          <Route path="/" element={<PatientPortal />} />
+          <Route path="/" element={<HospitalHub />} />
+          <Route path="/hospital/:hospitalId" element={<PatientPortal />} />
           <Route 
             path="/staff/login" 
             element={
@@ -261,9 +262,196 @@ function AppContent() {
 }
 
 /* ==========================================================================
+   HOSPITAL DIRECTORY HUB: B2B SAAS SELECTION DIRECTORY
+   ========================================================================== */
+function HospitalHub() {
+  const [hospitals, setHospitals] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
+      .then(res => res.json())
+      .then(data => {
+        setHospitals(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Error fetching hospitals:', err);
+        setLoading(false);
+      });
+  }, []);
+
+  const filteredHospitals = hospitals.filter(h => 
+    h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    h.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    h.address.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div className="flex-1 w-full min-h-screen overflow-y-auto bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
+      {/* Hero Section */}
+      <div className="relative overflow-hidden bg-gradient-to-b from-orange-600/10 via-[var(--bg-color)] to-[var(--bg-color)] py-16 px-6 sm:px-12 text-center border-b border-[var(--border-color)]/25">
+        <div className="max-w-4xl mx-auto">
+          <div className="inline-flex items-center space-x-2 bg-orange-600/10 text-orange-600 dark:text-orange-400 px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider mb-6 animate-pulse">
+            <span className="material-symbols-outlined text-[14px]">hub</span>
+            <span>CareSync Multi-Hospital Network</span>
+          </div>
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-tight mb-6 leading-tight">
+            Smart Waiting Lines for <br />
+            <span className="bg-gradient-to-r from-orange-600 to-amber-500 bg-clip-text text-transparent">Modern Healthcare</span>
+          </h1>
+          <p className="text-sm sm:text-base md:text-lg text-[var(--text-secondary)] font-medium max-w-2xl mx-auto mb-10 leading-relaxed">
+            Eliminate long physical queues, check real-time estimated cabin wait times, and register walk-in or virtual appointments instantly. Select a partner hospital below to begin booking your token.
+          </p>
+
+          {/* Search Bar */}
+          <div className="max-w-xl mx-auto relative group">
+            <div className="absolute inset-0 bg-gradient-to-r from-orange-600 to-amber-500 rounded-2xl blur opacity-20 group-hover:opacity-30 transition duration-300"></div>
+            <div className="relative bg-[var(--card-bg)] border border-[var(--border-color)]/50 rounded-2xl flex items-center px-4 py-2 shadow-lg shadow-black/5">
+              <span className="material-symbols-outlined text-zinc-400 mr-3 text-[22px]">search</span>
+              <input 
+                type="text" 
+                placeholder="Search hospital by name, department, or city..." 
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-transparent border-none outline-none text-sm font-semibold focus:ring-0 text-[var(--text-color)] placeholder-zinc-400"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="p-1 rounded-full hover:bg-[var(--border-color)]/25 flex items-center">
+                  <span className="material-symbols-outlined text-[16px] text-zinc-400">close</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Directory Grid */}
+      <div className="max-w-[1280px] mx-auto py-12 px-6 sm:px-8">
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-black">Partner Hospital Directory</h2>
+            <p className="text-xs text-[var(--text-secondary)] font-semibold mt-1">Select a facility to check waiting queues</p>
+          </div>
+          <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest bg-[var(--border-color)]/20 px-3 py-1 rounded-full">
+            {filteredHospitals.length} Found
+          </span>
+        </div>
+
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 space-y-3">
+            <span className="material-symbols-outlined text-[48px] text-orange-600 animate-spin">refresh</span>
+            <p className="text-sm font-bold text-[var(--text-secondary)]">Loading partner hospitals...</p>
+          </div>
+        ) : filteredHospitals.length === 0 ? (
+          <div className="text-center py-20 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30 p-8 shadow-sm">
+            <span className="material-symbols-outlined text-[54px] text-zinc-300 dark:text-zinc-700 mb-3">clinical_trial</span>
+            <h3 className="text-lg font-black mb-1">No Hospitals Found</h3>
+            <p className="text-sm text-[var(--text-secondary)] max-w-sm mx-auto">We couldn't find any hospitals matching "{searchQuery}". Try adjusting your keywords or search terms.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {filteredHospitals.map(h => (
+              <div 
+                key={h.id} 
+                onClick={() => navigate(`/hospital/${h.id}`)}
+                className="group cursor-pointer bg-[var(--card-bg)] border border-[var(--border-color)]/40 hover:border-orange-500/40 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-black/5 hover:-translate-y-1 transition-all duration-300 flex flex-col relative min-w-0"
+              >
+                {/* Cover Image */}
+                <div className="h-48 w-full overflow-hidden relative bg-zinc-800">
+                  <img 
+                    src={h.coverImage} 
+                    alt={h.name} 
+                    className="w-full h-full object-cover opacity-85 group-hover:scale-105 transition duration-500"
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+                  
+                  {/* Status Badges */}
+                  <span className="absolute top-4 right-4 bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1">
+                    <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping"></span>
+                    <span>Active Queue</span>
+                  </span>
+                </div>
+
+                {/* Content */}
+                <div className="p-6 flex-1 flex flex-col">
+                  <h3 className="text-xl font-extrabold group-hover:text-orange-500 transition duration-150 mb-2 leading-tight">
+                    {h.name}
+                  </h3>
+                  <p className="text-xs text-[var(--text-secondary)] font-medium leading-relaxed mb-4 line-clamp-2">
+                    {h.description}
+                  </p>
+                  
+                  {/* Stats & Metadata */}
+                  <div className="grid grid-cols-2 gap-3 mb-6 bg-[var(--bg-color)] rounded-xl p-3 border border-[var(--border-color)]/20 text-xs font-semibold text-[var(--text-secondary)]">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-zinc-400">location_on</span>
+                      <span className="truncate">{h.address.split(',')[0]}</span>
+                    </div>
+                    <div className="flex items-center space-x-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-zinc-400">call</span>
+                      <span className="truncate">{h.phone}</span>
+                    </div>
+                  </div>
+
+                  {/* CTA Footer */}
+                  <div className="mt-auto pt-4 border-t border-[var(--border-color)]/30 flex justify-between items-center">
+                    <div className="flex items-center space-x-2 text-xs font-black text-emerald-600 dark:text-emerald-400">
+                      <span className="material-symbols-outlined text-[16px]">chat</span>
+                      <span>WhatsApp Available</span>
+                    </div>
+                    <button 
+                      className="bg-orange-600 group-hover:bg-orange-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl flex items-center space-x-1 shadow-md shadow-orange-500/10 active:scale-95 duration-100 transition-all"
+                    >
+                      <span>Enter Portal</span>
+                      <span className="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition duration-150">arrow_forward</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Trust & Guarantee Section */}
+      <div className="bg-[var(--card-bg)] border-t border-[var(--border-color)]/30 py-12 px-6 sm:px-8 text-center text-xs text-[var(--text-secondary)] font-semibold">
+        <div className="max-w-2xl mx-auto space-y-4">
+          <div className="flex justify-center space-x-6 text-[var(--text-color)] mb-2">
+            <div className="flex items-center space-x-1">
+              <span className="material-symbols-outlined text-orange-600 text-[18px]">verified_user</span>
+              <span>HIPAA Compliant</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <span className="material-symbols-outlined text-orange-600 text-[18px]">security</span>
+              <span>End-to-End Encrypted</span>
+            </div>
+          </div>
+          <p>
+            CareSync is a registered healthcare SaaS queue management provider. By joining any queue, you agree to our Terms of Service and Privacy Policy. Patient information is strictly handled in accordance with medical standards.
+          </p>
+          <p className="text-[10px] text-zinc-400">
+            &copy; 2026 CareSync Technologies Inc. All rights reserved.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
    PATIENT PORTAL: CHAT-FIRST WIDGET & LIVE TOKEN VIEW
    ========================================================================== */
 function PatientPortal() {
+  const { hospitalId } = useParams();
+  const [whatsappNumber, setWhatsappNumber] = useState('+1 (415) 523-8886');
+  const [hospitalInfo, setHospitalInfo] = useState(null);
+  const [loadingHosp, setLoadingHosp] = useState(true);
+  const navigate = useNavigate();
+
   const [messages, setMessages] = useState([
     { sender: 'bot', text: 'Welcome to the CareSync AI Assistant! 🏥' },
     { sender: 'bot', text: "I can help you book an appointment, check live queues, or trigger emergency tokens. Send a message like 'Hi' or 'Hello' to begin!" }
@@ -286,12 +474,32 @@ function PatientPortal() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Load hospital information dynamically
+  useEffect(() => {
+    const hospId = hospitalId || 'general-hospital';
+    setLoadingHosp(true);
+    fetch(`${BACKEND_URL}/api/v1/chat/hospital/${hospId}`)
+      .then(res => res.json())
+      .then(data => {
+        setHospitalInfo(data);
+        if (data.whatsappNumber) {
+          setWhatsappNumber(data.whatsappNumber);
+        }
+        setLoadingHosp(false);
+      })
+      .catch(err => {
+        console.error('Error loading hospital config:', err);
+        setLoadingHosp(false);
+      });
+  }, [hospitalId]);
+
   useEffect(() => {
     // Send a silent init message to get the initial language options
+    const hospId = hospitalId || 'general-hospital';
     fetch(`${BACKEND_URL}/api/v1/chat/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, message: 'hi' })
+      body: JSON.stringify({ sessionId, message: 'hi', hospitalId: hospId })
     })
     .then(async (res) => {
       const data = await res.json();
@@ -309,14 +517,23 @@ function PatientPortal() {
       console.error('Error auto-initializing chat options:', err);
       setMessages(prev => [...prev, { sender: 'bot', text: `⚠️ Startup notice: ${err.message}` }]);
     });
-  }, [sessionId]);
+  }, [sessionId, hospitalId]);
 
   const loadWaitTimes = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/chat/queues/public-status`);
+      const hospId = hospitalId || 'general-hospital';
+      const res = await fetch(`${BACKEND_URL}/api/v1/chat/queues/public-status?hospitalId=${hospId}`);
       if (res.ok) {
         const data = await res.json();
-        setWaitTimes(prev => ({ ...prev, ...data }));
+        setWaitTimes(prev => ({ 
+          ...prev, 
+          'Emergency': data.Emergency ?? prev.Emergency,
+          'General Practice': data['General Practice'] ?? prev['General Practice'],
+          'Pediatrics': data.Pediatrics ?? prev.Pediatrics
+        }));
+        if (data.whatsappNumber) {
+          setWhatsappNumber(data.whatsappNumber);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -404,10 +621,11 @@ function PatientPortal() {
     setInputText('');
 
     try {
+      const hospId = hospitalId || 'general-hospital';
       const res = await fetch(`${BACKEND_URL}/api/v1/chat/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, message: text })
+        body: JSON.stringify({ sessionId, message: text, hospitalId: hospId })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -440,30 +658,48 @@ function PatientPortal() {
     }
   };
 
+  if (loadingHosp) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-[var(--bg-color)] space-y-4">
+        <span className="material-symbols-outlined text-[48px] text-orange-600 animate-spin">refresh</span>
+        <p className="text-sm font-bold text-[var(--text-secondary)]">Loading white-labeled portal...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 flex w-full max-w-[1440px] mx-auto h-[calc(100vh-62px)] overflow-hidden bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 min-w-0">
       {/* Left Sidebar: Hospital Info & Wait Times */}
       <aside className="hidden lg:flex flex-col w-80 bg-[var(--card-bg)] border-r border-[var(--border-color)]/30 p-6 overflow-y-auto no-scrollbar shadow-[inset_-10px_0_20px_rgba(0,0,0,0.01)] relative z-10">
         <div className="mb-6">
+          {/* Back to Hub Button */}
+          <button 
+            onClick={() => navigate('/')}
+            className="w-full flex items-center justify-center space-x-1.5 bg-[var(--bg-color)] hover:bg-[var(--border-color)]/25 active:scale-95 duration-100 text-[var(--text-secondary)] hover:text-[var(--text-color)] border border-[var(--border-color)]/30 rounded-xl py-2 px-3 mb-4 font-bold text-xs transition-all shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+            <span>Change Hospital</span>
+          </button>
+
           <div className="w-full h-32 rounded-xl bg-zinc-800 mb-4 overflow-hidden relative shadow-sm">
             <div 
               className="bg-cover bg-center w-full h-full absolute inset-0 opacity-80" 
-              style={{ backgroundImage: "url('https://lh3.googleusercontent.com/aida-public/AB6AXuA1x4Ta8X_Leb2KfTzTMhRKsT439crOzzOgCCfSQH3UNSJlkdZTlRZT13ai7p8kN9f7_vHvbO7z2snijUJmc30zd6loDlIMh8Uth9PitBK4Q9fgbf17IwSVaxF8O9WHyaQvTAvo-ILHCBdZnJT8Yhu4iOlLxRG6irdb1Gnl_7dsWd1s1hLWea_09I6kOuw8kjUH9psbS4v-OXZXFH7mVJ9A8DwUUtxXqxAK0RcJIlWbR2K3O1vo3ZCrbqgnr5Egw0jJOTNYtRgR1lFx')" }}
+              style={{ backgroundImage: `url('${hospitalInfo?.coverImage || 'https://lh3.googleusercontent.com/aida-public/AB6AXuA1x4Ta8X_Leb2KfTzTMhRKsT439crOzzOgCCfSQH3UNSJlkdZTlRZT13ai7p8kN9f7_vHvbO7z2snijUJmc30zd6loDlIMh8Uth9PitBK4Q9fgbf17IwSVaxF8O9WHyaQvTAvo-ILHCBdZnJT8Yhu4iOlLxRG6irdb1Gnl_7dsWd1s1hLWea_09I6kOuw8kjUH9psbS4v-OXZXFH7mVJ9A8DwUUtxXqxAK0RcJIlWbR2K3O1vo3ZCrbqgnr5Egw0jJOTNYtRgR1lFx'}')` }}
             ></div>
             <div className="absolute inset-0 bg-gradient-to-t from-black/75 to-transparent"></div>
             <h3 className="absolute bottom-4 left-4 text-white font-bold text-lg leading-tight">
-              General Hospital<br/>
-              <span className="text-xs text-white/80 font-normal">Main Campus</span>
+              {hospitalInfo?.name || 'General Hospital'}<br/>
+              <span className="text-xs text-white/80 font-normal">Active Campus</span>
             </h3>
           </div>
           <div className="space-y-3 text-xs text-[var(--text-secondary)] font-semibold">
             <div className="flex items-start space-x-2">
               <span className="material-symbols-outlined text-[16px] text-zinc-400">location_on</span>
-              <p>123 Healthcare Blvd, Medical District</p>
+              <p>{hospitalInfo?.address || '123 Healthcare Blvd, Medical District'}</p>
             </div>
             <div className="flex items-center space-x-2">
               <span className="material-symbols-outlined text-[16px] text-zinc-400">call</span>
-              <p>+1 (555) 123-4567</p>
+              <p>{hospitalInfo?.phone || '+1 (555) 123-4567'}</p>
             </div>
             <div className="flex items-center space-x-2">
               <span className="material-symbols-outlined text-[16px] text-emerald-500">schedule</span>
@@ -511,6 +747,78 @@ function PatientPortal() {
           </div>
         </div>
 
+        {/* WhatsApp Integration Info Panel */}
+        <div className="mb-6 bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 relative overflow-hidden shadow-sm">
+          <div className="flex items-center space-x-2.5 mb-2.5">
+            <div className="bg-emerald-600 text-white p-1.5 rounded-lg shrink-0 flex items-center justify-center">
+              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.5-5.739-1.45L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.963C16.528 2.01 14.069.993 11.5.993c-5.44 0-9.865 4.369-9.87 9.799a9.71 9.71 0 001.44 4.793l-.995 3.633 3.738-.97c1.558.89 3.11 1.34 4.734 1.34h.015zm9.525-6.938c-.287-.143-1.697-.837-1.959-.933-.261-.096-.451-.143-.64.143-.19.286-.735.933-.9 1.127-.166.19-.332.214-.618.071-.286-.143-1.21-.445-2.305-1.42-.853-.76-1.428-1.7-1.595-1.986-.167-.286-.018-.44.125-.581.129-.127.287-.333.43-.5.143-.167.19-.286.286-.476.095-.19.048-.357-.024-.5-.071-.143-.64-1.543-.877-2.11-.23-.559-.483-.483-.66-.492-.17-.008-.364-.01-.559-.01-.195 0-.514.073-.78.369-.268.297-1.023 1.002-1.023 2.444 0 1.442 1.049 2.839 1.192 3.03.143.19 2.064 3.15 5.002 4.425.699.303 1.244.484 1.67.62.703.223 1.344.192 1.85.117.564-.084 1.697-.693 1.936-1.362.239-.668.239-1.24.167-1.362-.072-.122-.268-.195-.554-.338z"/>
+              </svg>
+            </div>
+            <div>
+              <h4 className="text-xs font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">WhatsApp Assistant</h4>
+              <p className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 font-medium">Book & check status on chat</p>
+            </div>
+          </div>
+          <div className="bg-[var(--card-bg)] dark:bg-black/30 rounded-lg p-3 border border-emerald-500/10 flex flex-col items-center">
+            <div className="bg-white p-2 rounded-lg mb-2 shadow-sm border border-zinc-100 flex items-center justify-center">
+              <svg className="w-20 h-20 text-zinc-800" viewBox="0 0 29 29" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="1" y="1" width="7" height="7" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+                <rect x="3" y="3" width="3" height="3" fill="white" />
+                <rect x="21" y="1" width="7" height="7" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+                <rect x="23" y="3" width="3" height="3" fill="white" />
+                <rect x="1" y="21" width="7" height="7" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+                <rect x="3" y="23" width="3" height="3" fill="white" />
+                
+                <rect x="9" y="2" width="2" height="2" fill="currentColor" />
+                <rect x="13" y="1" width="3" height="2" fill="currentColor" />
+                <rect x="17" y="3" width="2" height="3" fill="currentColor" />
+                <rect x="10" y="6" width="3" height="2" fill="currentColor" />
+                
+                <rect x="2" y="9" width="3" height="2" fill="currentColor" />
+                <rect x="6" y="11" width="2" height="3" fill="currentColor" />
+                <rect x="1" y="15" width="2" height="2" fill="currentColor" />
+                <rect x="4" y="17" width="3" height="2" fill="currentColor" />
+                
+                <rect x="22" y="9" width="2" height="3" fill="currentColor" />
+                <rect x="25" y="13" width="3" height="2" fill="currentColor" />
+                <rect x="21" y="16" width="2" height="3" fill="currentColor" />
+                <rect x="26" y="17" width="2" height="2" fill="currentColor" />
+
+                <rect x="9" y="10" width="3" height="3" fill="currentColor" />
+                <rect x="13" y="9" width="2" height="2" fill="currentColor" />
+                <rect x="16" y="11" width="4" height="2" fill="currentColor" />
+                <rect x="11" y="14" width="2" height="4" fill="currentColor" />
+                <rect x="15" y="15" width="3" height="3" fill="currentColor" />
+
+                <rect x="9" y="21" width="2" height="3" fill="currentColor" />
+                <rect x="13" y="23" width="3" height="2" fill="currentColor" />
+                <rect x="17" y="21" width="2" height="4" fill="currentColor" />
+                
+                <rect x="21" y="21" width="3" height="2" fill="currentColor" />
+                <rect x="25" y="23" width="3" height="3" fill="currentColor" />
+              </svg>
+            </div>
+            <p className="text-[10px] font-bold text-center text-[var(--text-color)] mb-1">
+              Send <span className="text-emerald-600 dark:text-emerald-400 font-extrabold font-mono">"Hi"</span> to
+            </p>
+            <p className="text-xs font-black text-center text-emerald-600 dark:text-emerald-400 font-mono tracking-wide mb-2.5 select-all">
+              {whatsappNumber}
+            </p>
+            <a 
+              href={`https://wa.me/${whatsappNumber.replace(/[^0-9]/g, '')}?text=hi`}
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 duration-100 text-white text-xs font-extrabold py-2 px-3 rounded-lg text-center shadow-md shadow-emerald-500/10 flex items-center justify-center space-x-1.5 transition-all"
+            >
+              <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
+                <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.5-5.739-1.45L0 24zm6.59-4.846c1.6.95 3.188 1.449 4.825 1.451 5.436 0 9.86-4.37 9.864-9.799.002-2.63-1.023-5.101-2.885-6.963C16.528 2.01 14.069.993 11.5.993c-5.44 0-9.865 4.369-9.87 9.799a9.71 9.71 0 001.44 4.793l-.995 3.633 3.738-.97c1.558.89 3.11 1.34 4.734 1.34h.015zm9.525-6.938c-.287-.143-1.697-.837-1.959-.933-.261-.096-.451-.143-.64.143-.19.286-.735.933-.9 1.127-.166.19-.332.214-.618.071-.286-.143-1.21-.445-2.305-1.42-.853-.76-1.428-1.7-1.595-1.986-.167-.286-.018-.44.125-.581.129-.127.287-.333.43-.5.143-.167.19-.286.286-.476.095-.19.048-.357-.024-.5-.071-.143-.64-1.543-.877-2.11-.23-.559-.483-.483-.66-.492-.17-.008-.364-.01-.559-.01-.195 0-.514.073-.78.369-.268.297-1.023 1.002-1.023 2.444 0 1.442 1.049 2.839 1.192 3.03.143.19 2.064 3.15 5.002 4.425.699.303 1.244.484 1.67.62.703.223 1.344.192 1.85.117.564-.084 1.697-.693 1.936-1.362.239-.668.239-1.24.167-1.362-.072-.122-.268-.195-.554-.338z"/>
+              </svg>
+              <span>Chat on WhatsApp</span>
+            </a>
+          </div>
+        </div>
+
         <div className="mt-auto bg-[var(--primary-color)]/5 dark:bg-white/5 p-4 rounded-xl border border-[var(--primary-color)]/10">
           <div className="flex items-start space-x-3">
             <span className="material-symbols-outlined text-[var(--primary-color)] text-[24px] shrink-0">verified_user</span>
@@ -529,6 +837,14 @@ function PatientPortal() {
         {/* Chat Header */}
         <header className="px-6 py-4 border-b border-[var(--border-color)]/50 flex items-center justify-between sticky top-0 z-20 bg-[var(--card-bg)]/80 backdrop-blur-md">
           <div className="flex items-center space-x-3">
+            {/* Back button for mobile */}
+            <button 
+              onClick={() => navigate('/')}
+              className="lg:hidden p-1.5 rounded-lg border border-[var(--border-color)]/30 bg-[var(--card-bg)] text-[var(--text-secondary)] hover:text-[var(--text-color)] flex items-center justify-center active:scale-95 duration-100 mr-1 shadow-sm"
+              title="Change Hospital"
+            >
+              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            </button>
             <div className="relative">
               <div className="w-10 h-10 rounded-full bg-[var(--primary-color)]/10 text-[var(--primary-color)] flex items-center justify-center shadow-sm">
                 <span className="material-symbols-outlined text-[22px]">smart_toy</span>
@@ -536,7 +852,7 @@ function PatientPortal() {
               <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[var(--card-bg)] animate-pulse"></span>
             </div>
             <div>
-              <h2 className="font-extrabold text-sm md:text-base text-[var(--text-color)]">CareSync Assistant</h2>
+              <h2 className="font-extrabold text-sm md:text-base text-[var(--text-color)]">{hospitalInfo?.name || 'CareSync Assistant'}</h2>
               <p className="text-[10px] text-[var(--text-secondary)] font-semibold flex items-center">
                 <span className="material-symbols-outlined text-[12px] text-amber-500 mr-0.5">bolt</span>
                 AI-Powered Triage & Booking
@@ -561,6 +877,23 @@ function PatientPortal() {
             </div>
           </div>
         )}
+
+        {/* Mobile WhatsApp Info Banner */}
+        <div className="lg:hidden px-6 py-2.5 bg-emerald-500/10 dark:bg-emerald-500/5 border-b border-emerald-500/20 text-emerald-800 dark:text-emerald-300 flex items-center justify-between text-xs font-semibold relative z-10">
+          <div className="flex items-center space-x-2">
+            <span className="material-symbols-outlined text-[18px] text-emerald-600 dark:text-emerald-400 shrink-0">chat</span>
+            <span>Book/Track on WhatsApp: <span className="font-bold font-mono">{whatsappNumber}</span></span>
+          </div>
+          <a 
+            href={`https://wa.me/${whatsappNumber.replace(/[^0-9]/g, '')}?text=hi`}
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 duration-100 text-white text-[10px] font-black px-2.5 py-1 rounded-md flex items-center space-x-1"
+          >
+            <span>Chat</span>
+            <span className="material-symbols-outlined text-[10px]">open_in_new</span>
+          </a>
+        </div>
 
         {/* Chat Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 chat-container bg-gradient-to-br from-[var(--bg-color)] via-[var(--bg-color)] to-[var(--border-color)]/5">
@@ -3379,7 +3712,9 @@ function DigitalPrescriptionViewer() {
               <span className="material-symbols-outlined text-[24px]">clinical_notes</span>
             </div>
             <div>
-              <h2 className="text-xl font-black tracking-tight">CareSync General Hospital</h2>
+              <h2 className="text-xl font-black tracking-tight">
+                {doctor?.hospital === 'pediatrics-clinic' ? 'St. Jude Pediatrics Clinic' : 'CareSync General Hospital'}
+              </h2>
               <p className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">Clinical Care & Diagnostics</p>
             </div>
           </div>

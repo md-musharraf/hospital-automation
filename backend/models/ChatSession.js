@@ -13,7 +13,8 @@ const ChatSessionSchema = new mongoose.Schema({
     age: { type: Number },
     gender: { type: String },
     symptoms: { type: String },
-    doctor: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor' }
+    doctor: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor' },
+    hospitalId: { type: String }
   },
   lastActivity: { type: Date, default: Date.now, expires: 3600 } // TTL index: auto-expires after 1 hour of inactivity
 }, { timestamps: true });

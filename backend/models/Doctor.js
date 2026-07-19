@@ -12,7 +12,8 @@ const DoctorSchema = new mongoose.Schema({
     default: 'Available' 
   },
   averageCheckupTime: { type: Number, default: 10 }, // in minutes
-  currentRoom: { type: String, required: true } // e.g., "Cabin A"
+  currentRoom: { type: String, required: true }, // e.g., "Cabin A"
+  hospital: { type: String, default: 'general-hospital' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Doctor', DoctorSchema);
