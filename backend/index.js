@@ -100,6 +100,19 @@ app.use(cors({
 
 app.use(express.json());
 
+// Database connection check middleware (except health check, and only if not using mock DB)
+app.use((req, res, next) => {
+  if (req.path === '/api/v1/health') {
+    return next();
+  }
+  if (process.env.USE_MOCK_DB !== 'true' && mongoose.connection.readyState !== 1) {
+    return res.status(503).json({
+      message: 'Database connection is offline. Please verify you have whitelisted all IP addresses (0.0.0.0/0) in your MongoDB Atlas Network Access panel, or set USE_MOCK_DB=true in backend/.env to run in-memory.'
+    });
+  }
+  next();
+});
+
 // Socket.io initialization
 const io = socketIo(server, {
   cors: {
