@@ -10,7 +10,10 @@ const store = {
   ChatSession: [],
   ArchivedToken: [],
   Reminder: [],
-  Hospital: []
+  Hospital: [],
+  LabAssistant: [],
+  Subscription: [],
+  HospitalMessage: []
 };
 
 // Auto-increment ID helper
@@ -186,6 +189,14 @@ function wrapDoc(modelName, data) {
     }
   });
 
+  Object.defineProperty(doc, 'markModified', {
+    enumerable: false,
+    writable: true,
+    value: function() {
+      // Noop for mock - marks a path as modified for Mongoose change tracking
+    }
+  });
+
   return doc;
 }
 
@@ -210,6 +221,14 @@ function matchesQuery(item, query) {
           if (item[key] === val.$ne) return false;
         } else if ('$in' in val) {
           if (!Array.isArray(val.$in) || !val.$in.includes(item[key])) return false;
+        } else if ('$lte' in val) {
+          if (!(item[key] <= val.$lte)) return false;
+        } else if ('$gte' in val) {
+          if (!(item[key] >= val.$gte)) return false;
+        } else if ('$lt' in val) {
+          if (!(item[key] < val.$lt)) return false;
+        } else if ('$gt' in val) {
+          if (!(item[key] > val.$gt)) return false;
         } else {
           // Deep or fallback comparison for other nested objects
           if (JSON.stringify(item[key]) !== JSON.stringify(val)) return false;

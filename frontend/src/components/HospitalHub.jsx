@@ -20,7 +20,10 @@ export default function HospitalHub() {
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error('Server error');
+        return res.json();
+      })
       .then(data => {
         setHospitals(data);
         setLoading(false);

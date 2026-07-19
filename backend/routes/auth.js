@@ -301,4 +301,158 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
   }
 });
 
+// Register Additional Staff Member
+router.post('/super-admin/register-staff', verifyAdminSecret, async (req, res) => {
+  try {
+    const { hospital, name, username, password, counterNumber } = req.body;
+    if (!hospital || !username || !password) {
+      return res.status(400).json({ message: 'Hospital selection, username, and password are required' });
+    }
+
+    // Verify hospital exists
+    const existingHospital = await Hospital.findOne({ id: hospital });
+    if (!existingHospital) {
+      return res.status(404).json({ message: 'Selected hospital does not exist' });
+    }
+
+    // Check if staff username is already taken in this hospital tenant
+    const existingStaff = await Staff.findOne({ username, hospital });
+    if (existingStaff) {
+      return res.status(400).json({ message: `Staff username '${username}' is already taken in this hospital tenant.` });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const newStaff = new Staff({
+      name: name || 'Staff Assistant',
+      username,
+      passwordHash,
+      counterNumber: counterNumber || 'Counter 1',
+      hospital
+    });
+    await newStaff.save();
+
+    res.status(201).json({
+      message: `Staff account '${username}' registered successfully!`,
+      staff: {
+        id: newStaff._id,
+        name: newStaff.name,
+        username: newStaff.username,
+        counterNumber: newStaff.counterNumber,
+        hospital: newStaff.hospital
+      }
+    });
+  } catch (error) {
+    console.error('Super admin staff registration error:', error);
+    res.status(500).json({ message: 'Server error registering staff account' });
+  }
+});
+
+// Register Additional Doctor
+router.post('/super-admin/register-doctor', verifyAdminSecret, async (req, res) => {
+  try {
+    const { hospital, name, email, password, department, currentRoom, specialization, averageCheckupTime } = req.body;
+    if (!hospital || !email || !password) {
+      return res.status(400).json({ message: 'Hospital selection, email, and password are required' });
+    }
+
+    // Verify hospital exists
+    const existingHospital = await Hospital.findOne({ id: hospital });
+    if (!existingHospital) {
+      return res.status(404).json({ message: 'Selected hospital does not exist' });
+    }
+
+    // Check if doctor email is already registered in this hospital tenant
+    const existingDoc = await Doctor.findOne({ email, hospital });
+    if (existingDoc) {
+      return res.status(400).json({ message: `Doctor email '${email}' is already registered in this hospital tenant.` });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const newDoctor = new Doctor({
+      name: name || 'Doctor Consultant',
+      email,
+      passwordHash,
+      department: department || 'General Practice',
+      specialization: specialization || 'General Consultation',
+      availabilityStatus: 'Available',
+      averageCheckupTime: averageCheckupTime ? parseInt(averageCheckupTime) : 10,
+      currentRoom: currentRoom || 'Cabin 1',
+      hospital
+    });
+    await newDoctor.save();
+
+    // Create Queue for Doctor
+    const newQueue = new Queue({
+      doctor: newDoctor._id,
+      currentToken: null,
+      activeQueue: []
+    });
+    await newQueue.save();
+
+    res.status(201).json({
+      message: `Doctor account '${email}' registered successfully!`,
+      doctor: {
+        id: newDoctor._id,
+        name: newDoctor.name,
+        email: newDoctor.email,
+        department: newDoctor.department,
+        hospital: newDoctor.hospital
+      }
+    });
+  } catch (error) {
+    console.error('Super admin doctor registration error:', error);
+    res.status(500).json({ message: 'Server error registering doctor account' });
+  }
+});
+
+// Register Additional Lab Assistant
+router.post('/super-admin/register-lab', verifyAdminSecret, async (req, res) => {
+  try {
+    const { hospital, name, username, password } = req.body;
+    if (!hospital || !username || !password) {
+      return res.status(400).json({ message: 'Hospital selection, username, and password are required' });
+    }
+
+    // Verify hospital exists
+    const existingHospital = await Hospital.findOne({ id: hospital });
+    if (!existingHospital) {
+      return res.status(404).json({ message: 'Selected hospital does not exist' });
+    }
+
+    // Check if lab assistant username is already taken in this hospital tenant
+    const existingLab = await LabAssistant.findOne({ username, hospital });
+    if (existingLab) {
+      return res.status(400).json({ message: `Lab assistant username '${username}' is already taken in this hospital tenant.` });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const newLab = new LabAssistant({
+      name: name || 'Lab Assistant',
+      username,
+      passwordHash,
+      hospital
+    });
+    await newLab.save();
+
+    res.status(201).json({
+      message: `Lab assistant account '${username}' registered successfully!`,
+      lab: {
+        id: newLab._id,
+        name: newLab.name,
+        username: newLab.username,
+        hospital: newLab.hospital
+      }
+    });
+  } catch (error) {
+    console.error('Super admin lab registration error:', error);
+    res.status(500).json({ message: 'Server error registering lab assistant account' });
+  }
+});
+
 module.exports = router;

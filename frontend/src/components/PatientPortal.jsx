@@ -110,7 +110,10 @@ export default function PatientPortal() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, message: myToken.tokenNumber })
       })
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error('Server error');
+        return res.json();
+      })
       .then(data => {
         if (data.token) {
           setMyToken(prev => ({
@@ -118,7 +121,8 @@ export default function PatientPortal() {
             estimatedWaitTime: data.token.estimatedWaitTime
           }));
         }
-      });
+      })
+      .catch(err => console.error('Queue update fetch error:', err));
     };
 
     socket.on('queue-updated', handleQueueUpdated);

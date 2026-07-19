@@ -98,7 +98,7 @@ const checkOrigin = (origin, callback) => {
 app.use(cors({
   origin: checkOrigin,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Secret'],
   credentials: true
 }));
 

@@ -46,7 +46,11 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
       setLabUser(data.user);
       onSuccess();
     } catch (err) {
-      setError(err.message);
+      if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
+        setError('Unable to connect to the server. Please ensure the backend is running or check your network connection.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
