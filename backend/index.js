@@ -395,11 +395,51 @@ server.listen(PORT, () => {
   console.log(`Backend server listening on port ${PORT}`);
 });
 
-mongoose.connect(MONGODB_URI)
-  .then(async () => {
+const connectWithFallback = async (uri) => {
+  try {
+    await mongoose.connect(uri);
     console.log('Successfully connected to MongoDB.');
     await seedMockData();
-  })
-  .catch((err) => {
-    console.error('Database connection error:', err);
-  });
+  } catch (err) {
+    console.error('Initial database connection failed:', err.message);
+
+    if (uri.startsWith('mongodb+srv://')) {
+      console.log('Attempting to resolve MongoDB SRV records via public DNS backup resolver...');
+      try {
+        // Parse mongodb+srv://username:password@host/database?...
+        const match = uri.match(/^mongodb\+srv:\/\/([^:]+):([^@]+)@([^/]+)\/([^?]*)/);
+        if (match) {
+          const [_, username, password, host, dbName] = match;
+
+          // Query DNS SRV records using public resolver (8.8.8.8)
+          const dns = require('dns');
+          const resolver = new dns.Resolver();
+          resolver.setServers(['8.8.8.8', '1.1.1.1']);
+
+          const srvRecords = await new Promise((resolve, reject) => {
+            resolver.resolveSrv(`_mongodb._tcp.${host}`, (srvErr, addresses) => {
+              if (srvErr) reject(srvErr);
+              else resolve(addresses);
+            });
+          });
+
+          if (srvRecords && srvRecords.length > 0) {
+            const hostList = srvRecords.map(r => `${r.name}:${r.port}`).join(',');
+            const fallbackUri = `mongodb://${username}:${password}@${hostList}/${dbName}?ssl=true&authSource=admin`;
+
+            console.log('Connecting to replica set hosts directly (bypassing SRV)...');
+            await mongoose.connect(fallbackUri);
+            console.log('Successfully connected to MongoDB replica set directly via fallback!');
+            await seedMockData();
+            return;
+          }
+        }
+      } catch (fallbackErr) {
+        console.error('Database connection fallback also failed:', fallbackErr.message);
+      }
+    }
+    console.error('Database connection could not be established.');
+  }
+};
+
+connectWithFallback(MONGODB_URI);
