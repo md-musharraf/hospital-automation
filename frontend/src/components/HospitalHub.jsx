@@ -119,19 +119,19 @@ export default function HospitalHub() {
     <div className="flex-1 w-full min-h-screen overflow-y-auto bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 no-scrollbar">
       
       {/* 1. Hero Section (Split-Screen SaaS Layout) */}
-      <section className="relative overflow-hidden bg-gradient-to-b from-orange-600/10 via-[var(--bg-color)] to-[var(--bg-color)] py-12 md:py-20 px-6 sm:px-12 border-b border-[var(--border-color)]/25">
+      <section className="relative overflow-hidden bg-gradient-to-b from-[var(--primary-color)]/10 via-[var(--bg-color)] to-[var(--bg-color)] py-12 md:py-20 px-6 sm:px-12 border-b border-[var(--border-color)]/25">
         <div className="max-w-[1280px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-center text-left">
           
           {/* Left Column: Core Copy & Tools */}
           <div className="lg:col-span-7 space-y-6">
-            <div className="inline-flex items-center space-x-2 bg-orange-600/10 border border-orange-500/20 text-orange-600 dark:text-orange-400 px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider animate-pulse">
+            <div className="inline-flex items-center space-x-2 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 text-[var(--primary-color)] px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider animate-pulse">
               <span className="material-symbols-outlined text-[15px]">clinical_notes</span>
               <span>CareSync Medical Solution Infotech</span>
             </div>
             
             <h1 className="text-4xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none">
               Smart Waiting Lines <br className="hidden sm:inline" />
-              <span className="bg-gradient-to-r from-orange-600 to-amber-500 bg-clip-text text-transparent">For Modern Hospitals</span>
+              <span className="bg-gradient-to-r from-[var(--primary-color)] to-[var(--tertiary-color)] bg-clip-text text-transparent">For Modern Hospitals</span>
             </h1>
             
             <p className="text-sm sm:text-base md:text-md text-[var(--text-secondary)] font-medium leading-relaxed max-w-xl">
@@ -139,7 +139,7 @@ export default function HospitalHub() {
             </p>
 
             {/* Combined Search & Locator Widget */}
-            <div className="flex items-center max-w-xl bg-[var(--card-bg)] border border-[var(--border-color)]/70 rounded-2xl p-2 shadow-lg shadow-black/5 relative group focus-within:border-orange-500 transition-all duration-300">
+            <div className="flex items-center max-w-xl bg-[var(--card-bg)] border border-[var(--border-color)]/70 rounded-2xl p-2 shadow-lg shadow-black/5 relative group focus-within:border-[var(--primary-color)] transition-all duration-300">
               <div className="flex-1 flex items-center px-2">
                 <span className="material-symbols-outlined text-zinc-400 mr-2.5 text-[22px]">search</span>
                 <input 
@@ -155,13 +155,13 @@ export default function HospitalHub() {
                   </button>
                 )}
               </div>
-
+ 
               {/* Geolocator trigger */}
               <button
                 onClick={handleFindNearMe}
                 disabled={geoLoading}
-                className={`flex items-center justify-center p-2.5 rounded-xl bg-[var(--bg-color)] hover:bg-orange-600 hover:text-white transition-all active:scale-95 duration-100 disabled:opacity-50 border border-[var(--border-color)]/30 text-[var(--text-secondary)] ${
-                  userCoords ? 'text-orange-600 border-orange-500/40 bg-orange-600/5' : ''
+                className={`flex items-center justify-center p-2.5 rounded-xl bg-[var(--bg-color)] hover:bg-[var(--primary-color)] hover:text-white transition-all active:scale-95 duration-100 disabled:opacity-50 border border-[var(--border-color)]/30 text-[var(--text-secondary)] ${
+                  userCoords ? 'text-[var(--primary-color)] border-[var(--primary-color)]/40 bg-[var(--primary-color)]/5' : ''
                 }`}
                 title="Find hospitals near me"
               >
@@ -188,13 +188,13 @@ export default function HospitalHub() {
                 <div className="flex flex-wrap gap-2">
                   {cities.map(city => (
                     <button
-                      key={city}
-                      onClick={() => setSelectedCity(city)}
-                      className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 duration-100 ${
-                        selectedCity === city
-                          ? 'bg-orange-600 text-white shadow-md shadow-orange-500/10'
-                          : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/25'
-                      }`}
+                       key={city}
+                       onClick={() => setSelectedCity(city)}
+                       className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 duration-100 ${
+                         selectedCity === city
+                           ? 'bg-[var(--primary-color)] text-white shadow-md shadow-[var(--primary-color)]/10'
+                           : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/25'
+                       }`}
                     >
                       {city}
                     </button>
@@ -224,12 +224,12 @@ export default function HospitalHub() {
               <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
                 <div>
                   <span className="text-[9px] uppercase font-bold text-zinc-400">Current Paging call</span>
-                  <h4 className="text-3xl font-black text-orange-500 tracking-tight mt-1 animate-pulse">{telemetryToken}</h4>
+                  <h4 className="text-3xl font-black text-[var(--primary-color)] tracking-tight mt-1 animate-pulse">{telemetryToken}</h4>
                 </div>
                 <div>
                   <p className="text-[10px] text-zinc-300 font-bold">Proceed To:</p>
                   <p className="text-xs text-white font-extrabold flex items-center space-x-1">
-                    <span className="material-symbols-outlined text-[14px] text-orange-400">sensor_door</span>
+                    <span className="material-symbols-outlined text-[14px] text-[var(--primary-color)]">sensor_door</span>
                     <span>{telemetryCabin}</span>
                   </p>
                 </div>
@@ -273,7 +273,7 @@ export default function HospitalHub() {
               <div className="grid grid-cols-3 gap-2">
                 {[
                   { name: 'Dr. Sarah Jenkins', room: 'Cabin A', status: 'Consulting', color: 'bg-emerald-500' },
-                  { name: 'Dr. Robert Chen', room: 'Cabin B', status: 'Calling', color: 'bg-amber-500' },
+                  { name: 'Dr. Robert Chen', room: 'Cabin B', status: 'Calling', color: 'bg-[var(--primary-color)]' },
                   { name: 'Dr. Emily Taylor', room: 'Cabin C', status: 'Surgery', color: 'bg-rose-500' }
                 ].map((cab, idx) => (
                   <div key={idx} className="bg-white/5 border border-white/5 p-2 rounded-xl text-[9px] font-semibold space-y-1">
@@ -298,10 +298,10 @@ export default function HospitalHub() {
       <section className="bg-[var(--card-bg)] border-b border-[var(--border-color)]/25 py-8 px-6 sm:px-12 relative z-10 shadow-sm shadow-black/5">
         <div className="max-w-[1280px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
           {[
-            { value: '-42%', label: 'Lounge Wait Time', icon: 'schedule', color: 'text-orange-600' },
-            { value: '99.8%', label: 'Dispatch Accuracy', icon: 'verified', color: 'text-emerald-600' },
-            { value: '12K+', label: 'SMS Reminders Sent', icon: 'sms', color: 'text-indigo-600' },
-            { value: '150+', label: 'Connected Clinics', icon: 'local_hospital', color: 'text-teal-600' }
+            { value: '-42%', label: 'Lounge Wait Time', icon: 'schedule', color: 'text-[var(--primary-color)]' },
+            { value: '99.8%', label: 'Dispatch Accuracy', icon: 'verified', color: 'text-[var(--tertiary-color)]' },
+            { value: '12K+', label: 'SMS Reminders Sent', icon: 'sms', color: 'text-[var(--primary-color)]' },
+            { value: '150+', label: 'Connected Clinics', icon: 'local_hospital', color: 'text-[var(--tertiary-color)]' }
           ].map((stat, idx) => (
             <div key={idx} className="space-y-1.5 p-3 rounded-2xl bg-[var(--bg-color)]/30 border border-[var(--border-color)]/20 shadow-sm flex flex-col items-center">
               <div className={`w-10 h-10 rounded-full bg-[var(--bg-color)] border border-[var(--border-color)]/40 flex items-center justify-center ${stat.color} mb-1 shadow-inner`}>
@@ -317,17 +317,17 @@ export default function HospitalHub() {
       {/* 3. Advanced Solutions Grid Section */}
       <section className="py-16 px-6 sm:px-12 max-w-[1280px] mx-auto text-left">
         <div className="text-center max-w-xl mx-auto mb-12 space-y-2">
-          <span className="text-[10px] uppercase font-black text-orange-600 tracking-widest bg-orange-500/10 px-3 py-1 rounded-full">Modular Technology</span>
+          <span className="text-[10px] uppercase font-black text-[var(--primary-color)] tracking-widest bg-[var(--primary-color)]/10 px-3 py-1 rounded-full">Modular Technology</span>
           <h2 className="text-3xl font-black text-[var(--text-color)]">Healthcare Infotech Modules</h2>
           <p className="text-xs text-[var(--text-secondary)] font-semibold leading-relaxed">Our advanced SaaS queue ecosystem is powered by unified clinics integration, AI patient support, and multi-tenant admin consoles.</p>
         </div>
-
+ 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
           {[
-            { title: 'Live Queue Telemetry', desc: 'Real-time dashboard visualization for waiting halls. Includes TV audio paging, ABSENT skips, and cabin check-in updates.', icon: 'tv', color: 'bg-orange-500/10 border-orange-500/20 text-orange-600' },
-            { title: 'AI Symptom Triage', desc: 'Symptom-checking chatbot routes bookings instantly to appropriate doctors, reducing consultation overhead and queue lengths.', icon: 'smart_toy', color: 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600' },
-            { title: 'B2B Multi-Tenant Dashboard', desc: 'Separate, scoped panels for Doctors, Staff, and Lab tech assistants. Complete credential isolation guarantees patient privacy.', icon: 'shield', color: 'bg-indigo-500/10 border-indigo-500/20 text-indigo-650' },
-            { title: 'Smart SMS Follow-ups', desc: 'Autonomous revisit-triggering engine that automates SMS logs to recover checkups, reminding patients scheduled for followups.', icon: 'sms', color: 'bg-teal-500/10 border-teal-500/20 text-teal-650' }
+            { title: 'Live Queue Telemetry', desc: 'Real-time dashboard visualization for waiting halls. Includes TV audio paging, ABSENT skips, and cabin check-in updates.', icon: 'tv', color: 'bg-[var(--primary-color)]/10 border-[var(--primary-color)]/20 text-[var(--primary-color)]' },
+            { title: 'AI Symptom Triage', desc: 'Symptom-checking chatbot routes bookings instantly to appropriate doctors, reducing consultation overhead and queue lengths.', icon: 'smart_toy', color: 'bg-[var(--tertiary-color)]/10 border-[var(--tertiary-color)]/20 text-[var(--tertiary-color)]' },
+            { title: 'B2B Multi-Tenant Dashboard', desc: 'Separate, scoped panels for Doctors, Staff, and Lab tech assistants. Complete credential isolation guarantees patient privacy.', icon: 'shield', color: 'bg-[var(--primary-color)]/15 border-[var(--primary-color)]/20 text-[var(--text-color)]' },
+            { title: 'Smart SMS Follow-ups', desc: 'Autonomous revisit-triggering engine that automates SMS logs to recover checkups, reminding patients scheduled for followups.', icon: 'sms', color: 'bg-[var(--tertiary-color)]/15 border-[var(--tertiary-color)]/20 text-[var(--tertiary-text)]' }
           ].map((sol, idx) => (
             <div key={idx} className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between">
               <div className="space-y-4">
@@ -349,22 +349,22 @@ export default function HospitalHub() {
             <h2 className="text-3xl font-black text-[var(--text-color)]">The Patient Journey</h2>
             <p className="text-xs text-[var(--text-secondary)] font-semibold">How CareSync streamlines queue bookings in three fast steps.</p>
           </div>
-
+ 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
             {/* Timeline connectors (visible on desktop) */}
-            <div className="hidden md:block absolute top-12 left-[15%] right-[15%] h-[2px] bg-gradient-to-r from-orange-500 via-amber-500 to-emerald-500 z-0"></div>
-
+            <div className="hidden md:block absolute top-12 left-[15%] right-[15%] h-[2px] bg-gradient-to-r from-[var(--primary-color)] via-[var(--secondary-color)] to-[var(--tertiary-color)] z-0"></div>
+ 
             {[
-              { step: '01', title: 'Select Clinical Facility', desc: 'Filter clinics by city or run GPS locator to discover nearest facilities with active wait times.', icon: 'location_on', color: 'bg-orange-500' },
-              { step: '02', title: 'Complete AI Triage Chat', desc: 'Interact with the hospital chatbot to input details, describe symptoms, and get doctor routing.', icon: 'chat', color: 'bg-amber-500' },
-              { step: '03', title: 'Obtain Live Wait Token', desc: 'Get your live queue ticket on WhatsApp or browser. Follow real-time lounge TV announcements.', icon: 'qr_code_2', color: 'bg-emerald-500' }
+              { step: '01', title: 'Select Clinical Facility', desc: 'Filter clinics by city or run GPS locator to discover nearest facilities with active wait times.', icon: 'location_on', color: 'bg-[var(--primary-color)]' },
+              { step: '02', title: 'Complete AI Triage Chat', desc: 'Interact with the hospital chatbot to input details, describe symptoms, and get doctor routing.', icon: 'chat', color: 'bg-[var(--secondary-color)]' },
+              { step: '03', title: 'Obtain Live Wait Token', desc: 'Get your live queue ticket on WhatsApp or browser. Follow real-time lounge TV announcements.', icon: 'qr_code_2', color: 'bg-[var(--tertiary-color)]' }
             ].map((flow, idx) => (
               <div key={idx} className="relative z-10 flex flex-col items-center text-center space-y-4 max-w-sm mx-auto">
                 <div className={`w-16 h-16 rounded-full ${flow.color} text-white flex items-center justify-center font-black text-xl shadow-lg border-4 border-[var(--card-bg)]`}>
                   <span className="material-symbols-outlined text-[26px]">{flow.icon}</span>
                 </div>
                 <div>
-                  <span className="text-[10px] font-black uppercase text-orange-600 tracking-wider">Step {flow.step}</span>
+                  <span className="text-[10px] font-black uppercase text-[var(--primary-color)] tracking-wider">Step {flow.step}</span>
                   <h4 className="font-extrabold text-sm text-[var(--text-color)] mt-1 mb-2">{flow.title}</h4>
                   <p className="text-xs text-[var(--text-secondary)] font-medium leading-relaxed max-w-xs">{flow.desc}</p>
                 </div>
@@ -403,7 +403,7 @@ export default function HospitalHub() {
               <div 
                 key={h.id} 
                 onClick={() => navigate(`/hospital/${h.id}`)}
-                className="group cursor-pointer bg-[var(--card-bg)] border border-[var(--border-color)]/40 hover:border-orange-500/40 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-black/5 hover:-translate-y-1 transition-all duration-300 flex flex-col relative min-w-0"
+                className="group cursor-pointer bg-[var(--card-bg)] border border-[var(--border-color)]/40 hover:border-[var(--primary-color)]/40 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-black/5 hover:-translate-y-1 transition-all duration-300 flex flex-col relative min-w-0"
               >
                 {/* Cover Image */}
                 <div className="h-48 w-full overflow-hidden relative bg-zinc-800">
@@ -416,7 +416,7 @@ export default function HospitalHub() {
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
                   
                   {/* Status Badges */}
-                  <span className="absolute top-4 right-4 bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1">
+                  <span className="absolute top-4 right-4 bg-[var(--tertiary-color)] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1">
                     <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping"></span>
                     <span>Active Queue</span>
                   </span>
@@ -424,14 +424,14 @@ export default function HospitalHub() {
                   {/* Proximity Distance Badge */}
                   {h.distance !== undefined && (
                     <span className="absolute top-4 left-4 bg-black/60 backdrop-blur-md text-white text-[10px] font-black px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1">
-                      <span className="material-symbols-outlined text-[12px] text-orange-400">near_me</span>
+                      <span className="material-symbols-outlined text-[12px] text-[var(--primary-color)]">near_me</span>
                       <span>{h.distance.toFixed(1)} km away</span>
                     </span>
                   )}
 
                   {/* City Label Badge */}
                   {h.city && (
-                    <span className="absolute bottom-4 left-4 text-white text-[10px] font-black uppercase tracking-wider bg-orange-600 px-2.5 py-0.5 rounded shadow-sm">
+                    <span className="absolute bottom-4 left-4 text-white text-[10px] font-black uppercase tracking-wider bg-[var(--primary-color)] px-2.5 py-0.5 rounded shadow-sm">
                       {h.city}
                     </span>
                   )}
@@ -439,7 +439,7 @@ export default function HospitalHub() {
 
                 {/* Content */}
                 <div className="p-6 flex-1 flex flex-col">
-                  <h3 className="text-xl font-extrabold group-hover:text-orange-500 transition duration-150 mb-2 leading-tight">
+                  <h3 className="text-xl font-extrabold group-hover:text-[var(--primary-color)] transition duration-150 mb-2 leading-tight">
                     {h.name}
                   </h3>
                   <p className="text-xs text-[var(--text-secondary)] font-medium leading-relaxed mb-4 line-clamp-2">
@@ -465,7 +465,7 @@ export default function HospitalHub() {
                       <span>WhatsApp Available</span>
                     </div>
                     <button 
-                      className="bg-orange-600 group-hover:bg-orange-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl flex items-center space-x-1 shadow-md shadow-orange-500/10 active:scale-95 duration-100 transition-all"
+                      className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white text-xs font-extrabold px-4 py-2 rounded-xl flex items-center space-x-1 shadow-md shadow-[var(--primary-color)]/10 active:scale-95 duration-100 transition-all transition-all-custom"
                     >
                       <span>Enter Portal</span>
                       <span className="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition duration-150">arrow_forward</span>
@@ -483,11 +483,11 @@ export default function HospitalHub() {
         <div className="max-w-2xl mx-auto space-y-4">
           <div className="flex justify-center space-x-6 text-[var(--text-color)] mb-2">
             <div className="flex items-center space-x-1">
-              <span className="material-symbols-outlined text-orange-600 text-[18px]">verified_user</span>
+              <span className="material-symbols-outlined text-[var(--primary-color)] text-[18px]">verified_user</span>
               <span>HIPAA Compliant</span>
             </div>
             <div className="flex items-center space-x-1">
-              <span className="material-symbols-outlined text-orange-600 text-[18px]">security</span>
+              <span className="material-symbols-outlined text-[var(--primary-color)] text-[18px]">security</span>
               <span>End-to-End Encrypted</span>
             </div>
           </div>

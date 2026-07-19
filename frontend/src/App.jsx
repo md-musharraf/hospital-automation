@@ -26,7 +26,7 @@ const LabDashboard = React.lazy(() => import('./components/LabPortal').then(modu
 
 const LoadingFallback = () => (
   <div className="flex-1 flex flex-col items-center justify-center bg-[var(--bg-color)] space-y-4 min-h-[400px]">
-    <span className="material-symbols-outlined text-[48px] text-orange-600 animate-spin">refresh</span>
+    <span className="material-symbols-outlined text-[48px] text-[var(--primary-color)] animate-spin">refresh</span>
     <p className="text-sm font-bold text-[var(--text-secondary)]">Loading session...</p>
   </div>
 );
@@ -122,10 +122,10 @@ function AppContent() {
       {/* Floating Demo Navigation Bar */}
       <div className="bg-[var(--card-bg)] border-b border-[var(--border-color)]/60 px-4 py-2.5 flex items-center justify-between z-50 shadow-lg shadow-black/5 shrink-0">
         <div className="flex items-center space-x-2">
-          <div className="bg-orange-600 p-1.5 rounded-lg shadow-sm shadow-orange-500/20">
+          <div className="bg-[var(--primary-color)] p-1.5 rounded-lg shadow-sm shadow-[var(--primary-color)]/20">
             <Activity className="h-5 w-5 text-white animate-pulse" />
           </div>
-          <span className="font-extrabold tracking-tight text-lg text-[var(--text-color)]">CareSync <span className="text-xs text-orange-500 font-semibold">DEMO</span></span>
+          <span className="font-extrabold tracking-tight text-lg text-[var(--text-color)]">CareSync <span className="text-xs text-[var(--primary-color)] font-semibold">DEMO</span></span>
         </div>
         
         <div className="flex items-center space-x-2 text-xs md:text-sm">
@@ -144,7 +144,7 @@ function AppContent() {
 
           <button 
             onClick={() => navigate('/')} 
-            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname === '/' ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname === '/' ? 'bg-[var(--primary-color)] text-white shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
             <MessageSquare className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline-block">Patient Portal</span>
@@ -152,7 +152,7 @@ function AppContent() {
           
           <button 
             onClick={() => navigate(staffToken ? '/staff/dashboard' : '/staff/login')} 
-            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/staff') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/staff') ? 'bg-[var(--primary-color)] text-white shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
             <Shield className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline-block">Staff Dashboard</span>
@@ -160,7 +160,7 @@ function AppContent() {
           
           <button 
             onClick={() => navigate(doctorToken ? '/doctor/dashboard' : '/doctor/login')} 
-            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/doctor') ? 'bg-amber-600 text-white shadow-lg shadow-amber-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/doctor') ? 'bg-[var(--primary-color)] text-white shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
             <Stethoscope className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline-block">Doctor Console</span>
@@ -168,7 +168,7 @@ function AppContent() {
 
           <button 
             onClick={() => navigate(labToken ? '/lab/dashboard' : '/lab/login')} 
-            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/lab') ? 'bg-teal-600 text-white shadow-lg shadow-teal-500/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/lab') ? 'bg-[var(--primary-color)] text-white shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
             <span className="material-symbols-outlined text-[16px] shrink-0">science</span>
             <span className="hidden sm:inline-block">Lab Console</span>

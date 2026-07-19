@@ -53,7 +53,7 @@ export default function DigitalPrescriptionViewer() {
         {/* Prescription Invoice Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-6 border-b border-[var(--border-color)]/30 gap-4">
           <div className="flex items-center space-x-2.5">
-            <div className="bg-orange-600 p-2 rounded-xl text-white">
+            <div className="bg-[var(--primary-color)] p-2 rounded-xl text-white">
               <span className="material-symbols-outlined text-[24px]">clinical_notes</span>
             </div>
             <div>
@@ -133,7 +133,7 @@ export default function DigitalPrescriptionViewer() {
               {labTests.map((test, idx) => (
                 <div key={idx} className="bg-[var(--bg-color)]/30 p-3.5 rounded-xl border border-[var(--border-color)]/30 flex items-start justify-between text-xs gap-3">
                   <div className="flex items-center space-x-2">
-                    <span className="material-symbols-outlined text-[18px] text-teal-650">science</span>
+                    <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">science</span>
                     <div>
                       <span className="font-bold text-[var(--text-color)]">{test.testName}</span>
                       {test.status === 'Completed' && (
@@ -156,7 +156,7 @@ export default function DigitalPrescriptionViewer() {
         {prescription && prescription.advice && (
           <div className="space-y-2 pt-2">
             <h4 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Doctor's Advice</h4>
-            <p className="text-sm font-medium leading-relaxed italic bg-zinc-550/5 p-3.5 rounded-xl border border-[var(--border-color)]/20">{prescription.advice}</p>
+            <p className="text-sm font-medium leading-relaxed italic bg-[var(--primary-color)]/5 p-3.5 rounded-xl border border-[var(--border-color)]/20">{prescription.advice}</p>
           </div>
         )}
 

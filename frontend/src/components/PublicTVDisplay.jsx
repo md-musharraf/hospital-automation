@@ -63,10 +63,10 @@ export default function PublicTVDisplay() {
       
       {/* Fullscreen Announcement Banner Overlay */}
       {calledToken && (
-        <div className="absolute inset-0 bg-orange-600 flex flex-col items-center justify-center text-center p-8 z-50 animate-fade-in border-4 border-orange-500 text-left">
+        <div className="absolute inset-0 bg-[#0891b2] flex flex-col items-center justify-center text-center p-8 z-50 animate-fade-in border-4 border-cyan-400 text-left">
           <span className="material-symbols-outlined text-[100px] text-white animate-bounce">volume_up</span>
           <h2 className="text-[12vw] font-black leading-none mt-4 text-white tracking-tight uppercase animate-pulse">{calledToken.tokenNumber}</h2>
-          <p className="text-[4vw] font-extrabold mt-6 text-orange-100 uppercase tracking-widest">Proceed to {calledToken.roomName}</p>
+          <p className="text-[4vw] font-extrabold mt-6 text-cyan-100 uppercase tracking-widest">Proceed to {calledToken.roomName}</p>
         </div>
       )}
 
@@ -75,7 +75,7 @@ export default function PublicTVDisplay() {
         {/* Header */}
         <div className="flex justify-between items-center pb-6 border-b border-white/10">
           <div className="flex items-center space-x-3.5">
-            <span className="material-symbols-outlined text-[36px] text-orange-500 animate-pulse">volume_up</span>
+            <span className="material-symbols-outlined text-[36px] text-[#0891b2] animate-pulse">volume_up</span>
             <div>
               <h2 className="text-3xl font-black tracking-tight">CareSync Waiting Lounge</h2>
               <p className="text-xs text-zinc-400 font-extrabold uppercase tracking-widest mt-0.5">Real-time Cabin Admissions</p>
@@ -100,15 +100,17 @@ export default function PublicTVDisplay() {
                     <span className="material-symbols-outlined text-zinc-400 text-[18px]">stethoscope</span>
                     <span className="text-xs text-zinc-400 font-bold uppercase tracking-wide">{q.doctor?.department}</span>
                   </div>
-                  <h3 className="text-xl font-extrabold text-white">{q.doctor?.name}</h3>
-                  <p className="text-xs text-orange-550 font-extrabold uppercase tracking-widest">{q.doctor?.currentRoom || 'Cabin A'}</p>
+                  <h3 className="text-xl font-extrabold text-white">
+                    {q.doctor?.name}
+                  </h3>
+                  <p className="text-xs text-[#22d3ee] font-extrabold uppercase tracking-widest">{q.doctor?.currentRoom || 'Cabin A'}</p>
                 </div>
-
+ 
                 <div className="py-6 border-t border-b border-white/5 my-6 flex flex-col items-center justify-center min-h-[140px]">
                   {isConsulting ? (
                     <div className="text-center">
                       <p className="text-[10px] text-zinc-400 uppercase font-extrabold tracking-widest">Active Patient</p>
-                      <h4 className="text-6xl font-black text-orange-500 mt-2 tracking-tight uppercase animate-pulse">{q.currentToken.tokenNumber}</h4>
+                      <h4 className="text-6xl font-black text-[#0891b2] mt-2 tracking-tight uppercase animate-pulse">{q.currentToken.tokenNumber}</h4>
                       <p className="text-xs font-semibold text-zinc-300 mt-2 truncate max-w-[200px]">{q.currentToken.patient?.name}</p>
                     </div>
                   ) : (
@@ -121,13 +123,13 @@ export default function PublicTVDisplay() {
 
                 <div className="space-y-2.5 text-xs font-semibold">
                   <span className="text-[9px] text-zinc-400 uppercase font-extrabold tracking-widest block mb-1">Queue Status</span>
-                  <div className="flex justify-between items-center bg-zinc-955 p-2.5 rounded-xl border border-white/5">
+                  <div className="flex justify-between items-center bg-zinc-950 p-2.5 rounded-xl border border-white/5">
                     <span className="text-zinc-500">Waiting Patients</span>
                     <span className="text-white font-bold">{q.activeQueue?.length || 0}</span>
                   </div>
                   <div className="flex justify-between items-center bg-zinc-955 p-2.5 rounded-xl border border-white/5">
                     <span className="text-zinc-500">Next In Line</span>
-                    <span className="text-orange-500 font-bold">
+                    <span className="text-[#0891b2] font-bold">
                       {q.activeQueue && q.activeQueue[0] ? q.activeQueue[0].tokenNumber : 'None'}
                     </span>
                   </div>

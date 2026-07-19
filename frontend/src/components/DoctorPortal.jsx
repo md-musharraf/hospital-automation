@@ -57,7 +57,7 @@ export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
     <div className="flex-1 flex items-center justify-center p-4 bg-[var(--bg-color)]">
       <div className="w-full max-w-md bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-8 shadow-[var(--card-shadow)] relative overflow-hidden">
         <div className="flex items-center space-x-2 mb-6">
-          <div className="bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg text-amber-500">
+          <div className="bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 p-2 rounded-lg text-[var(--primary-color)]">
             <span className="material-symbols-outlined">stethoscope</span>
           </div>
           <h2 className="text-xl font-extrabold text-[var(--text-color)] tracking-tight">Doctor Console Login</h2>
@@ -76,7 +76,7 @@ export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
             <select
               value={selectedHospital}
               onChange={(e) => setSelectedHospital(e.target.value)}
-              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold cursor-pointer"
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold cursor-pointer"
             >
               {hospitals.map(h => (
                 <option key={h.id} value={h.id}>{h.name}</option>
@@ -89,7 +89,7 @@ export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold"
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold"
               required
             />
           </div>
@@ -99,7 +99,7 @@ export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold"
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold"
               required
             />
           </div>
@@ -364,21 +364,21 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                   key={tok._id}
                   className={`p-3 rounded-xl border flex items-center justify-between text-xs shadow-sm bg-[var(--card-bg)] ${
                     tok.tokenType === 'Emergency' 
-                      ? 'animate-flashing-crimson border-rose-500/40 bg-rose-500/5' 
+                      ? 'animate-flashing-emergency border-rose-500/40 bg-rose-500/5' 
                       : idx === 0 
-                        ? 'border-emerald-500/40 bg-emerald-500/5' 
+                        ? 'border-[var(--tertiary-color)]/40 bg-[var(--tertiary-container)]/10' 
                         : 'border-[var(--border-color)]/30'
                   }`}
                 >
                   <div>
                     <div className="flex items-center space-x-2">
                       <span className="font-extrabold text-[var(--text-color)]">{tok.tokenNumber}</span>
-                      {idx === 0 && <span className="text-[9px] font-extrabold text-emerald-605 uppercase tracking-wide">Up Next</span>}
+                      {idx === 0 && <span className="text-[9px] font-extrabold text-[var(--tertiary-color)] uppercase tracking-wide">Up Next</span>}
                       {tok.tokenType === 'Emergency' && <span className="text-[9px] font-extrabold text-rose-500 uppercase tracking-wide">SOS</span>}
                     </div>
                     <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5">{tok.patient?.name} ({tok.patient?.age}y)</p>
                   </div>
-                  <span className="text-[10px] font-bold text-orange-600">{tok.estimatedWaitTime}m</span>
+                  <span className="text-[10px] font-bold text-[var(--primary-color)]">{tok.estimatedWaitTime}m</span>
                 </div>
               ))}
             </div>
@@ -404,7 +404,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
               <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 relative overflow-hidden shadow-[var(--card-shadow)] text-[var(--text-color)]">
                 <div className="flex items-start justify-between mb-4">
                   <div>
-                    <span className="text-xs font-bold text-orange-600 uppercase tracking-wider">Currently In Cabin</span>
+                    <span className="text-xs font-bold text-[var(--primary-color)] uppercase tracking-wider">Currently In Cabin</span>
                     <h2 className="text-3xl font-extrabold text-[var(--text-color)] tracking-tight mt-1">
                       {queue?.currentToken ? queue.currentToken.patient?.name : 'No Active Patient'}
                     </h2>
@@ -416,9 +416,9 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                   </div>
                   
                   {queue?.currentToken && (
-                    <div className="bg-orange-500/10 border border-orange-500/30 rounded-2xl px-4 py-2 text-center shrink-0">
+                    <div className="bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/30 rounded-2xl px-4 py-2 text-center shrink-0">
                       <span className="text-[10px] text-[var(--text-secondary)] uppercase font-semibold">Active Token</span>
-                      <p className="text-xl font-black text-orange-600">{queue.currentToken.tokenNumber}</p>
+                      <p className="text-xl font-black text-[var(--primary-color)]">{queue.currentToken.tokenNumber}</p>
                     </div>
                   )}
                 </div>
@@ -438,7 +438,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                         {queue.currentToken.chatHistory && queue.currentToken.chatHistory.length > 0 ? (
                           queue.currentToken.chatHistory.map((ch, idx) => (
                             <div key={idx} className="flex flex-col space-y-0.5">
-                              <span className={`font-bold ${ch.sender === 'user' ? 'text-orange-600' : 'text-[var(--text-secondary)]'}`}>
+                              <span className={`font-bold ${ch.sender === 'user' ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'}`}>
                                 {ch.sender === 'user' ? 'Patient' : 'Bot'}:
                               </span>
                               <span className="text-[var(--text-color)] font-medium">{ch.message}</span>
@@ -448,13 +448,13 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                           // Fallback history
                           <div className="space-y-1 text-[var(--text-secondary)]/70 italic font-medium">
                             <p className="font-bold text-[var(--text-secondary)]">Bot: <span className="font-normal">Select an option...</span></p>
-                            <p className="font-bold text-orange-600">Patient: <span className="font-normal">Book New Appointment</span></p>
+                            <p className="font-bold text-[var(--primary-color)]">Patient: <span className="font-normal">Book New Appointment</span></p>
                             <p className="font-bold text-[var(--text-secondary)]">Bot: <span className="font-normal">Enter patient phone:</span></p>
-                            <p className="font-bold text-orange-600">Patient: <span className="font-normal">{queue.currentToken.patient?.phone}</span></p>
+                            <p className="font-bold text-[var(--primary-color)]">Patient: <span className="font-normal">{queue.currentToken.patient?.phone}</span></p>
                             <p className="font-bold text-[var(--text-secondary)]">Bot: <span className="font-normal">Enter patient full name:</span></p>
-                            <p className="font-bold text-orange-600">Patient: <span className="font-normal">{queue.currentToken.patient?.name}</span></p>
+                            <p className="font-bold text-[var(--primary-color)]">Patient: <span className="font-normal">{queue.currentToken.patient?.name}</span></p>
                             <p className="font-bold text-[var(--text-secondary)]">Bot: <span className="font-normal">Please describe symptoms:</span></p>
-                            <p className="font-bold text-orange-600">Patient: <span className="font-normal">{queue.currentToken.symptoms}</span></p>
+                            <p className="font-bold text-[var(--primary-color)]">Patient: <span className="font-normal">{queue.currentToken.symptoms}</span></p>
                           </div>
                         )}
                       </div>
@@ -527,7 +527,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                             <div key={idx} className="bg-[var(--card-bg)] p-2.5 rounded-lg border border-[var(--border-color)]/30 space-y-1">
                               <div className="flex justify-between items-center text-[10px] text-[var(--text-secondary)]">
                                 <span className="font-bold">{new Date(h.completedAt).toLocaleDateString()}</span>
-                                <span className="font-extrabold uppercase text-orange-600">{h.tokenNumber}</span>
+                                <span className="font-extrabold uppercase text-[var(--primary-color)]">{h.tokenNumber}</span>
                               </div>
                               <p className="font-medium text-[var(--text-color)]"><span className="font-bold text-[var(--text-secondary)] text-zinc-400">Symptoms:</span> {h.symptoms}</p>
                               {h.prescription && h.prescription.medicines && h.prescription.medicines.length > 0 && (
@@ -559,25 +559,25 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <button
                   onClick={handleCallNext}
-                  className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-amber-500/10 hover:shadow-amber-500/20 transition-all text-sm flex flex-col items-center justify-center space-y-1 border border-amber-500/20"
+                  className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-[var(--primary-color)]/10 hover:shadow-[var(--primary-color)]/20 transition-all transition-all-custom text-sm flex flex-col items-center justify-center space-y-1 border border-[var(--primary-color)]/20"
                 >
                   <span className="material-symbols-outlined text-[20px]">group</span>
                   <span>Call Next Patient</span>
-                  <span className="text-[10px] text-amber-100 font-normal">Admit next in line</span>
+                  <span className="text-[10px] text-white/80 font-normal">Admit next in line</span>
                 </button>
-
+ 
                 <button
                   onClick={() => setShowCompleteModal(true)}
                   disabled={!queue?.currentToken}
-                  className={`font-bold py-4 px-6 rounded-2xl transition-all text-sm flex flex-col items-center justify-center space-y-1 border ${
+                  className={`font-bold py-4 px-6 rounded-2xl transition-all transition-all-custom text-sm flex flex-col items-center justify-center space-y-1 border ${
                     queue?.currentToken 
-                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500/20 shadow-lg shadow-emerald-500/10 cursor-pointer' 
+                      ? 'bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white border-[var(--tertiary-color)]/20 shadow-lg shadow-[var(--tertiary-color)]/10 cursor-pointer' 
                       : 'bg-[var(--border-color)]/10 border-[var(--border-color)]/30 text-[var(--text-secondary)]/35 cursor-not-allowed'
                   }`}
                 >
                   <span className="material-symbols-outlined text-[20px]">check_circle</span>
                   <span>Complete Checkup</span>
-                  <span className="text-[10px] text-slate-100 font-normal">Conclude session</span>
+                  <span className="text-[10px] text-white/80 font-normal">Conclude session</span>
                 </button>
 
                 <button
@@ -609,26 +609,26 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
 
                 <div className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30 text-center flex flex-col items-center justify-center">
                   <span className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wider">Active Buffer Delay</span>
-                  <p className="text-3xl font-black text-amber-600 mt-1">{queue?.bufferDelay || 0} <span className="text-sm font-medium">mins</span></p>
+                  <p className="text-3xl font-black text-[var(--primary-color)] mt-1">{queue?.bufferDelay || 0} <span className="text-sm font-medium">mins</span></p>
                 </div>
-
+ 
                 {/* Adjuster Buttons */}
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <button 
                     onClick={() => handleAddBuffer(10)}
-                    className="bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 border border-[var(--border-color)] hover:border-amber-500/30 text-[var(--text-color)] p-2.5 rounded-xl font-bold transition-all"
+                    className="bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 border border-[var(--border-color)] hover:border-[var(--primary-color)]/30 text-[var(--text-color)] p-2.5 rounded-xl font-bold transition-all transition-all-custom"
                   >
                     +10 mins
                   </button>
                   <button 
                     onClick={() => handleAddBuffer(15)}
-                    className="bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 border border-[var(--border-color)] hover:border-amber-500/30 text-[var(--text-color)] p-2.5 rounded-xl font-bold transition-all"
+                    className="bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 border border-[var(--border-color)] hover:border-[var(--primary-color)]/30 text-[var(--text-color)] p-2.5 rounded-xl font-bold transition-all transition-all-custom"
                   >
                     +15 mins
                   </button>
                   <button 
                     onClick={() => handleAddBuffer(30)}
-                    className="bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 border border-[var(--border-color)] hover:border-amber-500/30 text-[var(--text-color)] p-2.5 rounded-xl font-bold transition-all"
+                    className="bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 border border-[var(--border-color)] hover:border-[var(--primary-color)]/30 text-[var(--text-color)] p-2.5 rounded-xl font-bold transition-all transition-all-custom"
                   >
                     +30 mins
                   </button>
@@ -678,7 +678,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                 <button
                   type="button"
                   onClick={() => setMedicines(prev => [...prev, { name: '', dosage: '1-0-1', duration: '5 days', instructions: 'After food' }])}
-                  className="px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-550 rounded-lg hover:bg-amber-500 hover:text-white transition-all font-bold"
+                  className="px-2.5 py-1 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/30 text-[var(--primary-color)] rounded-lg hover:bg-[var(--primary-color)] hover:text-white transition-all transition-all-custom font-bold"
                 >
                   + Add Medicine
                 </button>
@@ -756,18 +756,17 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                   </div>
                 ))}
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-1.5 text-left">Doctor's Advice & Directives</label>
                 <textarea
                   placeholder="Drink plenty of water, avoid cold items..."
                   value={advice}
                   onChange={(e) => setAdvice(e.target.value)}
-                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/65 focus:border-amber-500 rounded-xl px-4 py-2.5 text-xs text-[var(--text-color)] outline-none font-semibold min-h-[64px]"
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/65 focus:border-[var(--primary-color)] rounded-xl px-4 py-2.5 text-xs text-[var(--text-color)] outline-none font-semibold min-h-[64px]"
                 />
               </div>
             </div>
-
+ 
             <div className="space-y-3 mb-6 text-sm text-left">
               <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider text-left">Re-visit Reminder Interval</label>
               <div className="grid grid-cols-2 gap-2 text-left">
@@ -783,9 +782,9 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                     key={opt.value}
                     type="button"
                     onClick={() => setRevisitSelection(opt.value)}
-                    className={`p-3 rounded-xl border text-left font-bold transition-all ${
+                    className={`p-3 rounded-xl border text-left font-bold transition-all transition-all-custom ${
                       revisitSelection === opt.value
-                        ? 'bg-amber-500/10 border-amber-500 text-amber-550 shadow-sm'
+                        ? 'bg-[var(--primary-color)]/10 border-[var(--primary-color)] text-[var(--primary-color)] shadow-sm'
                         : 'bg-[var(--bg-color)] border-[var(--border-color)]/60 text-[var(--text-color)] hover:bg-[var(--border-color)]/30'
                     }`}
                   >
@@ -793,7 +792,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                   </button>
                 ))}
               </div>
-
+ 
               {revisitSelection === 'custom' && (
                 <div className="mt-3 animate-fade-in text-left">
                   <label className="block text-xs font-bold text-[var(--text-secondary)] mb-1">Enter Custom Days</label>
@@ -803,19 +802,19 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                     onChange={(e) => setCustomRevisitDays(e.target.value)}
                     min="1"
                     max="365"
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-4 py-2 text-[var(--text-color)] outline-none font-bold"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 text-[var(--text-color)] outline-none font-bold"
                   />
                 </div>
               )}
             </div>
-
+ 
             <div className="flex space-x-3 text-sm">
               <button
                 onClick={() => {
                   setShowCompleteModal(false);
                   setRevisitSelection('none');
                 }}
-                className="flex-1 py-3 border border-[var(--border-color)] text-[var(--text-secondary)] font-bold hover:bg-[var(--border-color)]/20 rounded-xl transition-all"
+                className="flex-1 py-3 border border-[var(--border-color)] text-[var(--text-secondary)] font-bold hover:bg-[var(--border-color)]/20 rounded-xl transition-all transition-all-custom"
               >
                 Cancel
               </button>
@@ -831,7 +830,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                   setMedicines([{ name: '', dosage: '1-0-1', duration: '5 days', instructions: 'After food' }]);
                   setAdvice('');
                 }}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/10 transition-all"
+                className="flex-1 py-3 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white font-bold rounded-xl shadow-lg shadow-[var(--tertiary-color)]/10 transition-all transition-all-custom"
               >
                 Complete Checkup
               </button>

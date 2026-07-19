@@ -58,7 +58,7 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
     <div className="flex-1 flex items-center justify-center p-4 bg-[var(--bg-color)]">
       <div className="w-full max-w-md bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-8 shadow-[var(--card-shadow)] relative overflow-hidden">
         <div className="flex items-center space-x-2 mb-6">
-          <div className="bg-indigo-500/10 border border-indigo-500/20 p-2 rounded-lg text-indigo-500">
+          <div className="bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 p-2 rounded-lg text-[var(--primary-color)]">
             <span className="material-symbols-outlined">shield</span>
           </div>
           <h2 className="text-xl font-extrabold text-[var(--text-color)] tracking-tight">Staff Portal Login</h2>
@@ -77,7 +77,7 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
             <select
               value={selectedHospital}
               onChange={(e) => setSelectedHospital(e.target.value)}
-              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-indigo-500 rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold cursor-pointer"
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold cursor-pointer"
             >
               {hospitals.map(h => (
                 <option key={h.id} value={h.id}>{h.name}</option>
@@ -90,7 +90,7 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-indigo-500 rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold"
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold"
               required
             />
           </div>
@@ -100,7 +100,7 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-indigo-500 rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold"
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold"
               required
             />
           </div>
@@ -486,11 +486,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   }}
                   className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
                     isActive 
-                      ? 'bg-[var(--secondary-color)]/10 text-[var(--secondary-color)] border border-[var(--secondary-color)]/20' 
+                      ? 'bg-[var(--primary-color)]/10 text-[var(--primary-color)] border border-[var(--primary-color)]/20' 
                       : 'hover:bg-[var(--border-color)]/20 text-[var(--text-secondary)] hover:text-[var(--text-color)]'
                   }`}
                 >
-                  <span className={`material-symbols-outlined text-[18px] ${isActive ? 'text-[var(--secondary-color)]' : 'text-[var(--text-secondary)]'}`}>
+                  <span className={`material-symbols-outlined text-[18px] ${isActive ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'}`}>
                     {item.icon}
                   </span>
                   <span>{item.label}</span>
@@ -561,7 +561,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
                 activeSidebarTab === item.tab 
-                  ? 'bg-[var(--secondary-color)] text-white shadow-sm' 
+                  ? 'bg-[var(--primary-color)] text-white shadow-sm' 
                   : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:text-[var(--text-color)]'
               }`}
             >
@@ -613,8 +613,8 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       <p className="text-xs text-[var(--text-secondary)] font-medium">Insights of daily checkup registrations and recoveries</p>
                     </div>
                     <div className="flex space-x-3 text-xs font-semibold">
-                      <div className="flex items-center space-x-1.5"><span className="h-2 w-2 rounded-full bg-orange-500"></span><span className="text-[var(--text-secondary)]">Treatment</span></div>
-                      <div className="flex items-center space-x-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500"></span><span className="text-[var(--text-secondary)]">Recovered</span></div>
+                      <div className="flex items-center space-x-1.5"><span className="h-2 w-2 rounded-full bg-[var(--primary-color)]"></span><span className="text-[var(--text-secondary)]">Treatment</span></div>
+                      <div className="flex items-center space-x-1.5"><span className="h-2 w-2 rounded-full bg-[var(--tertiary-color)]"></span><span className="text-[var(--text-secondary)]">Recovered</span></div>
                     </div>
                   </div>
 
@@ -626,19 +626,19 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       <line x1="0" y1="100" x2="500" y2="100" stroke="#f5f5f4" strokeWidth="1" />
                       <line x1="0" y1="150" x2="500" y2="150" stroke="#f5f5f4" strokeWidth="1" />
 
-                      {/* Under treatment line (orange) */}
+                      {/* Under treatment line (primary Calm Cyan) */}
                       <path 
                         d="M 10 130 Q 90 90 170 120 T 330 70 T 490 110" 
                         fill="none" 
-                        stroke="#ea580c" 
+                        stroke="var(--primary-color)" 
                         strokeWidth="3.5" 
                         strokeLinecap="round"
                       />
-                      {/* Recovered line (green) */}
+                      {/* Recovered line (tertiary Health Green) */}
                       <path 
                         d="M 10 170 Q 90 140 170 160 T 330 130 T 490 120" 
                         fill="none" 
-                        stroke="#059669" 
+                        stroke="var(--tertiary-color)" 
                         strokeWidth="3.5" 
                         strokeLinecap="round"
                       />
@@ -765,7 +765,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       type="text"
                       value={walkName}
                       onChange={(e) => setWalkName(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--secondary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
                       required
                     />
                   </div>
@@ -777,7 +777,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         type="number"
                         value={walkAge}
                         onChange={(e) => setWalkAge(e.target.value)}
-                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--secondary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
                         required
                       />
                     </div>
@@ -786,7 +786,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       <select
                         value={walkGender}
                         onChange={(e) => setWalkGender(e.target.value)}
-                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--secondary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
                       >
                         <option>Male</option>
                         <option>Female</option>
@@ -802,7 +802,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       value={walkPhone}
                       onChange={(e) => setWalkPhone(e.target.value)}
                       placeholder="e.g. +1 555-0100"
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--secondary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
                       required
                     />
                   </div>
@@ -812,7 +812,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     <select
                       value={walkDoctorId}
                       onChange={(e) => setWalkDoctorId(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--secondary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
                     >
                       {doctors.map(doc => (
                         <option key={doc._id} value={doc._id}>
@@ -828,7 +828,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       value={walkSymptoms}
                       onChange={(e) => setWalkSymptoms(e.target.value)}
                       rows={2}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--secondary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold resize-none"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold resize-none"
                       required
                     />
                   </div>
@@ -851,7 +851,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                   <button
                     type="submit"
-                    className="w-full bg-[var(--secondary-color)] hover:bg-[var(--secondary-color)]/90 text-white font-bold py-3 rounded-xl shadow-lg shadow-[var(--secondary-color)]/10 transition-all flex items-center justify-center space-x-2"
+                    className="w-full bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white font-bold py-3 rounded-xl shadow-lg shadow-[var(--primary-color)]/10 transition-all transition-all-custom flex items-center justify-center space-x-2"
                   >
                     <span>Register Patient Walk-in</span>
                     <span className="material-symbols-outlined text-[16px]">chevron_right</span>
@@ -902,7 +902,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                                   key={tok._id}
                                   className={`p-3 rounded-xl border flex items-center justify-between text-xs transition-all bg-[var(--card-bg)] ${
                                     tok.tokenType === 'Emergency' 
-                                      ? 'animate-flashing-crimson border-rose-500/40 bg-rose-500/5' 
+                                      ? 'animate-flashing-emergency border-rose-500/40 bg-rose-500/5' 
                                       : 'border-[var(--border-color)] hover:border-[var(--text-secondary)]/30'
                                   }`}
                                 >
@@ -964,7 +964,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     value={patientSearch}
                     onChange={(e) => setPatientSearch(e.target.value)}
                     placeholder="Search by name or phone..."
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)] focus:border-[var(--secondary-color)] rounded-xl px-4 py-2 outline-none text-xs text-[var(--text-color)] font-semibold"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)] focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-xs text-[var(--text-color)] font-semibold"
                   />
                 </div>
                 
@@ -978,7 +978,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     setPatSuccess('');
                     setShowAddPatientModal(true);
                   }}
-                  className="bg-[var(--secondary-color)] hover:bg-[var(--secondary-color)]/90 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center space-x-1.5"
+                  className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all transition-all-custom shadow-sm flex items-center space-x-1.5"
                 >
                   <span className="material-symbols-outlined text-[16px]">person_add</span>
                   <span>Add New Patient</span>

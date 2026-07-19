@@ -86,7 +86,7 @@ export default function InternalChatBox({ token, user, role }) {
     <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 shadow-[var(--card-shadow)] flex flex-col h-[400px] w-full max-w-2xl">
       <div className="flex items-center justify-between pb-3 border-b border-[var(--border-color)]/30 mb-4 shrink-0">
         <div className="flex items-center space-x-2">
-          <span className="material-symbols-outlined text-[var(--secondary-color)] text-[20px]">forum</span>
+          <span className="material-symbols-outlined text-[var(--primary-color)] text-[20px]">forum</span>
           <h4 className="font-extrabold text-[var(--text-color)] text-sm">Internal Hospital Intercom</h4>
         </div>
         
@@ -126,7 +126,7 @@ export default function InternalChatBox({ token, user, role }) {
               >
                 <div className={`max-w-[85%] rounded-xl p-3 text-xs shadow-sm ${
                   isMe 
-                    ? 'bg-[var(--secondary-color)]/10 border border-[var(--secondary-color)]/25 text-[var(--text-color)] rounded-tr-none' 
+                    ? 'bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/25 text-[var(--text-color)] rounded-tr-none' 
                     : 'bg-[var(--bg-color)] border border-[var(--border-color)]/30 text-[var(--text-color)] rounded-tl-none'
                 }`}>
                   <div className="flex items-center justify-between mb-1 text-[9px] font-black text-[var(--text-secondary)] tracking-wider">
@@ -149,12 +149,12 @@ export default function InternalChatBox({ token, user, role }) {
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           placeholder={`Coordinate with ${receiverRole}...`}
-          className="flex-1 bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--secondary-color)] rounded-xl px-4 py-2 outline-none text-xs text-[var(--text-color)] font-semibold"
+          className="flex-1 bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-xs text-[var(--text-color)] font-semibold"
         />
         <button 
           type="submit" 
           disabled={!inputText.trim()}
-          className="bg-[var(--secondary-color)] hover:bg-[var(--secondary-color)]/95 disabled:opacity-50 text-white font-bold p-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center shrink-0"
+          className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] disabled:opacity-50 text-white font-bold p-2.5 rounded-xl transition-all transition-all-custom shadow-sm flex items-center justify-center shrink-0"
         >
           <span className="material-symbols-outlined text-[16px]">send</span>
         </button>

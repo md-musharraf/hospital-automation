@@ -69,14 +69,14 @@ export default function PatientLiveTracker() {
         {/* Hospital Branding Header */}
         <div className="flex justify-between items-center pb-4 border-b border-[var(--border-color)]/30 mb-6">
           <div className="flex items-center space-x-2">
-            <span className="material-symbols-outlined text-orange-655 text-[22px]">health_and_safety</span>
+            <span className="material-symbols-outlined text-[var(--primary-color)] text-[22px]">health_and_safety</span>
             <span className="font-extrabold text-sm tracking-tight text-left">CareSync Live Tracker</span>
           </div>
-          <span className="bg-emerald-600 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">Live Connection</span>
+          <span className="bg-[var(--tertiary-color)] text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">Live Connection</span>
         </div>
 
         {/* Big Ticket Token Box */}
-        <div className="bg-gradient-to-br from-[var(--secondary-color)] to-[var(--primary-container)] text-white rounded-2xl p-6 shadow-md relative overflow-hidden border border-white/10 text-center mb-6">
+        <div className="bg-gradient-to-br from-[var(--primary-color)] to-[var(--primary-container)] text-white rounded-2xl p-6 shadow-md relative overflow-hidden border border-white/10 text-center mb-6">
           <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
           <p className="text-[9px] text-white/70 uppercase tracking-widest font-bold mb-1 relative z-10">Active Ticket</p>
           <h2 className="text-5xl font-black relative z-10 leading-none">{token.tokenNumber}</h2>
@@ -97,7 +97,7 @@ export default function PatientLiveTracker() {
         <div className="space-y-4">
           <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-4 flex items-center justify-between shadow-inner">
             <div className="flex items-center space-x-3 text-left">
-              <span className={`material-symbols-outlined text-[26px] ${inCabin ? 'text-emerald-500 animate-pulse' : 'text-orange-500'}`}>
+              <span className={`material-symbols-outlined text-[26px] ${inCabin ? 'text-[var(--tertiary-color)] animate-pulse' : 'text-[var(--primary-color)]'}`}>
                 {inCabin ? 'check_circle' : 'hourglass_empty'}
               </span>
               <div>
@@ -106,7 +106,7 @@ export default function PatientLiveTracker() {
               </div>
             </div>
             {!inCabin && position > 0 && (
-              <span className="text-lg font-black text-orange-655 shrink-0">{token.estimatedWaitTime} <span className="text-[9px] font-medium text-[var(--text-secondary)]">mins</span></span>
+              <span className="text-lg font-black text-[var(--primary-color)] shrink-0">{token.estimatedWaitTime} <span className="text-[9px] font-medium text-[var(--text-secondary)]">mins</span></span>
             )}
           </div>
 

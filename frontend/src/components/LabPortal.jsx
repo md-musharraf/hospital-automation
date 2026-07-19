@@ -56,7 +56,7 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
     <div className="flex-1 flex items-center justify-center p-4 bg-[var(--bg-color)]">
       <div className="w-full max-w-md bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-8 shadow-[var(--card-shadow)] relative overflow-hidden">
         <div className="flex items-center space-x-2 mb-6">
-          <div className="bg-teal-500/10 border border-teal-500/20 p-2 rounded-lg text-teal-500">
+          <div className="bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 p-2 rounded-lg text-[var(--primary-color)]">
             <span className="material-symbols-outlined">science</span>
           </div>
           <h2 className="text-xl font-extrabold text-[var(--text-color)] tracking-tight">Lab Assistant Portal Login</h2>
@@ -108,7 +108,7 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-teal-500/10 hover:shadow-teal-500/20 flex items-center justify-center space-x-2 active:scale-[0.98]"
+            className="w-full py-3.5 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white font-bold rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/10 hover:shadow-[var(--primary-color)]/20 flex items-center justify-center space-x-2 active:scale-[0.98]"
           >
             {loading ? <span>Logging in...</span> : <span>Access Lab Console</span>}
           </button>
@@ -195,7 +195,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         <div className="flex justify-between items-center pb-2 border-b border-[var(--border-color)]/30">
           <div>
             <h3 className="font-extrabold text-[var(--text-color)] text-base">{labUser?.name}</h3>
-            <p className="text-[10px] text-teal-650 font-bold uppercase tracking-wider mt-0.5">Lab Assistant</p>
+            <p className="text-[10px] text-[var(--primary-color)] font-bold uppercase tracking-wider mt-0.5">Lab Assistant</p>
           </div>
           <button 
             onClick={onLogout}
@@ -221,7 +221,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                     onClick={() => setSelectedToken(tok)}
                     className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between active:scale-[0.98] ${
                       selectedToken?._id === tok._id
-                        ? 'bg-teal-500/10 border-teal-500 text-[var(--text-color)] shadow-sm'
+                        ? 'bg-[var(--primary-color)]/10 border-[var(--primary-color)] text-[var(--text-color)] shadow-sm'
                         : 'bg-[var(--card-bg)] border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/10'
                     }`}
                   >
@@ -229,7 +229,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                       <p className="font-extrabold text-xs">{tok.tokenNumber}</p>
                       <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5">{tok.patient?.name}</p>
                     </div>
-                    <span className="bg-teal-650 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">
+                    <span className="bg-[var(--primary-color)] text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">
                       {pendingCount} Test{pendingCount > 1 ? 's' : ''}
                     </span>
                   </div>
@@ -248,15 +248,15 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] space-y-6">
             <div className="flex justify-between items-start pb-4 border-b border-[var(--border-color)]/30">
               <div>
-                <span className="text-xs font-bold text-teal-600 uppercase tracking-wider">Active Patient under Test</span>
+                <span className="text-xs font-bold text-[var(--primary-color)] uppercase tracking-wider">Active Patient under Test</span>
                 <h2 className="text-3xl font-extrabold tracking-tight mt-1">{selectedToken.patient?.name}</h2>
                 <p className="text-xs text-[var(--text-secondary)] mt-1 font-medium">
                   Age: {selectedToken.patient?.age} | Gender: {selectedToken.patient?.gender} | Phone: {selectedToken.patient?.phone}
                 </p>
               </div>
-              <div className="bg-teal-500/10 border border-teal-500/30 rounded-2xl px-4 py-2 text-center shrink-0">
+              <div className="bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/30 rounded-2xl px-4 py-2 text-center shrink-0">
                 <span className="text-[10px] text-[var(--text-secondary)] uppercase font-semibold">Token Number</span>
-                <p className="text-xl font-black text-teal-600">{selectedToken.tokenNumber}</p>
+                <p className="text-xl font-black text-[var(--primary-color)]">{selectedToken.tokenNumber}</p>
               </div>
             </div>
 
@@ -266,7 +266,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                 {selectedToken.labTests.filter(t => t.status === 'Pending').map(test => (
                   <div key={test.testName} className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center space-x-3">
-                      <span className="material-symbols-outlined text-teal-600 text-[20px]">science</span>
+                      <span className="material-symbols-outlined text-[var(--primary-color)] text-[20px]">science</span>
                       <span className="font-bold text-sm">{test.testName}</span>
                     </div>
                     <div className="flex-1 max-w-md flex items-center space-x-3">
@@ -278,11 +278,11 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                           const val = e.target.value;
                           setRemarks(prev => ({ ...prev, [`${selectedToken._id}-${test.testName}`]: val }));
                         }}
-                        className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-teal-500 transition-all font-semibold"
+                        className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] transition-all font-semibold"
                       />
                       <button
                         onClick={() => handleCompleteTest(selectedToken._id, test.testName)}
-                        className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap"
+                        className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white text-xs font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap"
                       >
                         Submit Results
                       </button>

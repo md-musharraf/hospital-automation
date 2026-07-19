@@ -218,7 +218,7 @@ export default function PatientPortal() {
   if (loadingHosp) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-[var(--bg-color)] space-y-4">
-        <span className="material-symbols-outlined text-[48px] text-orange-600 animate-spin">refresh</span>
+        <span className="material-symbols-outlined text-[48px] text-[var(--primary-color)] animate-spin">refresh</span>
         <p className="text-sm font-bold text-[var(--text-secondary)]">Loading white-labeled portal...</p>
       </div>
     );
@@ -405,12 +405,12 @@ export default function PatientPortal() {
               <div className="w-10 h-10 rounded-full bg-[var(--primary-color)]/10 text-[var(--primary-color)] flex items-center justify-center shadow-sm">
                 <span className="material-symbols-outlined text-[22px]">smart_toy</span>
               </div>
-              <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-550 rounded-full border-2 border-[var(--card-bg)] animate-pulse"></span>
+              <span className="absolute bottom-0 right-0 w-3 h-3 bg-[var(--tertiary-color)] rounded-full border-2 border-[var(--card-bg)] animate-pulse"></span>
             </div>
             <div>
               <h2 className="font-extrabold text-sm md:text-base text-[var(--text-color)]">{hospitalInfo?.name || 'CareSync Assistant'}</h2>
               <p className="text-[10px] text-[var(--text-secondary)] font-semibold flex items-center">
-                <span className="material-symbols-outlined text-[12px] text-amber-500 mr-0.5">bolt</span>
+                <span className="material-symbols-outlined text-[12px] text-[var(--primary-color)] mr-0.5">bolt</span>
                 AI-Powered Triage & Booking
               </p>
             </div>
@@ -422,7 +422,7 @@ export default function PatientPortal() {
 
         {/* Mobile Token Banner */}
         {myToken && (
-          <div className="lg:hidden px-6 py-3.5 bg-gradient-to-r from-[var(--secondary-color)] to-[var(--primary-container)] text-white flex justify-between items-center shadow-md relative z-10 border-b border-white/10">
+          <div className="lg:hidden px-6 py-3.5 bg-gradient-to-r from-[var(--primary-color)] to-[var(--primary-container)] text-white flex justify-between items-center shadow-md relative z-10 border-b border-white/10">
             <div>
               <p className="text-[9px] text-white/80 uppercase tracking-widest font-extrabold mb-0.5">Active Ticket</p>
               <h4 className="text-sm font-black text-white">Token {myToken.tokenNumber} • Cabin A</h4>
@@ -485,7 +485,7 @@ export default function PatientPortal() {
                     <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed ${
                       isBot 
                         ? 'bg-[var(--card-bg)] text-[var(--text-color)] border border-[var(--border-color)]/30 rounded-tl-none' 
-                        : 'bg-[var(--secondary-color)] text-white rounded-tr-none'
+                        : 'bg-[var(--primary-color)] text-white rounded-tr-none'
                     }`}>
                       <p className="whitespace-pre-wrap font-medium">{msg.text}</p>
                     </div>
@@ -584,7 +584,7 @@ export default function PatientPortal() {
           )}
 
           {/* Chat text box */}
-          <div className="flex items-end space-x-2 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-1.5 focus-within:border-[var(--secondary-color)] focus-within:ring-1 focus-within:ring-[var(--secondary-color)] transition-all">
+          <div className="flex items-end space-x-2 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-1.5 focus-within:border-[var(--primary-color)] focus-within:ring-1 focus-within:ring-[var(--primary-color)] transition-all">
             <button className="p-2 text-[var(--text-secondary)] hover:text-[var(--primary-color)] rounded-full transition-colors shrink-0 flex items-center justify-center">
               <span className="material-symbols-outlined text-[20px]">attach_file</span>
             </button>

@@ -123,7 +123,7 @@ export default function SuperAdminPortal() {
       <div className="flex-grow flex items-center justify-center p-4 bg-[var(--bg-color)]">
         <div className="w-full max-w-md bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-8 shadow-[var(--card-shadow)] relative text-left">
           <div className="flex items-center space-x-2.5 mb-6">
-            <div className="bg-red-500/10 border border-red-500/20 p-2 rounded-lg text-red-500">
+            <div className="bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 p-2 rounded-lg text-[var(--primary-color)]">
               <ShieldAlert className="h-5 w-5" />
             </div>
             <h2 className="text-xl font-extrabold tracking-tight">Super Admin Entrance</h2>
@@ -144,7 +144,7 @@ export default function SuperAdminPortal() {
                 placeholder="Enter supersecret123 to verify..."
                 value={adminSecret}
                 onChange={e => setAdminSecret(e.target.value)}
-                className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-red-500 rounded-xl px-4 py-3 outline-none text-sm text-[var(--text-color)] font-bold transition-all"
+                className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-3 outline-none text-sm text-[var(--text-color)] font-bold transition-all"
                 required
               />
             </div>
@@ -174,7 +174,7 @@ export default function SuperAdminPortal() {
             <ArrowLeft className="h-4 w-4" />
             <span>Hub Directory</span>
           </button>
-          <div className="inline-flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
+          <div className="inline-flex items-center space-x-2 bg-[var(--tertiary-color)]/10 border border-[var(--tertiary-color)]/20 text-[var(--tertiary-color)] px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
             <Activity className="h-3.5 w-3.5 animate-pulse" />
             <span>Super Admin Engine</span>
           </div>
@@ -195,9 +195,9 @@ export default function SuperAdminPortal() {
           )}
 
           {successMsg ? (
-            <div className="p-8 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-center space-y-4">
-              <span className="material-symbols-outlined text-[48px] text-emerald-500 animate-bounce">check_circle</span>
-              <h3 className="text-lg font-black text-emerald-600 dark:text-emerald-400">Onboarding Completed!</h3>
+            <div className="p-8 bg-[var(--tertiary-color)]/10 border border-[var(--tertiary-color)]/20 rounded-2xl text-center space-y-4">
+              <span className="material-symbols-outlined text-[48px] text-[var(--tertiary-color)] animate-bounce">check_circle</span>
+              <h3 className="text-lg font-black text-[var(--tertiary-color)]">Onboarding Completed!</h3>
               <p className="text-xs text-[var(--text-secondary)] font-medium max-w-sm mx-auto">
                 {successMsg} The new clinic's landing page, chatbot database, and isolated admin dashboards are live.
               </p>
@@ -224,7 +224,7 @@ export default function SuperAdminPortal() {
                 </button>
                 <button
                   onClick={() => navigate(`/hospital/${hospId}`)}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black transition-all shadow-md"
+                  className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white rounded-xl font-black transition-all transition-all-custom shadow-md"
                 >
                   Visit Patient Portal
                 </button>
@@ -236,7 +236,7 @@ export default function SuperAdminPortal() {
               {/* SECTION A: Hospital Configuration */}
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
-                  <span className="material-symbols-outlined text-[18px] text-orange-600">domain</span>
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">domain</span>
                   <span>1. Facility Core Profile</span>
                 </h3>
 
@@ -248,7 +248,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. City Health Clinic"
                       value={name}
                       onChange={e => handleAutoSlug(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -259,7 +259,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. city-health-clinic"
                       value={hospId}
                       onChange={e => setHospId(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, ''))}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -271,7 +271,7 @@ export default function SuperAdminPortal() {
                     <select
                       value={type}
                       onChange={e => setType(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
                     >
                       <option>Hospital</option>
                       <option>Clinic</option>
@@ -287,7 +287,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. Delhi"
                       value={city}
                       onChange={e => setCity(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -299,7 +299,7 @@ export default function SuperAdminPortal() {
                         step="0.0001"
                         value={lat}
                         onChange={e => setLat(e.target.value)}
-                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                         required
                       />
                     </div>
@@ -310,7 +310,7 @@ export default function SuperAdminPortal() {
                         step="0.0001"
                         value={lng}
                         onChange={e => setLng(e.target.value)}
-                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                         required
                       />
                     </div>
@@ -325,7 +325,7 @@ export default function SuperAdminPortal() {
                       placeholder="+91 98765 43210"
                       value={phone}
                       onChange={e => setPhone(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -336,7 +336,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. +14155238886"
                       value={whatsappNumber}
                       onChange={e => setWhatsappNumber(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -349,7 +349,7 @@ export default function SuperAdminPortal() {
                     placeholder="e.g. Sector 15, Near Central Park"
                     value={address}
                     onChange={e => setAddress(e.target.value)}
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     required
                   />
                 </div>
@@ -362,7 +362,7 @@ export default function SuperAdminPortal() {
                       placeholder="https://images.unsplash.com/..."
                       value={coverImage}
                       onChange={e => setCoverImage(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
                   </div>
                   <div>
@@ -372,7 +372,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. Public clinical service dispensary providing basic triage."
                       value={description}
                       onChange={e => setDescription(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-orange-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -382,7 +382,7 @@ export default function SuperAdminPortal() {
               {/* SECTION B: Staff Onboarding */}
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
-                  <span className="material-symbols-outlined text-[18px] text-indigo-600">verified_user</span>
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">verified_user</span>
                   <span>2. Receptionist / Staff Account Setup</span>
                 </h3>
 
@@ -394,7 +394,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. David Jones"
                       value={staffName}
                       onChange={e => setStaffName(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-indigo-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
                   </div>
                   <div>
@@ -404,7 +404,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. city_staff"
                       value={staffUsername}
                       onChange={e => setStaffUsername(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-indigo-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -415,7 +415,7 @@ export default function SuperAdminPortal() {
                       placeholder="••••••••"
                       value={staffPassword}
                       onChange={e => setStaffPassword(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-indigo-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -427,7 +427,7 @@ export default function SuperAdminPortal() {
                     type="text"
                     value={counterNumber}
                     onChange={e => setCounterNumber(e.target.value)}
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-indigo-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                   />
                 </div>
               </div>
@@ -435,7 +435,7 @@ export default function SuperAdminPortal() {
               {/* SECTION C: Doctor Onboarding */}
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
-                  <span className="material-symbols-outlined text-[18px] text-amber-600">stethoscope</span>
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">stethoscope</span>
                   <span>3. Initial Medical Officer / Doctor Setup</span>
                 </h3>
 
@@ -447,7 +447,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. Dr. David Miller"
                       value={docName}
                       onChange={e => setDocName(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
                   </div>
                   <div>
@@ -457,7 +457,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. david.miller@hospital.com"
                       value={docEmail}
                       onChange={e => setDocEmail(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -468,7 +468,7 @@ export default function SuperAdminPortal() {
                       placeholder="••••••••"
                       value={docPassword}
                       onChange={e => setDocPassword(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -482,7 +482,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. Cardiology"
                       value={docDepartment}
                       onChange={e => setDocDepartment(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
                   </div>
                   <div>
@@ -492,7 +492,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. Cabin 101"
                       value={docRoom}
                       onChange={e => setDocRoom(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
                   </div>
                 </div>
@@ -501,7 +501,7 @@ export default function SuperAdminPortal() {
               {/* SECTION D: Lab Tech Onboarding */}
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
-                  <span className="material-symbols-outlined text-[18px] text-teal-650">science</span>
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">science</span>
                   <span>4. Clinical Laboratory assistant Account Setup</span>
                 </h3>
 
@@ -513,7 +513,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. City Lab Specialist"
                       value={labName}
                       onChange={e => setLabName(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-teal-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
                   </div>
                   <div>
@@ -523,7 +523,7 @@ export default function SuperAdminPortal() {
                       placeholder="e.g. city_lab"
                       value={labUsername}
                       onChange={e => setLabUsername(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-teal-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -534,7 +534,7 @@ export default function SuperAdminPortal() {
                       placeholder="••••••••"
                       value={labPassword}
                       onChange={e => setLabPassword(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-teal-500 rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
                   </div>
@@ -544,7 +544,7 @@ export default function SuperAdminPortal() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-4 bg-orange-600 hover:bg-orange-500 text-white font-black text-sm rounded-xl transition-all shadow-lg shadow-orange-550/15 flex items-center justify-center space-x-2 disabled:opacity-50"
+                className="w-full py-4 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white font-black text-sm rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/15 flex items-center justify-center space-x-2 disabled:opacity-50"
               >
                 {loading ? <span>Configuring clinical database & files...</span> : (
                   <>
