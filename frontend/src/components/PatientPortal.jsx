@@ -42,6 +42,13 @@ export default function PatientPortal() {
         if (data.whatsappNumber) {
           setWhatsappNumber(data.whatsappNumber);
         }
+        if (data.welcomeMessage) {
+          setMessages([
+            { sender: 'bot', text: `Welcome to ${data.name}! 🏥` },
+            { sender: 'bot', text: data.welcomeMessage },
+            { sender: 'bot', text: "I can help you book an appointment, check live queues, or trigger emergency tokens. Send a message like 'Hi' or 'Hello' to begin!" }
+          ]);
+        }
         setLoadingHosp(false);
       })
       .catch(err => {
@@ -228,8 +235,32 @@ export default function PatientPortal() {
     );
   }
 
+  const primaryColor = hospitalInfo?.primaryColor || '#0d9488';
+  const secondaryColor = hospitalInfo?.secondaryColor || '#0f172a';
+
+  const getDeptLabel = (originalDept) => {
+    const isLab = hospitalInfo?.type === 'Lab';
+    const isClinic = hospitalInfo?.type === 'Clinic';
+    if (isLab) {
+      if (originalDept === 'Emergency') return 'Urgent Diagnostics / Special Tests';
+      if (originalDept === 'General Practice') return 'Blood & Urine Collection Counter';
+      if (originalDept === 'Pediatrics') return 'Radiology & X-Ray Room';
+    } else if (isClinic) {
+      if (originalDept === 'Emergency') return 'Urgent Walk-in Care';
+      if (originalDept === 'General Practice') return 'General Consultation';
+      if (originalDept === 'Pediatrics') return 'Child & Family Health';
+    }
+    return originalDept;
+  };
+
   return (
-    <div className="flex-1 flex w-full max-w-[1440px] mx-auto h-[calc(100vh-62px)] overflow-hidden bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 min-w-0">
+    <div 
+      style={{
+        '--primary-color': primaryColor,
+        '--secondary-color': secondaryColor
+      }}
+      className="flex-1 flex w-full max-w-[1440px] mx-auto h-[calc(100vh-62px)] overflow-hidden bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 min-w-0"
+    >
       {/* Left Sidebar: Hospital Info & Wait Times */}
       <aside className="hidden lg:flex flex-col w-80 bg-[var(--card-bg)] border-r border-[var(--border-color)]/30 p-6 overflow-y-auto no-scrollbar shadow-[inset_-10px_0_20px_rgba(0,0,0,0.01)] relative z-10">
         <div className="mb-6">
@@ -245,12 +276,23 @@ export default function PatientPortal() {
           <div className="w-full h-32 rounded-xl bg-zinc-800 mb-4 overflow-hidden relative shadow-sm">
             <div 
               className="bg-cover bg-center w-full h-full absolute inset-0 opacity-80" 
-              style={{ backgroundImage: `url('${hospitalInfo?.coverImage || 'https://lh3.googleusercontent.com/aida-public/AB6AXuA1x4Ta8X_Leb2KfTzTMhRKsT439crOzzOgCCfSQH3UNSJlkdZTlRZT13ai7p8kN9f7_vHvbO7z2snijUJmc30zd6loDlIMh8Uth9PitBK4Q9fgbf17IwSVaxF8O9WHyaQvTAvo-ILHCBdZnJT8Yhu4iOlLxRG6irdb1Gnl_7dsWd1s1hLWea_09I6kOuw8kjUH9psbS4v-OXZXFH7mVJ9A8DwUUtxXqxAK0RcJIlWbR2K3O1vo3ZCrbqgnr5Egw0jJOTNYtRgR1lFx'}')` }}
+              style={{ backgroundImage: `url('${hospitalInfo?.coverImage || hospitalInfo?.heroImage || 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop'}')` }}
             ></div>
             <div className="absolute inset-0 bg-gradient-to-t from-black/75 to-transparent"></div>
             <h3 className="absolute bottom-4 left-4 text-white font-bold text-lg leading-tight">
               {hospitalInfo?.name || 'General Hospital'}<br/>
-              <span className="text-xs text-white/80 font-normal">Active Campus</span>
+              <span className="text-xs text-white/80 font-normal">
+                {hospitalInfo?.type === 'Lab' 
+                  ? 'Diagnostic Lab' 
+                  : hospitalInfo?.type === 'Clinic' 
+                  ? 'Active Clinic' 
+                  : hospitalInfo?.type === 'Medical'
+                  ? 'Medical Center'
+                  : hospitalInfo?.type === 'Government'
+                  ? 'Government Dispensary'
+                  : 'Active Campus'
+                }
+              </span>
             </h3>
           </div>
           <div className="space-y-3 text-xs text-[var(--text-secondary)] font-semibold">
@@ -272,13 +314,17 @@ export default function PatientPortal() {
         <div className="h-px w-full bg-[var(--border-color)]/50 mb-6"></div>
 
         <div className="mb-6">
-          <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)] mb-4">Current Wait Times</h4>
+          <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)] mb-4">
+            {hospitalInfo?.type === 'Lab' ? 'Lab Counter Wait Times' : 'Current Wait Times'}
+          </h4>
           
           {/* Emergency Wait Time Card */}
           <div className="bg-[var(--bg-color)] rounded-lg p-3 mb-2.5 flex justify-between items-center border border-[var(--border-color)]/30 shadow-sm">
             <div className="flex items-center space-x-2">
-              <span className="material-symbols-outlined text-rose-500 text-[18px]">local_hospital</span>
-              <span className="text-sm font-bold text-[var(--text-color)]">Emergency</span>
+              <span className="material-symbols-outlined text-rose-500 text-[18px]">
+                {hospitalInfo?.type === 'Lab' ? 'biotech' : 'local_hospital'}
+              </span>
+              <span className="text-sm font-bold text-[var(--text-color)]">{getDeptLabel('Emergency')}</span>
             </div>
             <span className="text-xs font-bold text-rose-600 bg-rose-500/10 px-2 py-0.5 rounded">
               {waitTimes['Emergency']} mins
@@ -288,8 +334,10 @@ export default function PatientPortal() {
           {/* GP Wait Time Card */}
           <div className="bg-[var(--bg-color)] rounded-lg p-3 mb-2.5 flex justify-between items-center border border-[var(--border-color)]/30 shadow-sm">
             <div className="flex items-center space-x-2">
-              <span className="material-symbols-outlined text-[var(--primary-color)] text-[18px]">medical_services</span>
-              <span className="text-sm font-bold text-[var(--text-color)]">General Practice</span>
+              <span className="material-symbols-outlined text-[var(--primary-color)] text-[18px]">
+                {hospitalInfo?.type === 'Lab' ? 'bloodtype' : 'medical_services'}
+              </span>
+              <span className="text-sm font-bold text-[var(--text-color)]">{getDeptLabel('General Practice')}</span>
             </div>
             <span className="text-xs font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded">
               {waitTimes['General Practice'] || waitTimes['General Medicine'] || 15} mins
@@ -299,8 +347,10 @@ export default function PatientPortal() {
           {/* Pediatrics Wait Time Card */}
           <div className="bg-[var(--bg-color)] rounded-lg p-3 flex justify-between items-center border border-[var(--border-color)]/30 shadow-sm">
             <div className="flex items-center space-x-2">
-              <span className="material-symbols-outlined text-[var(--primary-color)] text-[18px]">child_care</span>
-              <span className="text-sm font-bold text-[var(--text-color)]">Pediatrics</span>
+              <span className="material-symbols-outlined text-[var(--primary-color)] text-[18px]">
+                {hospitalInfo?.type === 'Lab' ? 'settings_accessibility' : 'child_care'}
+              </span>
+              <span className="text-sm font-bold text-[var(--text-color)]">{getDeptLabel('Pediatrics')}</span>
             </div>
             <span className="text-xs font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded">
               {waitTimes['Pediatrics'] || 10} mins
@@ -406,16 +456,29 @@ export default function PatientPortal() {
               <span className="material-symbols-outlined text-[18px]">arrow_back</span>
             </button>
             <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-[var(--primary-color)]/10 text-[var(--primary-color)] flex items-center justify-center shadow-sm">
-                <span className="material-symbols-outlined text-[22px]">smart_toy</span>
-              </div>
+              {hospitalInfo?.logoUrl ? (
+                <img 
+                  src={hospitalInfo.logoUrl} 
+                  alt={`${hospitalInfo.name} Logo`} 
+                  className="w-10 h-10 rounded-full object-cover shadow-sm border border-[var(--border-color)]/30"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-[var(--primary-color)]/10 text-[var(--primary-color)] flex items-center justify-center shadow-sm">
+                  <span className="material-symbols-outlined text-[22px]">smart_toy</span>
+                </div>
+              )}
               <span className="absolute bottom-0 right-0 w-3 h-3 bg-[var(--tertiary-color)] rounded-full border-2 border-[var(--card-bg)] animate-pulse"></span>
             </div>
             <div>
               <h2 className="font-extrabold text-sm md:text-base text-[var(--text-color)]">{hospitalInfo?.name || 'CareSync Assistant'}</h2>
               <p className="text-[10px] text-[var(--text-secondary)] font-semibold flex items-center">
                 <span className="material-symbols-outlined text-[12px] text-[var(--primary-color)] mr-0.5">bolt</span>
-                AI-Powered Triage & Booking
+                {hospitalInfo?.type === 'Lab' 
+                  ? 'AI-Powered Diagnostics & Lab Queue Triage' 
+                  : hospitalInfo?.type === 'Clinic'
+                  ? 'AI-Powered Clinic Triage & Booking'
+                  : 'AI-Powered Triage & Booking'
+                }
               </p>
             </div>
           </div>

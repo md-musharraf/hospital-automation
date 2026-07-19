@@ -59,6 +59,52 @@ export default function SuperAdminPortal() {
   const [addSpecialization, setAddSpecialization] = useState('General Consultation');
   const [addAverageCheckupTime, setAddAverageCheckupTime] = useState(10);
 
+  // Edit Hospital States
+  const [editHospId, setEditHospId] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editType, setEditType] = useState('Hospital');
+  const [editCity, setEditCity] = useState('');
+  const [editLat, setEditLat] = useState('');
+  const [editLng, setEditLng] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editWhatsapp, setEditWhatsapp] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editLogoUrl, setEditLogoUrl] = useState('');
+  const [editCoverImage, setEditCoverImage] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editWelcomeMessage, setEditWelcomeMessage] = useState('');
+  const [editPrimaryColor, setEditPrimaryColor] = useState('#0d9488');
+  const [editSecondaryColor, setEditSecondaryColor] = useState('#0f172a');
+
+  const handleSelectHospitalToEdit = (hospId) => {
+    const hosp = hospitalList.find(h => h.id === hospId);
+    if (hosp) {
+      setEditHospId(hosp.id);
+      setEditName(hosp.name);
+      setEditType(hosp.type || 'Hospital');
+      setEditCity(hosp.city || '');
+      setEditLat(hosp.coordinates?.lat || '');
+      setEditLng(hosp.coordinates?.lng || '');
+      setEditPhone(hosp.phone || '');
+      setEditWhatsapp(hosp.whatsappNumber || '');
+      setEditAddress(hosp.address || '');
+      setEditLogoUrl(hosp.logoUrl || '');
+      setEditCoverImage(hosp.coverImage || '');
+      setEditDescription(hosp.description || '');
+      setEditWelcomeMessage(hosp.welcomeMessage || '');
+      setEditPrimaryColor(hosp.primaryColor || '#0d9488');
+      setEditSecondaryColor(hosp.secondaryColor || '#0f172a');
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'edit' && hospitalList.length > 0) {
+      if (!editHospId) {
+        handleSelectHospitalToEdit(hospitalList[0].id);
+      }
+    }
+  }, [activeTab, hospitalList, editHospId]);
+
   // Submission helpers
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -244,6 +290,61 @@ export default function SuperAdminPortal() {
     }
   };
 
+  const handleUpdateHospital = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccessMsg('');
+    setLoading(true);
+
+    const payload = {
+      name: editName,
+      slug: editHospId,
+      address: editAddress,
+      phone: editPhone,
+      whatsappNumber: editWhatsapp,
+      coverImage: editCoverImage,
+      description: editDescription,
+      city: editCity,
+      coordinates: {
+        lat: parseFloat(editLat),
+        lng: parseFloat(editLng)
+      },
+      type: editType,
+      logoUrl: editLogoUrl,
+      heroImage: editCoverImage,
+      primaryColor: editPrimaryColor,
+      secondaryColor: editSecondaryColor,
+      welcomeMessage: editWelcomeMessage
+    };
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/hospital/${editHospId}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Admin-Secret': adminSecret
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to update hospital profile');
+      }
+
+      setSuccessMsg(data.message);
+      fetchHospitals(); // Refresh list to get updated details
+    } catch (err) {
+      if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
+        setError('Unable to connect to the server. Please ensure the backend is running or check your network connection.');
+      } else {
+        setError(err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!authorized) {
     return (
       <div className="flex-grow flex items-center justify-center p-4 bg-[var(--bg-color)]">
@@ -328,18 +429,30 @@ export default function SuperAdminPortal() {
           >
             Register More Accounts
           </button>
+          <button
+            onClick={() => { setActiveTab('edit'); setError(''); setSuccessMsg(''); }}
+            className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all ${
+              activeTab === 'edit'
+                ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-md'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-color)] hover:bg-[var(--border-color)]/20'
+            }`}
+          >
+            Edit Facilities
+          </button>
         </div>
 
         <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-3xl p-6 md:p-8 shadow-[var(--card-shadow)] space-y-8">
           
           <div className="border-b border-[var(--border-color)]/30 pb-4">
             <h2 className="text-2xl font-black tracking-tight">
-              {activeTab === 'hospital' ? 'Onboard Medical Facility' : 'Register Additional Accounts'}
+              {activeTab === 'hospital' ? 'Onboard Medical Facility' : activeTab === 'accounts' ? 'Register Additional Accounts' : 'Edit Medical Facility Profile'}
             </h2>
             <p className="text-xs text-[var(--text-secondary)] font-semibold mt-1">
               {activeTab === 'hospital' 
                 ? 'Register a new hospital, clinic, lab or government health dispensary to the B2B SaaS directory.'
-                : 'Register more doctors, receptionists, or lab assistants to an existing medical facility.'
+                : activeTab === 'accounts'
+                ? 'Register more doctors, receptionists, or lab assistants to an existing medical facility.'
+                : 'Modify and customize addresses, cover banners, logos, messages, and theme colors of a registered facility.'
               }
             </p>
           </div>
@@ -718,7 +831,7 @@ export default function SuperAdminPortal() {
               </button>
 
             </form>
-          ) : (
+          ) : activeTab === 'accounts' ? (
             <form onSubmit={handleRegisterAccount} className="space-y-8 text-xs font-bold text-[var(--text-secondary)]">
               {/* Select Existing Hospital */}
               <div className="space-y-4">
@@ -951,6 +1064,230 @@ export default function SuperAdminPortal() {
                   <>
                     <span className="material-symbols-outlined text-[18px]">publish</span>
                     <span>Register Account</span>
+                  </>
+                )}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleUpdateHospital} className="space-y-8 text-xs font-bold text-[var(--text-secondary)]">
+              {/* Select Hospital to Edit */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">domain</span>
+                  <span>1. Select Medical Facility to Modify</span>
+                </h3>
+                <div>
+                  <label className="block mb-1">Select Hospital/Clinic *</label>
+                  {hospitalList.length === 0 ? (
+                    <p className="text-xs text-rose-500 font-semibold">No hospitals registered yet.</p>
+                  ) : (
+                    <select
+                      value={editHospId}
+                      onChange={e => handleSelectHospitalToEdit(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                      required
+                    >
+                      {hospitalList.map(h => (
+                        <option key={h.id} value={h.id}>{h.name} ({h.city})</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+
+              {/* Edit Core Profile */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">edit</span>
+                  <span>2. Core Information & Settings</span>
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block mb-1">Service Name *</label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1">Service Type *</label>
+                    <select
+                      value={editType}
+                      onChange={e => setEditType(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                    >
+                      <option>Hospital</option>
+                      <option>Clinic</option>
+                      <option>Medical</option>
+                      <option>Lab</option>
+                      <option>Government</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block mb-1">City Location *</label>
+                    <input
+                      type="text"
+                      value={editCity}
+                      onChange={e => setEditCity(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1">Latitude *</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={editLat}
+                      onChange={e => setEditLat(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1">Longitude *</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={editLng}
+                      onChange={e => setEditLng(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block mb-1">Phone Number *</label>
+                    <input
+                      type="text"
+                      value={editPhone}
+                      onChange={e => setEditPhone(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1">WhatsApp Booking Number *</label>
+                    <input
+                      type="text"
+                      value={editWhatsapp}
+                      onChange={e => setEditWhatsapp(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block mb-1">Address *</label>
+                  <input
+                    type="text"
+                    value={editAddress}
+                    onChange={e => setEditAddress(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Edit Branding */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">palette</span>
+                  <span>3. Dynamic Custom Branding (White-Labeling)</span>
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block mb-1">Logo URL (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="https://example.com/logo.png"
+                      value={editLogoUrl}
+                      onChange={e => setEditLogoUrl(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1">Cover / Hero Image URL (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="https://images.unsplash.com/..."
+                      value={editCoverImage}
+                      onChange={e => setEditCoverImage(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block mb-1">Custom Welcome / Announcement Message (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Free checkups this Sunday! Or Welcome to St. Jude!"
+                    value={editWelcomeMessage}
+                    onChange={e => setEditWelcomeMessage(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block mb-1">Short Description *</label>
+                  <input
+                    type="text"
+                    value={editDescription}
+                    onChange={e => setEditDescription(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30 flex items-center justify-between">
+                    <div>
+                      <label className="block font-bold mb-0.5">Primary Theme Color</label>
+                      <span className="text-[10px] text-[var(--text-secondary)]">Click color box to adjust</span>
+                    </div>
+                    <input
+                      type="color"
+                      value={editPrimaryColor}
+                      onChange={e => setEditPrimaryColor(e.target.value)}
+                      className="w-12 h-10 border-none bg-transparent cursor-pointer rounded-lg outline-none"
+                    />
+                  </div>
+                  <div className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30 flex items-center justify-between">
+                    <div>
+                      <label className="block font-bold mb-0.5">Secondary Theme Color</label>
+                      <span className="text-[10px] text-[var(--text-secondary)]">Click color box to adjust</span>
+                    </div>
+                    <input
+                      type="color"
+                      value={editSecondaryColor}
+                      onChange={e => setEditSecondaryColor(e.target.value)}
+                      className="w-12 h-10 border-none bg-transparent cursor-pointer rounded-lg outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || hospitalList.length === 0}
+                className="w-full py-4 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] font-black text-sm rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/15 flex items-center justify-center space-x-2 disabled:opacity-50"
+              >
+                {loading ? <span>Applying customizations...</span> : (
+                  <>
+                    <span className="material-symbols-outlined text-[18px]">save</span>
+                    <span>Save Brand Customizations</span>
                   </>
                 )}
               </button>

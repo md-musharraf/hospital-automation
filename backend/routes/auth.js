@@ -245,7 +245,12 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       description: description || 'Specialized clinical care service.',
       city,
       coordinates,
-      type
+      type,
+      logoUrl: req.body.logoUrl || '',
+      heroImage: req.body.heroImage || '',
+      primaryColor: req.body.primaryColor || '#0d9488',
+      secondaryColor: req.body.secondaryColor || '#0f172a',
+      welcomeMessage: req.body.welcomeMessage || ''
     });
     await newHospital.save();
 
@@ -452,6 +457,59 @@ router.post('/super-admin/register-lab', verifyAdminSecret, async (req, res) => 
   } catch (error) {
     console.error('Super admin lab registration error:', error);
     res.status(500).json({ message: 'Server error registering lab assistant account' });
+  }
+});
+
+// Update Hospital Details (Super Admin Endpoint)
+router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      slug,
+      address,
+      phone,
+      whatsappNumber,
+      coverImage,
+      description,
+      city,
+      coordinates,
+      type,
+      logoUrl,
+      heroImage,
+      primaryColor,
+      secondaryColor,
+      welcomeMessage
+    } = req.body;
+
+    const hospital = await Hospital.findOne({ id });
+    if (!hospital) {
+      return res.status(404).json({ message: 'Hospital not found' });
+    }
+
+    // Update properties if provided
+    if (name !== undefined) hospital.name = name;
+    if (slug !== undefined) hospital.slug = slug;
+    if (address !== undefined) hospital.address = address;
+    if (phone !== undefined) hospital.phone = phone;
+    if (whatsappNumber !== undefined) hospital.whatsappNumber = whatsappNumber;
+    if (coverImage !== undefined) hospital.coverImage = coverImage;
+    if (description !== undefined) hospital.description = description;
+    if (city !== undefined) hospital.city = city;
+    if (coordinates !== undefined) hospital.coordinates = coordinates;
+    if (type !== undefined) hospital.type = type;
+    if (logoUrl !== undefined) hospital.logoUrl = logoUrl;
+    if (heroImage !== undefined) hospital.heroImage = heroImage;
+    if (primaryColor !== undefined) hospital.primaryColor = primaryColor;
+    if (secondaryColor !== undefined) hospital.secondaryColor = secondaryColor;
+    if (welcomeMessage !== undefined) hospital.welcomeMessage = welcomeMessage;
+
+    await hospital.save();
+
+    res.json({ message: 'Hospital profile updated successfully!', hospital });
+  } catch (error) {
+    console.error('Super admin hospital update error:', error);
+    res.status(500).json({ message: 'Server error updating hospital profile' });
   }
 });
 

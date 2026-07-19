@@ -19,7 +19,12 @@ const HospitalSchema = new mongoose.Schema({
     required: true, 
     enum: ['Hospital', 'Clinic', 'Medical', 'Lab', 'Government'],
     default: 'Hospital'
-  }
+  },
+  logoUrl: { type: String },
+  heroImage: { type: String },
+  primaryColor: { type: String, default: '#0d9488' },
+  secondaryColor: { type: String, default: '#0f172a' },
+  welcomeMessage: { type: String }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Hospital', HospitalSchema);
