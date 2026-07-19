@@ -9,8 +9,12 @@ const getBackendUrl = () => {
   if (import.meta.env.VITE_BACKEND_URL) {
     return import.meta.env.VITE_BACKEND_URL;
   }
-  // If we are on production/deployed environment, default to window.location.origin
   const hostname = window.location.hostname;
+  // If hosted on Vercel, automatically target the live Render backend
+  if (hostname && hostname.includes('vercel.app')) {
+    return 'https://hospital-automation-nc4h.onrender.com';
+  }
+  // If we are on production/deployed environment elsewhere (e.g. Render serving frontend directly)
   if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
     return window.location.origin;
   }
