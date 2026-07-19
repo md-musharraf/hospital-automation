@@ -2,11 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { BACKEND_URL, socket } from '../App';
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 export default function PatientLiveTracker() {
   const { tokenId } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Subscription states
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [subscribing, setSubscribing] = useState(false);
+  const [pushSupported, setPushSupported] = useState(false);
 
   const loadTracker = async () => {
     try {
@@ -37,6 +57,70 @@ export default function PatientLiveTracker() {
       socket.off('queue-updated', handleUpdate);
     };
   }, [tokenId]);
+
+  useEffect(() => {
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      setPushSupported(true);
+      navigator.serviceWorker.ready.then(reg => {
+        reg.pushManager.getSubscription().then(sub => {
+          if (sub) {
+            setIsSubscribed(true);
+          }
+        });
+      });
+    }
+  }, []);
+
+  const handleSubscribe = async () => {
+    if (!pushSupported) return;
+    setSubscribing(true);
+
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        alert('Notification permission denied. Please allow notifications in browser settings.');
+        setSubscribing(false);
+        return;
+      }
+
+      const keyRes = await fetch(`${BACKEND_URL}/api/v1/notifications/vapid-key`);
+      const keyData = await keyRes.json();
+      if (!keyRes.ok) {
+        throw new Error(keyData.message || 'Failed to fetch public VAPID key');
+      }
+
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(keyData.publicKey)
+      });
+
+      const subRes = await fetch(`${BACKEND_URL}/api/v1/notifications/subscribe`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          subscription: sub,
+          tokenId,
+          role: 'Patient'
+        })
+      });
+
+      if (subRes.ok) {
+        setIsSubscribed(true);
+      } else {
+        const subErr = await subRes.json();
+        throw new Error(subErr.message || 'Failed to register subscription on server');
+      }
+
+    } catch (err) {
+      console.error('Subscription error:', err);
+      alert('Subscription failed: ' + err.message);
+    } finally {
+      setSubscribing(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -114,6 +198,26 @@ export default function PatientLiveTracker() {
             <p className="text-[10px] text-[var(--text-secondary)] font-bold">Please wait in the reception lounge until called.</p>
             <p className="text-[9px] text-[var(--text-secondary)]/50 mt-1">Refreshes automatically when the queue updates.</p>
           </div>
+
+          {pushSupported && (
+            <div className="pt-4 border-t border-[var(--border-color)]/25 mt-4 text-center">
+              {isSubscribed ? (
+                <div className="flex items-center justify-center space-x-1.5 text-xs text-[var(--tertiary-color)] font-bold bg-[var(--tertiary-color)]/10 py-2.5 px-4 rounded-xl border border-[var(--tertiary-color)]/20 animate-fade-in">
+                  <span className="material-symbols-outlined text-[16px]">notifications_active</span>
+                  <span>Push Alerts Activated!</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleSubscribe}
+                  disabled={subscribing}
+                  className="w-full bg-[var(--primary-color)] hover:bg-[var(--primary-container)] disabled:opacity-50 text-white text-xs font-bold py-2.5 px-4 rounded-xl transition-all transition-all-custom flex items-center justify-center space-x-1.5 shadow-sm active:scale-95 duration-100"
+                >
+                  <span className="material-symbols-outlined text-[16px]">notifications</span>
+                  <span>{subscribing ? 'Activating Alerts...' : 'Get Background Push Alerts'}</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
       </div>

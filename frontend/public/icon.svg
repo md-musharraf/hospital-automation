@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee" />
+      <stop offset="100%" stop-color="#0891b2" />
+    </linearGradient>
+  </defs>
+  <!-- Rounded Rect Background -->
+  <rect width="512" height="512" rx="128" fill="url(#cyanGrad)" />
+  <!-- Medical White Cross -->
+  <path d="M 224 128 L 288 128 L 288 224 L 384 224 L 384 288 L 288 288 L 288 384 L 224 384 L 224 288 L 128 288 L 128 224 L 224 224 Z" fill="#ffffff" />
+  <!-- Heartbeat path below the cross or overlapping -->
+  <path d="M 160 256 H 200 L 216 200 L 232 312 L 248 240 L 264 272 L 272 256 H 352" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.3"/>
+</svg>

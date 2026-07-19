@@ -99,6 +99,19 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
       await sendWhatsAppNotification(token.patient.phone, callMsg);
     }
 
+    // Trigger Web Push Notification to Patient
+    try {
+      const pushHelper = require('../utils/pushHelper');
+      await pushHelper.notifyByTokenId(token._id.toString(), {
+        title: 'Your Token is Active! 🚨',
+        body: `Token ${token.tokenNumber}, please proceed to ${req.user.currentRoom || 'Cabin A'} immediately.`,
+        icon: '/icon.svg',
+        url: `/live-tracker/${token._id}`
+      });
+    } catch (err) {
+      console.error('Push notification failed on call-next:', err);
+    }
+
     // Broadcast updates
     if (req.io) {
       req.io.to('queue:global').emit('queue-updated', { doctorId });
@@ -137,6 +150,19 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
         };
       }
       await token.save();
+
+      // Trigger Web Push Notification to Patient
+      try {
+        const pushHelper = require('../utils/pushHelper');
+        await pushHelper.notifyByTokenId(token._id.toString(), {
+          title: 'Checkup Completed 🩺',
+          body: `Your prescription is ready. Tap to view your receipt.`,
+          icon: '/icon.svg',
+          url: `/prescription/${token._id}`
+        });
+      } catch (err) {
+        console.error('Push notification failed on complete:', err);
+      }
 
       // Trigger automatic WhatsApp message with Prescription Receipt link
       if (token.patient && token.patient.phone) {

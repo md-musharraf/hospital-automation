@@ -96,6 +96,28 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     // Recalculate wait times
     await recalculateQueueTimes(doctorId);
 
+    // Trigger Web Push Notification to Doctor
+    try {
+      const pushHelper = require('../utils/pushHelper');
+      if (tokenType === 'Emergency') {
+        await pushHelper.notifyByRole('Doctor', {
+          title: '🚨 EMERGENCY SOS WALKIN',
+          body: `Emergency Alert: Patient ${name} has been placed at the front of your queue!`,
+          icon: '/icon.svg',
+          url: '/'
+        });
+      } else {
+        await pushHelper.notifyByRole('Doctor', {
+          title: 'New Patient Walk-in 📋',
+          body: `${name} has been added to your queue with token ${tokenNumber}.`,
+          icon: '/icon.svg',
+          url: '/'
+        });
+      }
+    } catch (err) {
+      console.error('Push notification failed to doctor:', err);
+    }
+
     // Broadcast update
     if (req.io) {
       req.io.to('queue:global').emit('queue-updated', { doctorId });
@@ -149,6 +171,19 @@ router.put('/tokens/:tokenId/override', authenticateToken, ensureStaff, async (r
       // Insert emergency token at index 0
       queue.activeQueue.unshift(token._id);
       await queue.save();
+
+      // Trigger Web Push Notification to Doctor
+      try {
+        const pushHelper = require('../utils/pushHelper');
+        await pushHelper.notifyByRole('Doctor', {
+          title: '🚨 EMERGENCY SOS ESCALATION',
+          body: `Patient token ${token.tokenNumber} has been upgraded to Emergency SOS!`,
+          icon: '/icon.svg',
+          url: '/'
+        });
+      } catch (err) {
+        console.error('Push notification failed to doctor:', err);
+      }
 
       // Recalculate wait times
       await recalculateQueueTimes(token.doctor);

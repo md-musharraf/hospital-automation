@@ -58,6 +58,19 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
 
     await token.save();
 
+    // Trigger Web Push Notification to Patient
+    try {
+      const pushHelper = require('../utils/pushHelper');
+      await pushHelper.notifyByTokenId(token._id.toString(), {
+        title: 'Lab Report Ready! 🧪',
+        body: `Your report for "${testName}" is now available.`,
+        icon: '/icon.svg',
+        url: `/prescription/${token._id}`
+      });
+    } catch (err) {
+      console.error('Push notification failed on lab complete:', err);
+    }
+
     // Trigger WhatsApp notification to patient
     if (token.patient && token.patient.phone) {
       const { sendWhatsAppNotification } = require('../utils/whatsappHelper');

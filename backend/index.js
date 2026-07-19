@@ -28,6 +28,7 @@ const staffRoutes = require('./routes/staff');
 const doctorRoutes = require('./routes/doctor');
 const labRoutes = require('./routes/lab');
 const messageRoutes = require('./routes/messages');
+const notificationRoutes = require('./routes/notifications');
 
 const Token = require('./models/Token');
 const Queue = require('./models/Queue');
@@ -101,6 +102,7 @@ app.use('/api/v1/staff', staffRoutes);
 app.use('/api/v1/doctor', doctorRoutes);
 app.use('/api/v1/lab', labRoutes);
 app.use('/api/v1/messages', messageRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 // Health check endpoint
 app.get('/api/v1/health', (req, res) => {
