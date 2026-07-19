@@ -108,7 +108,7 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white font-bold rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/10 hover:shadow-[var(--primary-color)]/20 flex items-center justify-center space-x-2 active:scale-[0.98]"
+            className="w-full py-3.5 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] font-bold rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/10 hover:shadow-[var(--primary-color)]/20 flex items-center justify-center space-x-2 active:scale-[0.98]"
           >
             {loading ? <span>Logging in...</span> : <span>Access Lab Console</span>}
           </button>
@@ -229,7 +229,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                       <p className="font-extrabold text-xs">{tok.tokenNumber}</p>
                       <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5">{tok.patient?.name}</p>
                     </div>
-                    <span className="bg-[var(--primary-color)] text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">
+                    <span className="bg-[var(--primary-color)] text-[var(--primary-text)] text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">
                       {pendingCount} Test{pendingCount > 1 ? 's' : ''}
                     </span>
                   </div>

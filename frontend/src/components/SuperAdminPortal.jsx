@@ -544,7 +544,7 @@ export default function SuperAdminPortal() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-4 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white font-black text-sm rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/15 flex items-center justify-center space-x-2 disabled:opacity-50"
+                className="w-full py-4 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] font-black text-sm rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/15 flex items-center justify-center space-x-2 disabled:opacity-50"
               >
                 {loading ? <span>Configuring clinical database & files...</span> : (
                   <>

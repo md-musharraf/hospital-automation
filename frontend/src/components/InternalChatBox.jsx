@@ -154,7 +154,7 @@ export default function InternalChatBox({ token, user, role }) {
         <button 
           type="submit" 
           disabled={!inputText.trim()}
-          className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] disabled:opacity-50 text-white font-bold p-2.5 rounded-xl transition-all transition-all-custom shadow-sm flex items-center justify-center shrink-0"
+          className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] disabled:opacity-50 text-[var(--primary-text)] hover:text-[var(--text-color)] font-bold p-2.5 rounded-xl transition-all transition-all-custom shadow-sm flex items-center justify-center shrink-0"
         >
           <span className="material-symbols-outlined text-[16px]">send</span>
         </button>

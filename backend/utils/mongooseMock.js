@@ -175,6 +175,39 @@ function wrapDoc(modelName, data) {
   return doc;
 }
 
+// Helper to match document against standard MongoDB query operators
+function matchesQuery(item, query) {
+  if (!query || typeof query !== 'object') return true;
+
+  for (let key in query) {
+    if (key === '$or') {
+      if (!Array.isArray(query.$or)) continue;
+      // At least one condition in the $or array must match
+      const matched = query.$or.some(subQuery => matchesQuery(item, subQuery));
+      if (!matched) return false;
+    } else if (key === '$and') {
+      if (!Array.isArray(query.$and)) continue;
+      const matched = query.$and.every(subQuery => matchesQuery(item, subQuery));
+      if (!matched) return false;
+    } else {
+      const val = query[key];
+      if (val && typeof val === 'object') {
+        if ('$ne' in val) {
+          if (item[key] === val.$ne) return false;
+        } else if ('$in' in val) {
+          if (!Array.isArray(val.$in) || !val.$in.includes(item[key])) return false;
+        } else {
+          // Deep or fallback comparison for other nested objects
+          if (JSON.stringify(item[key]) !== JSON.stringify(val)) return false;
+        }
+      } else {
+        if (item[key] !== val) return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Mock Model Factory
 function model(name, schema) {
   if (store[name] === undefined) {
@@ -189,18 +222,7 @@ function model(name, schema) {
     static find(query = {}) {
       return new Query(name, async () => {
         let items = store[name];
-        if (Object.keys(query).length > 0) {
-          items = items.filter(item => {
-            for (let key in query) {
-              if (query[key] && typeof query[key] === 'object' && query[key].$ne) {
-                if (item[key] === query[key].$ne) return false;
-              } else {
-                if (item[key] !== query[key]) return false;
-              }
-            }
-            return true;
-          });
-        }
+        items = items.filter(item => matchesQuery(item, query));
         return items.map(d => wrapDoc(name, d));
       });
     }
@@ -208,14 +230,7 @@ function model(name, schema) {
     static findOne(query = {}) {
       return new Query(name, async () => {
         let items = store[name];
-        if (Object.keys(query).length > 0) {
-          items = items.filter(item => {
-            for (let key in query) {
-              if (item[key] !== query[key]) return false;
-            }
-            return true;
-          });
-        }
+        items = items.filter(item => matchesQuery(item, query));
         return items.length > 0 ? wrapDoc(name, items[0]) : null;
       });
     }
@@ -229,7 +244,7 @@ function model(name, schema) {
     }
 
     static async countDocuments(query = {}) {
-      return store[name].length;
+      return store[name].filter(item => matchesQuery(item, query)).length;
     }
 
     static async insertMany(docs) {
@@ -242,27 +257,14 @@ function model(name, schema) {
 
     static async deleteMany(query = {}) {
       const initialCount = store[name].length;
-      if (Object.keys(query).length === 0) {
-        store[name] = [];
-      } else {
-        store[name] = store[name].filter(item => {
-          for (let key in query) {
-            if (item[key] === query[key]) return false;
-          }
-          return true;
-        });
-      }
+      store[name] = store[name].filter(item => !matchesQuery(item, query));
       return { deletedCount: initialCount - store[name].length };
     }
 
     static async updateMany(query = {}, update = {}) {
       let count = 0;
       store[name] = store[name].map(item => {
-        let matches = true;
-        for (let key in query) {
-          if (item[key] !== query[key]) matches = false;
-        }
-        if (matches) {
+        if (matchesQuery(item, query)) {
           count++;
           let updated = { ...item };
           if (update.$set) {

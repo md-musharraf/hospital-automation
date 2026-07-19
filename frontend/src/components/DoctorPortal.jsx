@@ -559,11 +559,11 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <button
                   onClick={handleCallNext}
-                  className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-[var(--primary-color)]/10 hover:shadow-[var(--primary-color)]/20 transition-all transition-all-custom text-sm flex flex-col items-center justify-center space-y-1 border border-[var(--primary-color)]/20"
+                  className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] font-bold py-4 px-6 rounded-2xl shadow-lg shadow-[var(--primary-color)]/10 hover:shadow-[var(--primary-color)]/20 transition-all transition-all-custom text-sm flex flex-col items-center justify-center space-y-1 border border-[var(--primary-color)]/20"
                 >
                   <span className="material-symbols-outlined text-[20px]">group</span>
                   <span>Call Next Patient</span>
-                  <span className="text-[10px] text-white/80 font-normal">Admit next in line</span>
+                  <span className="text-[10px] opacity-80 font-normal">Admit next in line</span>
                 </button>
  
                 <button
@@ -678,7 +678,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                 <button
                   type="button"
                   onClick={() => setMedicines(prev => [...prev, { name: '', dosage: '1-0-1', duration: '5 days', instructions: 'After food' }])}
-                  className="px-2.5 py-1 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/30 text-[var(--primary-color)] rounded-lg hover:bg-[var(--primary-color)] hover:text-white transition-all transition-all-custom font-bold"
+                  className="px-2.5 py-1 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/30 text-[var(--primary-color)] rounded-lg hover:bg-[var(--primary-color)] hover:text-[var(--primary-text)] transition-all transition-all-custom font-bold"
                 >
                   + Add Medicine
                 </button>

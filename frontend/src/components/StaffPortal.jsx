@@ -561,7 +561,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
                 activeSidebarTab === item.tab 
-                  ? 'bg-[var(--primary-color)] text-white shadow-sm' 
+                  ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-sm' 
                   : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:text-[var(--text-color)]'
               }`}
             >
@@ -851,7 +851,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                   <button
                     type="submit"
-                    className="w-full bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white font-bold py-3 rounded-xl shadow-lg shadow-[var(--primary-color)]/10 transition-all transition-all-custom flex items-center justify-center space-x-2"
+                    className="w-full bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] font-bold py-3 rounded-xl shadow-lg shadow-[var(--primary-color)]/10 transition-all transition-all-custom flex items-center justify-center space-x-2"
                   >
                     <span>Register Patient Walk-in</span>
                     <span className="material-symbols-outlined text-[16px]">chevron_right</span>
@@ -978,7 +978,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     setPatSuccess('');
                     setShowAddPatientModal(true);
                   }}
-                  className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all transition-all-custom shadow-sm flex items-center space-x-1.5"
+                  className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] text-xs font-bold px-4 py-2.5 rounded-xl transition-all transition-all-custom shadow-sm flex items-center space-x-1.5"
                 >
                   <span className="material-symbols-outlined text-[16px]">person_add</span>
                   <span>Add New Patient</span>

@@ -160,7 +160,7 @@ export default function HospitalHub() {
               <button
                 onClick={handleFindNearMe}
                 disabled={geoLoading}
-                className={`flex items-center justify-center p-2.5 rounded-xl bg-[var(--bg-color)] hover:bg-[var(--primary-color)] hover:text-white transition-all active:scale-95 duration-100 disabled:opacity-50 border border-[var(--border-color)]/30 text-[var(--text-secondary)] ${
+                className={`flex items-center justify-center p-2.5 rounded-xl bg-[var(--bg-color)] hover:bg-[var(--primary-color)] hover:text-[var(--primary-text)] transition-all active:scale-95 duration-100 disabled:opacity-50 border border-[var(--border-color)]/30 text-[var(--text-secondary)] ${
                   userCoords ? 'text-[var(--primary-color)] border-[var(--primary-color)]/40 bg-[var(--primary-color)]/5' : ''
                 }`}
                 title="Find hospitals near me"
@@ -192,7 +192,7 @@ export default function HospitalHub() {
                        onClick={() => setSelectedCity(city)}
                        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 duration-100 ${
                          selectedCity === city
-                           ? 'bg-[var(--primary-color)] text-white shadow-md shadow-[var(--primary-color)]/10'
+                           ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-md shadow-[var(--primary-color)]/10'
                            : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/25'
                        }`}
                     >
@@ -431,7 +431,7 @@ export default function HospitalHub() {
 
                   {/* City Label Badge */}
                   {h.city && (
-                    <span className="absolute bottom-4 left-4 text-white text-[10px] font-black uppercase tracking-wider bg-[var(--primary-color)] px-2.5 py-0.5 rounded shadow-sm">
+                    <span className="absolute bottom-4 left-4 text-[var(--primary-text)] text-[10px] font-black uppercase tracking-wider bg-[var(--primary-color)] px-2.5 py-0.5 rounded shadow-sm">
                       {h.city}
                     </span>
                   )}
@@ -465,7 +465,7 @@ export default function HospitalHub() {
                       <span>WhatsApp Available</span>
                     </div>
                     <button 
-                      className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-white text-xs font-extrabold px-4 py-2 rounded-xl flex items-center space-x-1 shadow-md shadow-[var(--primary-color)]/10 active:scale-95 duration-100 transition-all transition-all-custom"
+                      className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] text-xs font-extrabold px-4 py-2 rounded-xl flex items-center space-x-1 shadow-md shadow-[var(--primary-color)]/10 active:scale-95 duration-100 transition-all transition-all-custom"
                     >
                       <span>Enter Portal</span>
                       <span className="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition duration-150">arrow_forward</span>

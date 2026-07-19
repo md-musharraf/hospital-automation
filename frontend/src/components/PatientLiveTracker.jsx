@@ -210,7 +210,7 @@ export default function PatientLiveTracker() {
                 <button
                   onClick={handleSubscribe}
                   disabled={subscribing}
-                  className="w-full bg-[var(--primary-color)] hover:bg-[var(--primary-container)] disabled:opacity-50 text-white text-xs font-bold py-2.5 px-4 rounded-xl transition-all transition-all-custom flex items-center justify-center space-x-1.5 shadow-sm active:scale-95 duration-100"
+                  className="w-full bg-[var(--primary-color)] hover:bg-[var(--primary-container)] disabled:opacity-50 text-[var(--primary-text)] hover:text-[var(--text-color)] text-xs font-bold py-2.5 px-4 rounded-xl transition-all transition-all-custom flex items-center justify-center space-x-1.5 shadow-sm active:scale-95 duration-100"
                 >
                   <span className="material-symbols-outlined text-[16px]">notifications</span>
                   <span>{subscribing ? 'Activating Alerts...' : 'Get Background Push Alerts'}</span>

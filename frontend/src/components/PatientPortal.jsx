@@ -485,7 +485,7 @@ export default function PatientPortal() {
                     <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed ${
                       isBot 
                         ? 'bg-[var(--card-bg)] text-[var(--text-color)] border border-[var(--border-color)]/30 rounded-tl-none' 
-                        : 'bg-[var(--primary-color)] text-white rounded-tr-none'
+                        : 'bg-[var(--primary-color)] text-[var(--primary-text)] rounded-tr-none'
                     }`}>
                       <p className="whitespace-pre-wrap font-medium">{msg.text}</p>
                     </div>

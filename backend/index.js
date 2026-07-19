@@ -60,19 +60,39 @@ const allowedOrigins = [
   'http://127.0.0.1:5000'
 ];
 
+// Robust helper to validate request origins
+const checkOrigin = (origin, callback) => {
+  if (!origin) return callback(null, true);
+
+  // In development, mock database, or non-production environment, allow all origins
+  if (process.env.NODE_ENV !== 'production' || process.env.USE_MOCK_DB === 'true') {
+    return callback(null, true);
+  }
+
+  const cleanOrigin = origin.replace(/\/+$/, '');
+
+  // Allow any localhost or 127.0.0.1 origin (including any port) in development
+  if (
+    cleanOrigin.startsWith('http://localhost:') || 
+    cleanOrigin.startsWith('http://127.0.0.1:') || 
+    cleanOrigin === 'http://localhost' || 
+    cleanOrigin === 'http://127.0.0.1'
+  ) {
+    return callback(null, true);
+  }
+
+  const isAllowed = allowedOrigins.some(o => o.replace(/\/+$/, '') === cleanOrigin);
+  if (isAllowed) {
+    return callback(null, true);
+  }
+
+  // Gracefully block CORS without throwing a server-side 500 error (return false instead)
+  return callback(null, false);
+};
+
 // CORS configuration
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    // Remove trailing slashes for comparison
-    const cleanOrigin = origin.replace(/\/+$/, '');
-    const isAllowed = allowedOrigins.some(o => o.replace(/\/+$/, '') === cleanOrigin);
-    if (!isAllowed) {
-      const msg = `The CORS policy for this site does not allow access from origin: ${origin}`;
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
+  origin: checkOrigin,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -83,7 +103,7 @@ app.use(express.json());
 // Socket.io initialization
 const io = socketIo(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: checkOrigin,
     methods: ['GET', 'POST'],
     credentials: true
   }
