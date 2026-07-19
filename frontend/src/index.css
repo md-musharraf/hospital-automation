@@ -8,53 +8,52 @@
 
 html {
   scroll-behavior: smooth;
-  background-color: #000000;
 }
 
 :root {
-  /* Next.js dark theme (Sleek Pitch Black) by default */
+  /* Next.js modern light theme (Comfortable soft light mode) */
+  --bg-color: #ffffff;
+  --text-color: #171717; /* zinc-900 */
+  --text-secondary: #71717a; /* zinc-500 */
+  --border-color: #e4e4e7; /* zinc-200 subtle borders */
+  --card-bg: #fafafa; /* zinc-50 card bg */
+  --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+  
+  --primary-color: #000000; /* Black accent */
+  --primary-container: #f4f4f5; /* zinc-100 */
+  --primary-text: #ffffff; /* White text on primary bg */
+  
+  --secondary-color: #71717a;
+  --secondary-container: #f4f4f5;
+  --secondary-text: #171717;
+  
+  --tertiary-color: #0891b2; /* Calm Cyan accent */
+  --tertiary-container: rgba(8, 145, 178, 0.05);
+  --tertiary-text: #0891b2;
+  
+  --error-color: #ef4444;
+  --error-bg: #fef2f2;
+  --error-text: #991b1b;
+  
+  --success-color: #10b981;
+  --success-bg: #d1fae5;
+  
+  --input-bg: #ffffff;
+  --input-focus-border: #000000;
+}
+
+.dark {
+  /* Next.js premium dark theme (Sleek Pitch Black) */
   --bg-color: #000000;
   --text-color: #f4f4f5; /* zinc-100 */
   --text-secondary: #a1a1aa; /* zinc-400 */
   --border-color: #27272a; /* zinc-800 subtle borders */
   --card-bg: #09090b; /* zinc-950 deep card */
-  --card-shadow: 0 0px 0px 0 rgba(0, 0, 0, 0); /* Flat modern aesthetic */
+  --card-shadow: 0 0px 0px 0 rgba(0, 0, 0, 0);
   
   --primary-color: #ffffff; /* White primary highlights */
   --primary-container: #1f1f23;
-  --primary-text: #000000;
-  
-  --secondary-color: #71717a; /* zinc-500 */
-  --secondary-container: #18181b; /* zinc-900 */
-  --secondary-text: #ffffff;
-  
-  --tertiary-color: #0891b2; /* Calm Cyan primary accent */
-  --tertiary-container: rgba(8, 145, 178, 0.1);
-  --tertiary-text: #22d3ee;
-  
-  --error-color: #ef4444;
-  --error-bg: #180808;
-  --error-text: #fecaca;
-  
-  --success-color: #10b981;
-  --success-bg: #062f22;
-  
-  --input-bg: #000000;
-  --input-focus-border: #0891b2;
-}
-
-.dark {
-  /* Keep same premium pitch black tokens so both theme modes protect the eyes */
-  --bg-color: #000000;
-  --text-color: #f4f4f5;
-  --text-secondary: #a1a1aa;
-  --border-color: #27272a;
-  --card-bg: #09090b;
-  --card-shadow: 0 0px 0px 0 rgba(0, 0, 0, 0);
-  
-  --primary-color: #ffffff;
-  --primary-container: #1f1f23;
-  --primary-text: #000000;
+  --primary-text: #000000; /* Black text on primary white bg */
   
   --secondary-color: #71717a;
   --secondary-container: #18181b;
@@ -88,6 +87,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Reduce font weight globally to make text sleeker and cleaner */
+h1, h2, h3, h4, h5, h6, .font-black, .font-extrabold {
+  font-weight: 700 !important; /* Normalizes heavy weight to sleek bold */
+}
+
 /* Material Symbols alignment helper */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined' !important;
@@ -111,16 +115,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #000000;
+  background: var(--bg-color);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: var(--border-color);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: var(--text-secondary);
 }
 
 /* Input Fields styling & Smooth animations */
@@ -150,7 +154,7 @@ textarea:not(.bg-transparent):not(.border-none):focus {
 
 /* Modern buttons focus styling */
 button:focus-visible {
-  outline: 2px solid #ffffff !important;
+  outline: 2px solid var(--text-color) !important;
   outline-offset: 2px !important;
 }
 
@@ -170,7 +174,7 @@ button:active, .btn-active-feedback:active {
 }
 .hover-lift:hover {
   transform: translateY(-2px);
-  border-color: #3f3f46 !important;
+  border-color: var(--text-secondary) !important;
 }
 
 /* Slide up animation for new messages */
