@@ -8,9 +8,19 @@ const LabAssistant = require('../models/LabAssistant');
 const Hospital = require('../models/Hospital');
 const Queue = require('../models/Queue');
 const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
+const rateLimit = require('express-rate-limit');
 
-// Doctor Login
-router.post('/doctor/login', async (req, res) => {
+// Login rate limiter: 10 attempts per 15 minutes per IP to prevent brute-force
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many login attempts. Please try again after 15 minutes.' }
+});
+
+// Doctor Login (rate-limited)
+router.post('/doctor/login', loginLimiter, async (req, res) => {
   try {
     const { email, password, hospital } = req.body;
     if (!email || !password || !hospital) {
@@ -53,8 +63,8 @@ router.post('/doctor/login', async (req, res) => {
   }
 });
 
-// Staff Login
-router.post('/staff/login', async (req, res) => {
+// Staff Login (rate-limited)
+router.post('/staff/login', loginLimiter, async (req, res) => {
   try {
     const { username, password, hospital } = req.body;
     if (!username || !password || !hospital) {
@@ -94,8 +104,8 @@ router.post('/staff/login', async (req, res) => {
   }
 });
 
-// Lab Assistant Login
-router.post('/lab/login', async (req, res) => {
+// Lab Assistant Login (rate-limited)
+router.post('/lab/login', loginLimiter, async (req, res) => {
   try {
     const { username, password, hospital } = req.body;
     if (!username || !password || !hospital) {
@@ -156,8 +166,23 @@ router.get('/me', authenticateToken, async (req, res) => {
   }
 });
 
-// Register Hospital (Super Admin Endpoint)
-router.post('/super-admin/register-hospital', async (req, res) => {
+// Middleware to verify Super Admin Secret Passcode
+const verifyAdminSecret = (req, res, next) => {
+  const adminSecret = req.headers['x-admin-secret'] || req.body.adminSecret;
+  const expectedSecret = process.env.ADMIN_SECRET || 'supersecret123';
+  if (!adminSecret || adminSecret !== expectedSecret) {
+    return res.status(401).json({ message: 'Unauthorized: Invalid Admin Secret Passcode' });
+  }
+  next();
+};
+
+// Verify Super Admin Passcode
+router.post('/super-admin/verify', verifyAdminSecret, (req, res) => {
+  res.json({ success: true, message: 'Admin passcode verified successfully' });
+});
+
+// Register Hospital (Super Admin Endpoint — requires authentication via admin secret)
+router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res) => {
   try {
     const { 
       // Hospital details

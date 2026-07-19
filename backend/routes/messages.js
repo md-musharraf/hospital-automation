@@ -7,8 +7,15 @@ const { authenticateToken } = require('../middleware/auth');
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { receiverRole, receiverId, content } = req.body;
-    if (!content || !receiverRole) {
-      return res.status(400).json({ message: 'Content and receiver role are required.' });
+    if (!content || typeof content !== 'string' || content.trim().length === 0 || content.length > 1000) {
+      return res.status(400).json({ message: 'Content is required and must be <= 1000 characters' });
+    }
+    const validRoles = ['Staff', 'Doctor', 'Lab'];
+    if (!receiverRole || !validRoles.includes(receiverRole)) {
+      return res.status(400).json({ message: 'Valid receiverRole is required (Staff, Doctor, Lab)' });
+    }
+    if (receiverId && (typeof receiverId !== 'string' || receiverId.length > 50)) {
+      return res.status(400).json({ message: 'Invalid receiverId' });
     }
 
     // Identify sender details from JWT

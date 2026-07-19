@@ -47,13 +47,26 @@ export default function SuperAdminPortal() {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const handleVerify = (e) => {
+  const handleVerify = async (e) => {
     e.preventDefault();
-    if (adminSecret === 'supersecret123' || adminSecret === 'admin') {
+    setAuthError('');
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminSecret })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Invalid Admin Secret Passcode.');
+      }
       setAuthorized(true);
       setAuthError('');
-    } else {
-      setAuthError('Invalid Admin Secret Passcode.');
+    } catch (err) {
+      setAuthError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -101,7 +114,10 @@ export default function SuperAdminPortal() {
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/register-hospital`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Admin-Secret': adminSecret
+        },
         body: JSON.stringify(payload)
       });
       const data = await res.json();

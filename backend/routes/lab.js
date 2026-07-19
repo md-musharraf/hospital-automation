@@ -37,8 +37,11 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
     const { tokenId } = req.params;
     const { testName, remarks } = req.body;
 
-    if (!testName) {
-      return res.status(400).json({ message: 'testName is required' });
+    if (!testName || typeof testName !== 'string' || testName.trim().length === 0 || testName.length > 100) {
+      return res.status(400).json({ message: 'testName is required and must be a string up to 100 characters' });
+    }
+    if (remarks && (typeof remarks !== 'string' || remarks.length > 500)) {
+      return res.status(400).json({ message: 'Remarks must be a valid string up to 500 characters' });
     }
 
     const token = await Token.findById(tokenId).populate('patient').populate('doctor');

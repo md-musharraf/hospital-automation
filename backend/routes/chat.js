@@ -22,6 +22,7 @@ const dictionary = {
     ],
     enterPhone: "To begin, please enter the Patient's Phone Number (e.g. +91 9876543210):",
     invalidPhone: 'Please enter a valid Phone Number (minimum 7 characters):',
+    invalidName: 'Please enter a valid name (at least 2 characters):',
     welcomeBackPhone: "Welcome back! Please enter your registered Phone Number to locate your file:",
     emergencyPhone: "🚨 EMERGENCY SOS TRIGGERED. Please enter the Patient's Phone Number immediately:",
     welcomeBackText: (name, age, gender) => `Welcome back, ${name}! I located your details (Age: ${age}, Gender: ${gender}).`,
@@ -60,6 +61,7 @@ const dictionary = {
     ],
     enterPhone: "शुरू करने के लिए, कृपया मरीज का मोबाइल नंबर दर्ज करें (उदा. +91 9876543210):",
     invalidPhone: 'कृपया एक सही मोबाइल नंबर दर्ज करें (कम से कम 7 अंक):',
+    invalidName: 'कृपया एक वैध नाम दर्ज करें (कम से कम 2 अक्षर):',
     welcomeBackPhone: "वापसी पर आपका स्वागत है! अपनी फ़ाइल ढूँढने के लिए अपना पंजीकृत मोबाइल नंबर दर्ज करें:",
     emergencyPhone: "🚨 इमरजेंसी एसओएस। कृपया तुरंत मरीज का मोबाइल नंबर दर्ज करें:",
     welcomeBackText: (name, age, gender) => `वापसी पर आपका स्वागत है, ${name}! मुझे आपकी जानकारी मिल गई है (उम्र: ${age}, लिंग: ${gender === 'Male' ? 'पुरुष' : gender === 'Female' ? 'महिला' : 'अन्य'}).`,
@@ -99,8 +101,14 @@ router.post('/message', async (req, res) => {
     }
 
     const { sessionId, message, hospitalId } = req.body;
-    if (!sessionId) {
-      return res.status(400).json({ message: 'sessionId is required' });
+    if (!sessionId || typeof sessionId !== 'string' || sessionId.length > 100) {
+      return res.status(400).json({ message: 'Invalid or missing sessionId (must be string <= 100 chars)' });
+    }
+    if (message && (typeof message !== 'string' || message.length > 500)) {
+      return res.status(400).json({ message: 'Invalid message (must be string <= 500 chars)' });
+    }
+    if (hospitalId && (typeof hospitalId !== 'string' || hospitalId.length > 100)) {
+      return res.status(400).json({ message: 'Invalid hospitalId (must be string <= 100 chars)' });
     }
 
     // Find or create session
@@ -249,7 +257,7 @@ router.post('/message', async (req, res) => {
       
       else {
         return res.json({
-          messages: [{ sender: 'bot', text: text.catchAll }],
+          messages: [{ sender: 'bot', text: text.defaultCatchAll }],
           options: text.options
         });
       }

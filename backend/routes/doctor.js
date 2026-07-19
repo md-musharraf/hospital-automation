@@ -138,6 +138,18 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
     }
 
     const { revisitDays, medicines, advice } = req.body;
+    if (medicines && !Array.isArray(medicines)) {
+      return res.status(400).json({ message: 'Medicines must be a valid array' });
+    }
+    if (advice && typeof advice !== 'string') {
+      return res.status(400).json({ message: 'Advice must be a valid string' });
+    }
+    if (revisitDays !== undefined && revisitDays !== null) {
+      const parsedDays = parseInt(revisitDays);
+      if (isNaN(parsedDays) || parsedDays < 0 || parsedDays > 365) {
+        return res.status(400).json({ message: 'revisitDays must be a valid number between 0 and 365' });
+      }
+    }
 
     const token = await Token.findById(queue.currentToken).populate('patient');
     if (token) {
@@ -264,10 +276,11 @@ router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, r
 router.post('/queue/add-buffer', authenticateToken, ensureDoctor, async (req, res) => {
   try {
     const doctorId = req.user.id;
-    const { minutes } = req.body; // e.g., 10, 15, 30 or even negative to reduce
+    const { minutes } = req.body;
+    const parsedMinutes = parseInt(minutes);
 
-    if (minutes === undefined || isNaN(parseInt(minutes))) {
-      return res.status(400).json({ message: 'Valid minutes parameter is required' });
+    if (minutes === undefined || isNaN(parsedMinutes) || parsedMinutes < -120 || parsedMinutes > 120) {
+      return res.status(400).json({ message: 'Valid minutes parameter is required (between -120 and 120)' });
     }
 
     let queue = await Queue.findOne({ doctor: doctorId });
@@ -276,7 +289,7 @@ router.post('/queue/add-buffer', authenticateToken, ensureDoctor, async (req, re
     }
 
     // Update buffer delay
-    queue.bufferDelay = Math.max(0, queue.bufferDelay + parseInt(minutes));
+    queue.bufferDelay = Math.max(0, queue.bufferDelay + parsedMinutes);
     await queue.save();
 
     // Instantly recalculate wait times for all waiting tokens in this queue
@@ -306,9 +319,19 @@ router.put('/availability', authenticateToken, ensureDoctor, async (req, res) =>
       return res.status(404).json({ message: 'Doctor details not found' });
     }
 
-    if (availabilityStatus) doctor.availabilityStatus = availabilityStatus;
-    if (averageCheckupTime && !isNaN(parseInt(averageCheckupTime))) {
-      doctor.averageCheckupTime = parseInt(averageCheckupTime);
+    if (availabilityStatus) {
+      const validStatuses = ['Available', 'In Surgery', 'On Break', 'Unavailable'];
+      if (!validStatuses.includes(availabilityStatus)) {
+        return res.status(400).json({ message: 'Invalid availabilityStatus value' });
+      }
+      doctor.availabilityStatus = availabilityStatus;
+    }
+    if (averageCheckupTime !== undefined && averageCheckupTime !== null) {
+      const parsedTime = parseInt(averageCheckupTime);
+      if (isNaN(parsedTime) || parsedTime < 1 || parsedTime > 120) {
+        return res.status(400).json({ message: 'averageCheckupTime must be an integer between 1 and 120' });
+      }
+      doctor.averageCheckupTime = parsedTime;
     }
     await doctor.save();
 
@@ -339,8 +362,8 @@ router.post('/queue/lab-request', authenticateToken, ensureDoctor, async (req, r
     const doctorId = req.user.id;
     const { testName } = req.body;
 
-    if (!testName) {
-      return res.status(400).json({ message: 'testName is required' });
+    if (!testName || typeof testName !== 'string' || testName.trim().length === 0 || testName.length > 100) {
+      return res.status(400).json({ message: 'testName is required and must be a string up to 100 characters' });
     }
 
     const queue = await Queue.findOne({ doctor: doctorId });

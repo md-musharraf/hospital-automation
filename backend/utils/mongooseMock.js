@@ -59,6 +59,16 @@ class Query {
     return this;
   }
 
+  sort(fields) {
+    return this;
+  }
+
+  limit(n) {
+    // Store limit for exec
+    this._limit = n;
+    return this;
+  }
+
   async exec() {
     let result = await this.executor();
     
@@ -67,6 +77,10 @@ class Query {
       if (Array.isArray(result)) {
         for (let doc of result) {
           await this._populateDoc(doc);
+        }
+        // Apply limit if set
+        if (this._limit && Array.isArray(result)) {
+          result = result.slice(0, this._limit);
         }
       } else {
         await this._populateDoc(result);
@@ -278,6 +292,25 @@ function model(name, schema) {
       });
       return { modifiedCount: count };
     }
+
+    static async deleteOne(query = {}) {
+      const idx = store[name].findIndex(item => matchesQuery(item, query));
+      if (idx >= 0) {
+        store[name].splice(idx, 1);
+        return { deletedCount: 1 };
+      }
+      return { deletedCount: 0 };
+    }
+
+    static async findByIdAndUpdate(id, update) {
+      const idx = store[name].findIndex(d => d._id && d._id.toString() === id.toString());
+      if (idx >= 0) {
+        const updated = { ...store[name][idx], ...update };
+        store[name][idx] = updated;
+        return wrapDoc(name, updated);
+      }
+      return null;
+    }
   }
 
   return MockModel;
@@ -288,9 +321,12 @@ async function connect(uri) {
   return true;
 }
 
+const connectionObj = new EventEmitter();
+connectionObj.readyState = 1; // 1 = connected (mock is always "connected")
+
 module.exports = {
   Schema,
   model,
   connect,
-  connection: new EventEmitter()
+  connection: connectionObj
 };

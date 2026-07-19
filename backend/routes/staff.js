@@ -47,14 +47,34 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       return res.status(400).json({ message: 'All patient and doctor fields are required' });
     }
 
+    if (typeof name !== 'string' || name.trim().length < 2 || name.length > 100) {
+      return res.status(400).json({ message: 'Invalid patient name (2-100 characters)' });
+    }
+    const parsedAge = parseInt(age);
+    if (isNaN(parsedAge) || parsedAge < 1 || parsedAge > 130) {
+      return res.status(400).json({ message: 'Age must be an integer between 1 and 130' });
+    }
+    if (!['Male', 'Female', 'Other'].includes(gender)) {
+      return res.status(400).json({ message: 'Gender must be Male, Female, or Other' });
+    }
+    if (typeof phone !== 'string' || phone.trim().length < 7 || phone.length > 20) {
+      return res.status(400).json({ message: 'Invalid phone number' });
+    }
+    if (typeof symptoms !== 'string' || symptoms.trim().length === 0 || symptoms.length > 1000) {
+      return res.status(400).json({ message: 'Symptoms must be a string up to 1000 characters' });
+    }
+    if (tokenType && !['Regular', 'Emergency', 'Re-visit'].includes(tokenType)) {
+      return res.status(400).json({ message: 'Invalid tokenType' });
+    }
+
     // Find or create patient
     let patient = await Patient.findOne({ phone });
     if (!patient) {
-      patient = new Patient({ name, age, gender, phone });
+      patient = new Patient({ name, age: parsedAge, gender, phone });
     } else {
       patient.visitCount += 1;
       patient.name = name; // Update name/age/gender if changed
-      patient.age = age;
+      patient.age = parsedAge;
       patient.gender = gender;
     }
     await patient.save();
@@ -206,7 +226,11 @@ router.put('/tokens/:tokenId/override', authenticateToken, ensureStaff, async (r
 router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req, res) => {
   try {
     const { tokenId } = req.params;
-    const { status } = req.body; // 'Waiting', 'Delayed', 'Completed', 'Absent', 'Called'
+    const { status } = req.body;
+    const validStatuses = ['Waiting', 'Called', 'Active', 'Completed', 'Absent', 'Delayed'];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({ message: 'Invalid token status value' });
+    }
 
     const token = await Token.findById(tokenId);
     if (!token) {
@@ -215,7 +239,7 @@ router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req
 
     const previousStatus = token.status;
     token.status = status;
-    if (status === 'Completed' || status === 'Absent' || status === 'Delayed' && previousStatus === 'Active') {
+    if (status === 'Completed' || status === 'Absent' || (status === 'Delayed' && previousStatus === 'Active')) {
       // Reset timestamps if needed
       if (status === 'Completed') token.completedAt = new Date();
     }
@@ -292,6 +316,23 @@ router.get('/patients', authenticateToken, ensureStaff, async (req, res) => {
 router.post('/patients', authenticateToken, ensureStaff, async (req, res) => {
   try {
     const { name, phone, age, gender } = req.body;
+
+    if (!name || !phone || !age || !gender) {
+      return res.status(400).json({ message: 'All patient fields (name, phone, age, gender) are required' });
+    }
+    if (typeof name !== 'string' || name.trim().length < 2 || name.length > 100) {
+      return res.status(400).json({ message: 'Invalid patient name (2-100 characters)' });
+    }
+    const parsedAge = parseInt(age);
+    if (isNaN(parsedAge) || parsedAge < 1 || parsedAge > 130) {
+      return res.status(400).json({ message: 'Age must be an integer between 1 and 130' });
+    }
+    if (!['Male', 'Female', 'Other'].includes(gender)) {
+      return res.status(400).json({ message: 'Gender must be Male, Female, or Other' });
+    }
+    if (typeof phone !== 'string' || phone.trim().length < 7 || phone.length > 20) {
+      return res.status(400).json({ message: 'Invalid phone number' });
+    }
     
     // Check if phone number already exists
     const existingPatient = await Patient.findOne({ phone });
@@ -302,7 +343,7 @@ router.post('/patients', authenticateToken, ensureStaff, async (req, res) => {
     const patient = new Patient({
       name,
       phone,
-      age: parseInt(age),
+      age: parsedAge,
       gender
     });
     await patient.save();
@@ -320,6 +361,23 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
     const { id } = req.params;
     const { name, phone, age, gender } = req.body;
 
+    if (name !== undefined && (typeof name !== 'string' || name.trim().length < 2 || name.length > 100)) {
+      return res.status(400).json({ message: 'Invalid patient name (2-100 characters)' });
+    }
+    let parsedAge;
+    if (age !== undefined) {
+      parsedAge = parseInt(age);
+      if (isNaN(parsedAge) || parsedAge < 1 || parsedAge > 130) {
+        return res.status(400).json({ message: 'Age must be an integer between 1 and 130' });
+      }
+    }
+    if (gender !== undefined && !['Male', 'Female', 'Other'].includes(gender)) {
+      return res.status(400).json({ message: 'Gender must be Male, Female, or Other' });
+    }
+    if (phone !== undefined && (typeof phone !== 'string' || phone.trim().length < 7 || phone.length > 20)) {
+      return res.status(400).json({ message: 'Invalid phone number' });
+    }
+
     const patient = await Patient.findById(id);
     if (!patient) {
       return res.status(404).json({ message: 'Patient not found' });
@@ -334,9 +392,9 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
       patient.phone = phone;
     }
 
-    if (name) patient.name = name;
-    if (age) patient.age = parseInt(age);
-    if (gender) patient.gender = gender;
+    if (name !== undefined) patient.name = name;
+    if (age !== undefined) patient.age = parsedAge;
+    if (gender !== undefined) patient.gender = gender;
 
     await patient.save();
     res.json({ message: 'Patient details updated successfully', patient });

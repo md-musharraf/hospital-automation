@@ -21,6 +21,10 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const cron = require('node-cron');
 const path = require('path');
+const helmet = require('helmet');
+const mongoSanitize = require('express-mongo-sanitize');
+const xss = require('xss-clean');
+const hpp = require('hpp');
 
 const authRoutes = require('./routes/auth');
 const chatRoutes = require('./routes/chat');
@@ -98,7 +102,16 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: false, // Disabled to allow inline styles/scripts from frontend
+  crossOriginEmbedderPolicy: false
+}));
+app.use(mongoSanitize()); // Prevent NoSQL query injection
+app.use(xss()); // Prevent XSS attacks (inputs)
+app.use(hpp()); // Prevent HTTP Parameter Pollution
+app.use(express.json({ limit: '1mb' })); // Prevent payload bomb / DoS attacks
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Database connection check middleware (except health check, and only if not using mock DB)
 app.use((req, res, next) => {

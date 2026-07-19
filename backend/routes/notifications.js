@@ -58,8 +58,9 @@ router.post('/subscribe', async (req, res) => {
   }
 });
 
-// POST Trigger test push notification for debug
-router.post('/test-push', async (req, res) => {
+// POST Trigger test push notification for debug (requires authentication)
+const { authenticateToken } = require('../middleware/auth');
+router.post('/test-push', authenticateToken, async (req, res) => {
   const { role, tokenId, title, body } = req.body;
   try {
     const payload = {
