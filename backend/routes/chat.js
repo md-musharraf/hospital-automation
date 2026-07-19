@@ -5,36 +5,9 @@ const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
 const Token = require('../models/Token');
 const Queue = require('../models/Queue');
+const Hospital = require('../models/Hospital');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
-
-// Hospitals Configuration
-const hospitals = [
-  {
-    id: 'general-hospital',
-    name: 'CareSync General Hospital',
-    slug: 'general-hospital',
-    address: '123 Healthcare Blvd, Medical District',
-    phone: '+1 (555) 123-4567',
-    whatsappNumber: process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886',
-    coverImage: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA1x4Ta8X_Leb2KfTzTMhRKsT439crOzzOgCCfSQH3UNSJlkdZTlRZT13ai7p8kN9f7_vHvbO7z2snijUJmc30zd6loDlIMh8Uth9PitBK4Q9fgbf17IwSVaxF8O9WHyaQvTAvo-ILHCBdZnJT8Yhu4iOlLxRG6irdb1Gnl_7dsWd1s1hLWea_09I6kOuw8kjUH9psbS4v-OXZXFH7mVJ9A8DwUUtxXqxAK0RcJIlWbR2K3O1vo3ZCrbqgnr5Egw0jJOTNYtRgR1lFx',
-    description: 'Full-service tertiary care facility specializing in cardiology, internal medicine, and emergency care.',
-    city: 'Delhi',
-    coordinates: { lat: 28.6139, lng: 77.2090 }
-  },
-  {
-    id: 'pediatrics-clinic',
-    name: 'St. Jude Pediatrics Clinic',
-    slug: 'pediatrics-clinic',
-    address: '456 Kids Care Way, Suite B',
-    phone: '+1 (555) 987-6543',
-    whatsappNumber: '+15550199999',
-    coverImage: 'https://images.unsplash.com/photo-1502740479091-635887520276?q=80&w=800&auto=format&fit=crop',
-    description: 'Dedicated children health center providing comprehensive pediatric checkups and childcare solutions.',
-    city: 'Mumbai',
-    coordinates: { lat: 19.0760, lng: 72.8777 }
-  }
-];
 
 // Bilingual Translation Dictionary
 const dictionary = {
@@ -561,10 +534,10 @@ router.get('/queues/public-status', async (req, res) => {
     });
 
     const activeHospId = hospitalId || 'general-hospital';
-    const hospital = hospitals.find(h => h.id === activeHospId) || hospitals[0];
-    const rawWhatsapp = hospital.id === 'general-hospital'
-      ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
-      : hospital.whatsappNumber;
+    const hospital = await Hospital.findOne({ id: activeHospId }) || await Hospital.findOne({});
+    const rawWhatsapp = hospital
+      ? (hospital.id === 'general-hospital' ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886') : hospital.whatsappNumber)
+      : '+14155238886';
     const cleanWhatsapp = rawWhatsapp.replace(/^whatsapp:/i, '');
 
     res.json({
@@ -605,33 +578,44 @@ router.get('/token/:tokenId', async (req, res) => {
 });
 
 // GET all registered hospitals
-router.get('/hospitals', (req, res) => {
-  const formattedHospitals = hospitals.map(h => {
-    const rawWhatsapp = h.id === 'general-hospital' 
-      ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
-      : h.whatsappNumber;
-    return {
-      ...h,
-      whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
-    };
-  });
-  res.json(formattedHospitals);
+router.get('/hospitals', async (req, res) => {
+  try {
+    const dbHospitals = await Hospital.find({});
+    const formattedHospitals = dbHospitals.map(h => {
+      const rawWhatsapp = h.id === 'general-hospital' 
+        ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
+        : h.whatsappNumber;
+      return {
+        ...h.toObject(),
+        whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
+      };
+    });
+    res.json(formattedHospitals);
+  } catch (err) {
+    console.error('Error fetching hospitals:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
 // GET single hospital details
-router.get('/hospital/:hospitalId', (req, res) => {
-  const { hospitalId } = req.params;
-  const hospital = hospitals.find(h => h.id === hospitalId);
-  if (!hospital) {
-    return res.status(404).json({ message: 'Hospital not found' });
+router.get('/hospital/:hospitalId', async (req, res) => {
+  try {
+    const { hospitalId } = req.params;
+    const hospital = await Hospital.findOne({ id: hospitalId });
+    if (!hospital) {
+      return res.status(404).json({ message: 'Hospital not found' });
+    }
+    const rawWhatsapp = hospital.id === 'general-hospital'
+      ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
+      : hospital.whatsappNumber;
+    res.json({
+      ...hospital.toObject(),
+      whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
+    });
+  } catch (err) {
+    console.error('Error fetching hospital details:', err);
+    res.status(500).json({ message: 'Server error' });
   }
-  const rawWhatsapp = hospital.id === 'general-hospital'
-    ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
-    : hospital.whatsappNumber;
-  res.json({
-    ...hospital,
-    whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
-  });
 });
 
 module.exports = router;

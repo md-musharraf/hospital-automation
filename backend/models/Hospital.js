@@ -1,0 +1,25 @@
+const mongoose = require('mongoose');
+
+const HospitalSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true, index: true },
+  name: { type: String, required: true, trim: true },
+  slug: { type: String, required: true, trim: true },
+  address: { type: String, required: true },
+  phone: { type: String, required: true },
+  whatsappNumber: { type: String, required: true },
+  coverImage: { type: String },
+  description: { type: String },
+  city: { type: String, required: true },
+  coordinates: {
+    lat: { type: Number, required: true },
+    lng: { type: Number, required: true }
+  },
+  type: { 
+    type: String, 
+    required: true, 
+    enum: ['Hospital', 'Clinic', 'Medical', 'Lab', 'Government'],
+    default: 'Hospital'
+  }
+}, { timestamps: true });
+
+module.exports = mongoose.model('Hospital', HospitalSchema);

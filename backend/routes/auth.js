@@ -5,6 +5,8 @@ const jwt = require('jsonwebtoken');
 const Doctor = require('../models/Doctor');
 const Staff = require('../models/Staff');
 const LabAssistant = require('../models/LabAssistant');
+const Hospital = require('../models/Hospital');
+const Queue = require('../models/Queue');
 const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
 
 // Doctor Login
@@ -151,6 +153,126 @@ router.get('/me', authenticateToken, async (req, res) => {
     res.status(400).json({ message: 'Invalid role' });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Register Hospital (Super Admin Endpoint)
+router.post('/super-admin/register-hospital', async (req, res) => {
+  try {
+    const { 
+      // Hospital details
+      id, name, slug, address, phone, whatsappNumber, coverImage, description, city, coordinates, type,
+      // Initial Staff Member
+      staffName, staffUsername, staffPassword, counterNumber,
+      // Initial Doctor
+      docName, docEmail, docPassword, docDepartment, docRoom,
+      // Initial Lab Assistant
+      labName, labUsername, labPassword
+    } = req.body;
+
+    // Validate hospital parameters
+    if (!id || !name || !slug || !address || !phone || !whatsappNumber || !city || !coordinates || !type) {
+      return res.status(400).json({ message: 'All hospital details (id, name, slug, address, phone, whatsappNumber, city, coordinates, type) are required' });
+    }
+
+    // Validate staff, doctor, lab parameters
+    if (!staffUsername || !staffPassword || !docEmail || !docPassword || !labUsername || !labPassword) {
+      return res.status(400).json({ message: 'Initial staff, doctor, and lab assistant credentials are required' });
+    }
+
+    // Check if hospital ID or slug is already taken
+    const existingHospital = await Hospital.findOne({ $or: [{ id }, { slug }] });
+    if (existingHospital) {
+      return res.status(400).json({ message: 'Hospital ID or Slug is already registered.' });
+    }
+
+    // Check if credentials collide in the target hospital tenant
+    const existingStaff = await Staff.findOne({ username: staffUsername, hospital: id });
+    if (existingStaff) {
+      return res.status(400).json({ message: `Staff username '${staffUsername}' is already taken in this hospital tenant.` });
+    }
+
+    const existingDoc = await Doctor.findOne({ email: docEmail, hospital: id });
+    if (existingDoc) {
+      return res.status(400).json({ message: `Doctor email '${docEmail}' is already registered in this hospital tenant.` });
+    }
+
+    const existingLab = await LabAssistant.findOne({ username: labUsername, hospital: id });
+    if (existingLab) {
+      return res.status(400).json({ message: `Lab assistant username '${labUsername}' is already taken in this hospital tenant.` });
+    }
+
+    // Hash passwords
+    const salt = await bcrypt.genSalt(10);
+    const staffPasswordHash = await bcrypt.hash(staffPassword, salt);
+    const docPasswordHash = await bcrypt.hash(docPassword, salt);
+    const labPasswordHash = await bcrypt.hash(labPassword, salt);
+
+    // Create and save Hospital
+    const newHospital = new Hospital({
+      id,
+      name,
+      slug,
+      address,
+      phone,
+      whatsappNumber,
+      coverImage: coverImage || 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
+      description: description || 'Specialized clinical care service.',
+      city,
+      coordinates,
+      type
+    });
+    await newHospital.save();
+
+    // Create and save Staff
+    const newStaff = new Staff({
+      name: staffName || 'Staff Assistant',
+      username: staffUsername,
+      passwordHash: staffPasswordHash,
+      counterNumber: counterNumber || 'Counter 1',
+      hospital: id
+    });
+    await newStaff.save();
+
+    // Create and save Doctor
+    const newDoctor = new Doctor({
+      name: docName || 'Doctor Consultant',
+      email: docEmail,
+      passwordHash: docPasswordHash,
+      department: docDepartment || 'General Practice',
+      specialization: 'General Consultation',
+      availabilityStatus: 'Available',
+      averageCheckupTime: 10,
+      currentRoom: docRoom || 'Cabin 1',
+      hospital: id
+    });
+    await newDoctor.save();
+
+    // Create Queue for Doctor
+    const newQueue = new Queue({
+      doctor: newDoctor._id,
+      currentToken: null,
+      activeQueue: []
+    });
+    await newQueue.save();
+
+    // Create and save Lab Assistant
+    const newLab = new LabAssistant({
+      name: labName || 'Lab Assistant',
+      username: labUsername,
+      passwordHash: labPasswordHash,
+      hospital: id
+    });
+    await newLab.save();
+
+    res.status(201).json({
+      message: 'Hospital registered successfully alongside initial Staff, Doctor, and Lab accounts!',
+      hospital: newHospital
+    });
+
+  } catch (error) {
+    console.error('Super admin hospital registration error:', error);
+    res.status(500).json({ message: 'Server error registering hospital' });
   }
 });
 

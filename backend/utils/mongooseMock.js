@@ -9,7 +9,8 @@ const store = {
   Queue: [],
   ChatSession: [],
   ArchivedToken: [],
-  Reminder: []
+  Reminder: [],
+  Hospital: []
 };
 
 // Auto-increment ID helper
@@ -29,6 +30,10 @@ class Schema {
   constructor(definition, options) {
     this.definition = definition;
     this.options = options;
+  }
+  index(fields, options) {
+    // Noop for mock
+    return this;
   }
 }
 

@@ -14,6 +14,7 @@ const PatientPortal = React.lazy(() => import('./components/PatientPortal'));
 const PatientLiveTracker = React.lazy(() => import('./components/PatientLiveTracker'));
 const DigitalPrescriptionViewer = React.lazy(() => import('./components/DigitalPrescriptionViewer'));
 const PublicTVDisplay = React.lazy(() => import('./components/PublicTVDisplay'));
+const SuperAdminPortal = React.lazy(() => import('./components/SuperAdminPortal'));
 
 // Named imports for lazy loaded modules
 const StaffLogin = React.lazy(() => import('./components/StaffPortal').then(module => ({ default: module.StaffLogin })));
@@ -268,6 +269,7 @@ function AppContent() {
             <Route path="/track/:tokenId" element={<PatientLiveTracker />} />
             <Route path="/prescription/:tokenId" element={<DigitalPrescriptionViewer />} />
             <Route path="/public-display" element={<PublicTVDisplay />} />
+            <Route path="/admin" element={<SuperAdminPortal />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

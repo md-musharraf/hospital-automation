@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const DoctorSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
-  email: { type: String, required: true, unique: true, index: true },
+  email: { type: String, required: true, index: true },
   passwordHash: { type: String, required: true },
   department: { type: String, required: true },
   specialization: { type: String },
@@ -15,5 +15,8 @@ const DoctorSchema = new mongoose.Schema({
   currentRoom: { type: String, required: true }, // e.g., "Cabin A"
   hospital: { type: String, default: 'general-hospital' }
 }, { timestamps: true });
+
+// Compound index to ensure unique email per hospital tenant
+DoctorSchema.index({ email: 1, hospital: 1 }, { unique: true });
 
 module.exports = mongoose.model('Doctor', DoctorSchema);
