@@ -267,6 +267,10 @@ function AppContent() {
 function HospitalHub() {
   const [hospitals, setHospitals] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCity, setSelectedCity] = useState('All');
+  const [userCoords, setUserCoords] = useState(null);
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [geoError, setGeoError] = useState('');
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -283,11 +287,70 @@ function HospitalHub() {
       });
   }, []);
 
-  const filteredHospitals = hospitals.filter(h => 
+  // Haversine formula to calculate distance in km between two lat/lng coordinates
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  const handleFindNearMe = () => {
+    if (!navigator.geolocation) {
+      setGeoError('Geolocation is not supported by your browser.');
+      return;
+    }
+    setGeoLoading(true);
+    setGeoError('');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setUserCoords({ lat: latitude, lng: longitude });
+        setGeoLoading(false);
+      },
+      (err) => {
+        console.error('Geolocation error:', err);
+        setGeoError('Location access denied or unavailable.');
+        setGeoLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 5000 }
+    );
+  };
+
+  // Get unique list of cities
+  const cities = ['All', ...new Set(hospitals.map(h => h.city).filter(Boolean))];
+
+  // Process sorting, city filtering, and searching
+  let processedHospitals = hospitals.map(h => {
+    if (userCoords && h.coordinates) {
+      const distance = calculateDistance(userCoords.lat, userCoords.lng, h.coordinates.lat, h.coordinates.lng);
+      return { ...h, distance };
+    }
+    return h;
+  });
+
+  // Filter by selected city
+  if (selectedCity !== 'All') {
+    processedHospitals = processedHospitals.filter(h => h.city === selectedCity);
+  }
+
+  // Filter by search query
+  const filteredHospitals = processedHospitals.filter(h => 
     h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     h.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    h.address.toLowerCase().includes(searchQuery.toLowerCase())
+    h.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (h.city && h.city.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  // Sort by distance if user location is active
+  if (userCoords) {
+    filteredHospitals.sort((a, b) => (a.distance || 0) - (b.distance || 0));
+  }
 
   return (
     <div className="flex-1 w-full min-h-screen overflow-y-auto bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
@@ -306,25 +369,68 @@ function HospitalHub() {
             Eliminate long physical queues, check real-time estimated cabin wait times, and register walk-in or virtual appointments instantly. Select a partner hospital below to begin booking your token.
           </p>
 
-          {/* Search Bar */}
-          <div className="max-w-xl mx-auto relative group">
-            <div className="absolute inset-0 bg-gradient-to-r from-orange-600 to-amber-500 rounded-2xl blur opacity-20 group-hover:opacity-30 transition duration-300"></div>
-            <div className="relative bg-[var(--card-bg)] border border-[var(--border-color)]/50 rounded-2xl flex items-center px-4 py-2 shadow-lg shadow-black/5">
-              <span className="material-symbols-outlined text-zinc-400 mr-3 text-[22px]">search</span>
-              <input 
-                type="text" 
-                placeholder="Search hospital by name, department, or city..." 
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full bg-transparent border-none outline-none text-sm font-semibold focus:ring-0 text-[var(--text-color)] placeholder-zinc-400"
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery('')} className="p-1 rounded-full hover:bg-[var(--border-color)]/25 flex items-center">
-                  <span className="material-symbols-outlined text-[16px] text-zinc-400">close</span>
-                </button>
-              )}
+          {/* Search Bar & Location Trigger */}
+          <div className="max-w-xl mx-auto flex items-center justify-center">
+            <div className="flex-1 relative group">
+              <div className="absolute inset-0 bg-gradient-to-r from-orange-600 to-amber-500 rounded-2xl blur opacity-20 group-hover:opacity-30 transition duration-300"></div>
+              <div className="relative bg-[var(--card-bg)] border border-[var(--border-color)]/50 rounded-2xl flex items-center px-4 py-2.5 shadow-lg shadow-black/5">
+                <span className="material-symbols-outlined text-zinc-400 mr-3 text-[22px]">search</span>
+                <input 
+                  type="text" 
+                  placeholder="Search hospital by name, department, or city..." 
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full bg-transparent border-none outline-none text-sm font-semibold focus:ring-0 text-[var(--text-color)] placeholder-zinc-400"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="p-1 rounded-full hover:bg-[var(--border-color)]/25 flex items-center">
+                    <span className="material-symbols-outlined text-[16px] text-zinc-400">close</span>
+                  </button>
+                )}
+              </div>
             </div>
+
+            <button
+              onClick={handleFindNearMe}
+              disabled={geoLoading}
+              className={`ml-3 flex items-center justify-center p-3 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)]/50 text-[var(--text-secondary)] hover:text-orange-600 transition-all active:scale-95 duration-100 disabled:opacity-50 shadow-md ${
+                userCoords ? 'text-orange-600 border-orange-500/40 bg-orange-600/5' : ''
+              }`}
+              title="Find hospitals near me"
+            >
+              <span className={`material-symbols-outlined text-[20px] ${geoLoading ? 'animate-spin' : ''}`}>
+                {geoLoading ? 'refresh' : 'my_location'}
+              </span>
+            </button>
           </div>
+
+          {geoError && (
+            <p className="text-xs text-rose-500 font-bold mt-3 animate-bounce">{geoError}</p>
+          )}
+          {userCoords && (
+            <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mt-3">
+              📍 Location access granted. Sorting directory by nearest hospitals first!
+            </p>
+          )}
+
+          {/* City Filter Row */}
+          {!loading && hospitals.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2 max-w-xl mx-auto justify-center mt-6">
+              {cities.map(city => (
+                <button
+                  key={city}
+                  onClick={() => setSelectedCity(city)}
+                  className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 duration-100 ${
+                    selectedCity === city
+                      ? 'bg-orange-600 text-white shadow-md shadow-orange-500/10'
+                      : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/25'
+                  }`}
+                >
+                  {city}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -374,6 +480,21 @@ function HospitalHub() {
                     <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping"></span>
                     <span>Active Queue</span>
                   </span>
+
+                  {/* Proximity Distance Badge */}
+                  {h.distance !== undefined && (
+                    <span className="absolute top-4 left-4 bg-black/60 backdrop-blur-md text-white text-[10px] font-black px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1">
+                      <span className="material-symbols-outlined text-[12px] text-orange-400">near_me</span>
+                      <span>{h.distance.toFixed(1)} km away</span>
+                    </span>
+                  )}
+
+                  {/* City Label Badge */}
+                  {h.city && (
+                    <span className="absolute bottom-4 left-4 text-white text-[10px] font-black uppercase tracking-wider bg-orange-600 px-2.5 py-0.5 rounded shadow-sm">
+                      {h.city}
+                    </span>
+                  )}
                 </div>
 
                 {/* Content */}

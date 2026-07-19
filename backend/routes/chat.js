@@ -18,7 +18,9 @@ const hospitals = [
     phone: '+1 (555) 123-4567',
     whatsappNumber: process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886',
     coverImage: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA1x4Ta8X_Leb2KfTzTMhRKsT439crOzzOgCCfSQH3UNSJlkdZTlRZT13ai7p8kN9f7_vHvbO7z2snijUJmc30zd6loDlIMh8Uth9PitBK4Q9fgbf17IwSVaxF8O9WHyaQvTAvo-ILHCBdZnJT8Yhu4iOlLxRG6irdb1Gnl_7dsWd1s1hLWea_09I6kOuw8kjUH9psbS4v-OXZXFH7mVJ9A8DwUUtxXqxAK0RcJIlWbR2K3O1vo3ZCrbqgnr5Egw0jJOTNYtRgR1lFx',
-    description: 'Full-service tertiary care facility specializing in cardiology, internal medicine, and emergency care.'
+    description: 'Full-service tertiary care facility specializing in cardiology, internal medicine, and emergency care.',
+    city: 'Delhi',
+    coordinates: { lat: 28.6139, lng: 77.2090 }
   },
   {
     id: 'pediatrics-clinic',
@@ -28,7 +30,9 @@ const hospitals = [
     phone: '+1 (555) 987-6543',
     whatsappNumber: '+15550199999',
     coverImage: 'https://images.unsplash.com/photo-1502740479091-635887520276?q=80&w=800&auto=format&fit=crop',
-    description: 'Dedicated children health center providing comprehensive pediatric checkups and childcare solutions.'
+    description: 'Dedicated children health center providing comprehensive pediatric checkups and childcare solutions.',
+    city: 'Mumbai',
+    coordinates: { lat: 19.0760, lng: 72.8777 }
   }
 ];
 
