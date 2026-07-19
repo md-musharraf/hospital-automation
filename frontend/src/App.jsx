@@ -5,7 +5,19 @@ import {
   MessageSquare, Shield, Stethoscope, Activity
 } from 'lucide-react';
 
-export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const getBackendUrl = () => {
+  if (import.meta.env.VITE_BACKEND_URL) {
+    return import.meta.env.VITE_BACKEND_URL;
+  }
+  // If we are on production/deployed environment, default to window.location.origin
+  const hostname = window.location.hostname;
+  if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    return window.location.origin;
+  }
+  return 'http://localhost:5000';
+};
+
+export const BACKEND_URL = getBackendUrl();
 export const socket = io(BACKEND_URL, { transports: ['websocket'] });
 
 // Lazy load components
