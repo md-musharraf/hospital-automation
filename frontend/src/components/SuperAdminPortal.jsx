@@ -76,6 +76,19 @@ export default function SuperAdminPortal() {
   const [editPrimaryColor, setEditPrimaryColor] = useState('#0d9488');
   const [editSecondaryColor, setEditSecondaryColor] = useState('#0f172a');
 
+  // Clinic Specializations & Custom Services
+  const [clinicSubtype, setClinicSubtype] = useState('General');
+  const [customServices, setCustomServices] = useState([
+    { title: 'General Checkup', description: 'Comprehensive routine medical examination and health check.', icon: 'local_hospital' }
+  ]);
+  const [features, setFeatures] = useState([
+    'Skilled & Professional Team', 'Advanced Health Diagnostics', 'Convenient Real-time Queues'
+  ]);
+
+  const [editClinicSubtype, setEditClinicSubtype] = useState('General');
+  const [editCustomServices, setEditCustomServices] = useState([]);
+  const [editFeatures, setEditFeatures] = useState([]);
+
   const handleSelectHospitalToEdit = (hospId) => {
     const hosp = hospitalList.find(h => h.id === hospId);
     if (hosp) {
@@ -94,6 +107,9 @@ export default function SuperAdminPortal() {
       setEditWelcomeMessage(hosp.welcomeMessage || '');
       setEditPrimaryColor(hosp.primaryColor || '#0d9488');
       setEditSecondaryColor(hosp.secondaryColor || '#0f172a');
+      setEditClinicSubtype(hosp.clinicSubtype || 'General');
+      setEditCustomServices(hosp.customServices || []);
+      setEditFeatures(hosp.features || []);
     }
   };
 
@@ -185,6 +201,9 @@ export default function SuperAdminPortal() {
         lng: parseFloat(lng)
       },
       type,
+      clinicSubtype,
+      customServices,
+      features,
       staffName,
       staffUsername,
       staffPassword,
@@ -314,7 +333,10 @@ export default function SuperAdminPortal() {
       heroImage: editCoverImage,
       primaryColor: editPrimaryColor,
       secondaryColor: editSecondaryColor,
-      welcomeMessage: editWelcomeMessage
+      welcomeMessage: editWelcomeMessage,
+      clinicSubtype: editClinicSubtype,
+      customServices: editCustomServices,
+      features: editFeatures
     };
 
     try {
@@ -541,7 +563,7 @@ export default function SuperAdminPortal() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className={`grid grid-cols-1 ${type === 'Clinic' || type === 'Medical' ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4`}>
                   <div>
                     <label className="block mb-1">Service Type *</label>
                     <select
@@ -556,6 +578,37 @@ export default function SuperAdminPortal() {
                       <option>Government</option>
                     </select>
                   </div>
+                  {type === 'Clinic' && (
+                    <div>
+                      <label className="block mb-1">Clinic Subtype *</label>
+                      <select
+                        value={clinicSubtype}
+                        onChange={e => setClinicSubtype(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                      >
+                        <option value="Dental">Dental Clinic</option>
+                        <option value="Eye">Eye Clinic</option>
+                        <option value="Ortho">Bone & Ortho Clinic</option>
+                        <option value="General">General Clinic</option>
+                      </select>
+                    </div>
+                  )}
+                  {type === 'Medical' && (
+                    <div>
+                      <label className="block mb-1">Medical Subtype *</label>
+                      <select
+                        value={clinicSubtype}
+                        onChange={e => setClinicSubtype(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                      >
+                        <option value="Pharmacy">General Pharmacy</option>
+                        <option value="Homeopathy">Homeopathic Store</option>
+                        <option value="Ayurvedic">Ayurvedic Store</option>
+                        <option value="Surgical">Surgical Supply Store</option>
+                        <option value="General">General Medical Store</option>
+                      </select>
+                    </div>
+                  )}
                   <div>
                     <label className="block mb-1">City Location *</label>
                     <input
@@ -652,6 +705,125 @@ export default function SuperAdminPortal() {
                       required
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* SECTION A.5: Landing Page custom content */}
+              <div className="space-y-4 bg-[var(--bg-color)]/20 p-5 rounded-2xl border border-[var(--border-color)]/30">
+                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">style</span>
+                  <span>1b. Custom Landing Page Services & Features</span>
+                </h3>
+
+                {/* Services List */}
+                <div className="space-y-3 bg-[var(--card-bg)] p-4 rounded-xl border border-[var(--border-color)]/30 shadow-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="font-extrabold text-[11px] uppercase tracking-wider text-[var(--text-color)]">Landing Page Services & Specialties</span>
+                    <button
+                      type="button"
+                      onClick={() => setCustomServices(prev => [...prev, { title: '', description: '', icon: 'local_hospital' }])}
+                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
+                    >
+                      + Add Service
+                    </button>
+                  </div>
+                  {customServices.map((srv, idx) => (
+                    <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end border-b border-[var(--border-color)]/20 pb-3 last:border-b-0 last:pb-0">
+                      <div className="md:col-span-3">
+                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">Service Title</label>
+                        <input
+                          type="text"
+                          value={srv.title}
+                          placeholder="e.g. Cosmetic Dentistry"
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCustomServices(prev => prev.map((s, i) => i === idx ? { ...s, title: val } : s));
+                          }}
+                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-2.5 py-1.5 outline-none text-xs text-[var(--text-color)] font-semibold"
+                          required
+                        />
+                      </div>
+                      <div className="md:col-span-5">
+                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">Description</label>
+                        <input
+                          type="text"
+                          value={srv.description}
+                          placeholder="e.g. Veneers, bonding, and teeth whitening treatments."
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCustomServices(prev => prev.map((s, i) => i === idx ? { ...s, description: val } : s));
+                          }}
+                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-2.5 py-1.5 outline-none text-xs text-[var(--text-color)] font-semibold"
+                          required
+                        />
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">Material Icon Name</label>
+                        <select
+                          value={srv.icon}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCustomServices(prev => prev.map((s, i) => i === idx ? { ...s, icon: val } : s));
+                          }}
+                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-2 py-1.5 outline-none text-xs text-[var(--text-color)] font-bold cursor-pointer"
+                        >
+                          <option value="local_hospital">Hospital (default)</option>
+                          <option value="biotech">Lab biotech</option>
+                          <option value="dentistry">Dentistry (tooth)</option>
+                          <option value="visibility">Ophthalmology (eye)</option>
+                          <option value="bone">Bone & Ortho (orthopedics)</option>
+                          <option value="bloodtype">Blood draws</option>
+                          <option value="settings_accessibility">Pediatrics/General</option>
+                          <option value="medical_services">Medical Kit</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-1">
+                        <button
+                          type="button"
+                          onClick={() => setCustomServices(prev => prev.filter((_, i) => i !== idx))}
+                          className="w-full py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg flex items-center justify-center transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">delete</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Features List */}
+                <div className="space-y-3 bg-[var(--card-bg)] p-4 rounded-xl border border-[var(--border-color)]/30 shadow-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="font-extrabold text-[11px] uppercase tracking-wider text-[var(--text-color)]">Clinic Features (Why Choose Us)</span>
+                    <button
+                      type="button"
+                      onClick={() => setFeatures(prev => [...prev, ''])}
+                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
+                    >
+                      + Add Feature
+                    </button>
+                  </div>
+                  {features.map((feat, idx) => (
+                    <div key={idx} className="flex items-center space-x-2.5">
+                      <input
+                        type="text"
+                        value={feat}
+                        placeholder="e.g. State-of-the-Art Dental Technology"
+                        onChange={e => {
+                          const val = e.target.value;
+                          setFeatures(prev => prev.map((f, i) => i === idx ? val : f));
+                        }}
+                        className="flex-1 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-2.5 py-1.5 outline-none text-xs text-[var(--text-color)] font-semibold"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setFeatures(prev => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg flex items-center justify-center transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">delete</span>
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -1102,7 +1274,7 @@ export default function SuperAdminPortal() {
                   <span>2. Core Information & Settings</span>
                 </h3>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className={`grid grid-cols-1 ${editType === 'Clinic' || editType === 'Medical' ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-4`}>
                   <div>
                     <label className="block mb-1">Service Name *</label>
                     <input
@@ -1127,6 +1299,37 @@ export default function SuperAdminPortal() {
                       <option>Government</option>
                     </select>
                   </div>
+                  {editType === 'Clinic' && (
+                    <div>
+                      <label className="block mb-1">Clinic Subtype *</label>
+                      <select
+                        value={editClinicSubtype}
+                        onChange={e => setEditClinicSubtype(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                      >
+                        <option value="Dental">Dental Clinic</option>
+                        <option value="Eye">Eye Clinic</option>
+                        <option value="Ortho">Bone & Ortho Clinic</option>
+                        <option value="General">General Clinic</option>
+                      </select>
+                    </div>
+                  )}
+                  {editType === 'Medical' && (
+                    <div>
+                      <label className="block mb-1">Medical Subtype *</label>
+                      <select
+                        value={editClinicSubtype}
+                        onChange={e => setEditClinicSubtype(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                      >
+                        <option value="Pharmacy">General Pharmacy</option>
+                        <option value="Homeopathy">Homeopathic Store</option>
+                        <option value="Ayurvedic">Ayurvedic Store</option>
+                        <option value="Surgical">Surgical Supply Store</option>
+                        <option value="General">General Medical Store</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1249,6 +1452,117 @@ export default function SuperAdminPortal() {
                     className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     required
                   />
+                </div>
+
+                {/* Edit Specialties List */}
+                <div className="space-y-3 bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30 shadow-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="font-extrabold text-[11px] uppercase tracking-wider text-[var(--text-color)]">Edit Landing Page Services & Specialties</span>
+                    <button
+                      type="button"
+                      onClick={() => setEditCustomServices(prev => [...prev, { title: '', description: '', icon: 'local_hospital' }])}
+                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
+                    >
+                      + Add Service
+                    </button>
+                  </div>
+                  {editCustomServices.map((srv, idx) => (
+                    <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end border-b border-[var(--border-color)]/20 pb-3 last:border-b-0 last:pb-0">
+                      <div className="md:col-span-3">
+                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">Service Title</label>
+                        <input
+                          type="text"
+                          value={srv.title}
+                          placeholder="e.g. Orthodontics"
+                          onChange={e => {
+                            const val = e.target.value;
+                            setEditCustomServices(prev => prev.map((s, i) => i === idx ? { ...s, title: val } : s));
+                          }}
+                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-2.5 py-1.5 outline-none text-xs text-[var(--text-color)] font-semibold"
+                          required
+                        />
+                      </div>
+                      <div className="md:col-span-5">
+                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">Description</label>
+                        <input
+                          type="text"
+                          value={srv.description}
+                          placeholder="e.g. Straighten teeth with advanced braces & aligners."
+                          onChange={e => {
+                            const val = e.target.value;
+                            setEditCustomServices(prev => prev.map((s, i) => i === idx ? { ...s, description: val } : s));
+                          }}
+                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-2.5 py-1.5 outline-none text-xs text-[var(--text-color)] font-semibold"
+                          required
+                        />
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">Material Icon Name</label>
+                        <select
+                          value={srv.icon}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setEditCustomServices(prev => prev.map((s, i) => i === idx ? { ...s, icon: val } : s));
+                          }}
+                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-2 py-1.5 outline-none text-xs text-[var(--text-color)] font-bold cursor-pointer"
+                        >
+                          <option value="local_hospital">Hospital (default)</option>
+                          <option value="biotech">Lab biotech</option>
+                          <option value="dentistry">Dentistry (tooth)</option>
+                          <option value="visibility">Ophthalmology (eye)</option>
+                          <option value="bone">Bone & Ortho (orthopedics)</option>
+                          <option value="bloodtype">Blood draws</option>
+                          <option value="settings_accessibility">Pediatrics/General</option>
+                          <option value="medical_services">Medical Kit</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-1">
+                        <button
+                          type="button"
+                          onClick={() => setEditCustomServices(prev => prev.filter((_, i) => i !== idx))}
+                          className="w-full py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg flex items-center justify-center transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">delete</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Edit Features List */}
+                <div className="space-y-3 bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30 shadow-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="font-extrabold text-[11px] uppercase tracking-wider text-[var(--text-color)]">Edit Clinic Features (Why Choose Us)</span>
+                    <button
+                      type="button"
+                      onClick={() => setEditFeatures(prev => [...prev, ''])}
+                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
+                    >
+                      + Add Feature
+                    </button>
+                  </div>
+                  {editFeatures.map((feat, idx) => (
+                    <div key={idx} className="flex items-center space-x-2.5">
+                      <input
+                        type="text"
+                        value={feat}
+                        placeholder="e.g. Skilled Orthopedic Surgeons"
+                        onChange={e => {
+                          const val = e.target.value;
+                          setEditFeatures(prev => prev.map((f, i) => i === idx ? val : f));
+                        }}
+                        className="flex-1 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-2.5 py-1.5 outline-none text-xs text-[var(--text-color)] font-semibold"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEditFeatures(prev => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg flex items-center justify-center transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">delete</span>
+                      </button>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

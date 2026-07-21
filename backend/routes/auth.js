@@ -187,6 +187,7 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
     const { 
       // Hospital details
       id, name, slug, address, phone, whatsappNumber, coverImage, description, city, coordinates, type,
+      clinicSubtype, customServices, features,
       // Initial Staff Member
       staffName, staffUsername, staffPassword, counterNumber,
       // Initial Doctor
@@ -250,7 +251,10 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       heroImage: req.body.heroImage || '',
       primaryColor: req.body.primaryColor || '#0d9488',
       secondaryColor: req.body.secondaryColor || '#0f172a',
-      welcomeMessage: req.body.welcomeMessage || ''
+      welcomeMessage: req.body.welcomeMessage || '',
+      clinicSubtype: clinicSubtype || 'General',
+      customServices: customServices || [],
+      features: features || []
     });
     await newHospital.save();
 
@@ -479,7 +483,10 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
       heroImage,
       primaryColor,
       secondaryColor,
-      welcomeMessage
+      welcomeMessage,
+      clinicSubtype,
+      customServices,
+      features
     } = req.body;
 
     const hospital = await Hospital.findOne({ id });
@@ -503,6 +510,9 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     if (primaryColor !== undefined) hospital.primaryColor = primaryColor;
     if (secondaryColor !== undefined) hospital.secondaryColor = secondaryColor;
     if (welcomeMessage !== undefined) hospital.welcomeMessage = welcomeMessage;
+    if (clinicSubtype !== undefined) hospital.clinicSubtype = clinicSubtype;
+    if (customServices !== undefined) hospital.customServices = customServices;
+    if (features !== undefined) hospital.features = features;
 
     await hospital.save();
 

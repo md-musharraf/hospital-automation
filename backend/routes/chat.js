@@ -626,4 +626,62 @@ router.get('/hospital/:hospitalId', async (req, res) => {
   }
 });
 
+// GET all active doctors of a specific hospital
+router.get('/hospital/:hospitalId/doctors', async (req, res) => {
+  try {
+    const { hospitalId } = req.params;
+    const doctors = await Doctor.find({ hospital: hospitalId }, '-passwordHash');
+    res.json(doctors);
+  } catch (err) {
+    console.error('Error fetching hospital doctors:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST delay token by 3 places
+router.post('/token/delay', async (req, res) => {
+  try {
+    const { tokenId } = req.body;
+    if (!tokenId) {
+      return res.status(400).json({ message: 'Token ID is required' });
+    }
+
+    const token = await Token.findById(tokenId);
+    if (!token) {
+      return res.status(404).json({ message: 'Token not found' });
+    }
+
+    // Find the queue for this doctor / department
+    const queue = await Queue.findOne({ doctor: token.doctor });
+    if (!queue) {
+      return res.status(404).json({ message: 'Queue not found for this facility/doctor' });
+    }
+
+    const index = queue.activeQueue.findIndex(id => id.toString() === tokenId);
+    if (index === -1) {
+      return res.status(400).json({ message: 'Token is not active or waiting in queue' });
+    }
+
+    // Move the token 3 places back
+    const [movedToken] = queue.activeQueue.splice(index, 1);
+    const targetIndex = Math.min(index + 3, queue.activeQueue.length);
+    queue.activeQueue.splice(targetIndex, 0, movedToken);
+
+    await queue.save();
+
+    // Recalculate queue wait times dynamically
+    await recalculateQueueTimes(queue.doctor);
+
+    // Emit live update event
+    if (req.io) {
+      req.io.emit('queue-updated');
+    }
+
+    res.json({ message: 'Token successfully delayed by 3 places!', token });
+  } catch (error) {
+    console.error('Token delay error:', error);
+    res.status(500).json({ message: 'Server error delaying token' });
+  }
+});
+
 module.exports = router;

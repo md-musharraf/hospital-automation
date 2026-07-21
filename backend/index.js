@@ -296,24 +296,78 @@ const seedMockData = async () => {
           address: '123 Healthcare Blvd, Medical District',
           phone: '+1 (555) 123-4567',
           whatsappNumber: process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886',
-          coverImage: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA1x4Ta8X_Leb2KfTzTMhRKsT439crOzzOgCCfSQH3UNSJlkdZTlRZT13ai7p8kN9f7_vHvbO7z2snijUJmc30zd6loDlIMh8Uth9PitBK4Q9fgbf17IwSVaxF8O9WHyaQvTAvo-ILHCBdZnJT8Yhu4iOlLxRG6irdb1Gnl_7dsWd1s1hLWea_09I6kOuw8kjUH9psbS4v-OXZXFH7mVJ9A8DwUUtxXqxAK0RcJIlWbR2K3O1vo3ZCrbqgnr5Egw0jJOTNYtRgR1lFx',
+          coverImage: 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
           description: 'Full-service tertiary care facility specializing in cardiology, internal medicine, and emergency care.',
           city: 'Delhi',
           coordinates: { lat: 28.6139, lng: 77.2090 },
-          type: 'Hospital'
+          type: 'Hospital',
+          clinicSubtype: 'General',
+          customServices: [
+            { title: 'Emergency Room', description: '24/7 fully equipped Emergency Room staffed by trauma specialists.', icon: 'local_hospital' },
+            { title: 'Cardiology Unit', description: 'Advanced ECG, stress tests, echo screenings, and heart therapies.', icon: 'medical_services' },
+            { title: 'Advanced Intensive Care', description: 'High-dependency patient care modules with critical monitoring.', icon: 'settings_accessibility' }
+          ],
+          features: ["24/7 Trauma Care Center", "Advanced ICU Ventilation Support", "Cashless Insurance Billing"]
         },
         {
-          id: 'pediatrics-clinic',
-          name: 'St. Jude Pediatrics Clinic',
-          slug: 'pediatrics-clinic',
+          id: 'bright-dental-clinic',
+          name: 'BrightDental Specialists Clinic',
+          slug: 'bright-dental-clinic',
           address: '456 Kids Care Way, Suite B',
           phone: '+1 (555) 987-6543',
           whatsappNumber: '+15550199999',
-          coverImage: 'https://images.unsplash.com/photo-1502740479091-635887520276?q=80&w=800&auto=format&fit=crop',
-          description: 'Dedicated children health center providing comprehensive pediatric checkups and childcare solutions.',
+          coverImage: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?q=80&w=800&auto=format&fit=crop',
+          description: 'Dedicated children and adult dental health center providing laser surgery, cosmetic aligners, and cleanings.',
           city: 'Mumbai',
           coordinates: { lat: 19.0760, lng: 72.8777 },
-          type: 'Clinic'
+          type: 'Clinic',
+          clinicSubtype: 'Dental',
+          customServices: [
+            { title: 'Cosmetic Dentistry', description: 'Porcelain veneers, cosmetic bonding, and premium smile-designing.', icon: 'dentistry' },
+            { title: 'Laser Root Canal', description: 'High-precision micro-endodontic root canal treatments with laser sterilization.', icon: 'dentistry' },
+            { title: 'Orthodontics & Aligners', description: 'Invisible aligners, ceramic braces, and dental alignment correction.', icon: 'settings_accessibility' }
+          ],
+          features: ["Pain-Free Laser Technology", "Sterilized Zero-Infection Zone", "Experienced Oral Surgeon team"]
+        },
+        {
+          id: 'care-diagnostics',
+          name: 'CareSync Diagnostic Lab',
+          slug: 'care-diagnostics',
+          address: '789 Science Park East, Lab Block',
+          phone: '+1 (555) 321-7654',
+          whatsappNumber: '+15550288888',
+          coverImage: 'https://images.unsplash.com/photo-1579154204601-01588f351167?q=80&w=800&auto=format&fit=crop',
+          description: 'State of the art medical diagnostics laboratory, specialized hormone assays, radiography and health check packages.',
+          city: 'Kolkata',
+          coordinates: { lat: 22.5726, lng: 88.3639 },
+          type: 'Lab',
+          clinicSubtype: 'General',
+          customServices: [
+            { title: 'Blood & Chemistry Profiling', description: 'Automated blood draws, CBC checkups, and standard metabolic panels.', icon: 'bloodtype' },
+            { title: 'Biotech Pathology Tests', description: 'PCR testing, specialized hormone analysis, and micro-organism checks.', icon: 'biotech' },
+            { title: 'Radiology & X-Ray Scans', description: 'High-resolution digital chest x-rays, ultrasound screenings, and scans.', icon: 'settings_accessibility' }
+          ],
+          features: ["NABL Certified Laboratory", "Home Sample Collection Support", "Barcoded Sample Tracking Systems"]
+        },
+        {
+          id: 'apex-pharmacy',
+          name: 'Apex Wellness Pharmacy',
+          slug: 'apex-pharmacy',
+          address: '55 Station Road, Chemist Market',
+          phone: '+1 (555) 765-4321',
+          whatsappNumber: '+15550377777',
+          coverImage: 'https://images.unsplash.com/photo-1607619056574-7b8d304a3b6f?q=80&w=800&auto=format&fit=crop',
+          description: 'A genuine medical store and pharmacy supply center offering prescription refills, baby care, and surgical aids.',
+          city: 'Delhi',
+          coordinates: { lat: 28.6250, lng: 77.2150 },
+          type: 'Medical',
+          clinicSubtype: 'Pharmacy',
+          customServices: [
+            { title: 'Genuine Prescription Dispensing', description: 'Accurate dispensing of cardiac, diabetic, and general prescription drugs.', icon: 'medical_services' },
+            { title: 'Vitamins & Wellness Supplies', description: 'Top-tier immunity supplements, baby wellness, and natural protein foods.', icon: 'bloodtype' },
+            { title: 'Elder Care & Surgical Supplies', description: 'Wheelchairs, walking aids, blood sugar monitors, and knee supports.', icon: 'settings_accessibility' }
+          ],
+          features: ["100% Genuine Branded Medicines", "Cold-Chain Insulin Storage Control", "Neighborhood Home Delivery Support"]
         }
       ]);
       console.log('[Mock DB] Hospitals seeded successfully.');
@@ -346,7 +400,7 @@ const seedMockData = async () => {
           availabilityStatus: 'Available',
           averageCheckupTime: 8,
           currentRoom: 'Cabin 102',
-          hospital: 'pediatrics-clinic'
+          hospital: 'bright-dental-clinic'
         },
         {
           name: 'Dr. Emily Taylor',
@@ -358,6 +412,28 @@ const seedMockData = async () => {
           averageCheckupTime: 10,
           currentRoom: 'Cabin 103',
           hospital: 'general-hospital'
+        },
+        {
+          name: 'Dr. Alan Green',
+          email: 'alan.green@lab.com',
+          passwordHash,
+          department: 'Emergency',
+          specialization: 'Hematology Specialist',
+          availabilityStatus: 'Available',
+          averageCheckupTime: 15,
+          currentRoom: 'Lab Room A',
+          hospital: 'care-diagnostics'
+        },
+        {
+          name: 'Dr. Clara Watson',
+          email: 'clara.watson@medical.com',
+          passwordHash,
+          department: 'General Medicine',
+          specialization: 'Pharmacist Consultations',
+          availabilityStatus: 'Available',
+          averageCheckupTime: 5,
+          currentRoom: 'Prescription Counter A',
+          hospital: 'apex-pharmacy'
         }
       ]);
 
@@ -378,7 +454,21 @@ const seedMockData = async () => {
           username: 'bob_staff',
           passwordHash,
           counterNumber: 'Reception Counter 2',
-          hospital: 'pediatrics-clinic'
+          hospital: 'bright-dental-clinic'
+        },
+        {
+          name: 'Charlie Brown',
+          username: 'charlie_staff',
+          passwordHash,
+          counterNumber: 'Lab Ticket Counter 1',
+          hospital: 'care-diagnostics'
+        },
+        {
+          name: 'David Miller',
+          username: 'david_staff',
+          passwordHash,
+          counterNumber: 'Billing Counter 1',
+          hospital: 'apex-pharmacy'
         }
       ]);
 
@@ -394,7 +484,19 @@ const seedMockData = async () => {
           name: 'St. Jude Lab Tech',
           username: 'ped_lab_assistant',
           passwordHash,
-          hospital: 'pediatrics-clinic'
+          hospital: 'bright-dental-clinic'
+        },
+        {
+          name: 'Diagnostic Lab Tech',
+          username: 'diag_lab_assistant',
+          passwordHash,
+          hospital: 'care-diagnostics'
+        },
+        {
+          name: 'Pharmacy Tech',
+          username: 'pharm_assistant',
+          passwordHash,
+          hospital: 'apex-pharmacy'
         }
       ]);
       console.log('[Mock DB] Seeding completed successfully. Login ready.');

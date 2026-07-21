@@ -24,7 +24,16 @@ const HospitalSchema = new mongoose.Schema({
   heroImage: { type: String },
   primaryColor: { type: String, default: '#0d9488' },
   secondaryColor: { type: String, default: '#0f172a' },
-  welcomeMessage: { type: String }
+  welcomeMessage: { type: String },
+  clinicSubtype: { type: String, default: 'General' },
+  customServices: [
+    {
+      title: { type: String },
+      description: { type: String },
+      icon: { type: String }
+    }
+  ],
+  features: [{ type: String }]
 }, { timestamps: true });
 
 module.exports = mongoose.model('Hospital', HospitalSchema);
