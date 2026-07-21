@@ -67,10 +67,11 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       return res.status(400).json({ message: 'Invalid tokenType' });
     }
 
-    // Find or create patient
-    let patient = await Patient.findOne({ phone });
+    // Find or create patient within staff's hospital tenant
+    const staffHosp = req.user.hospital || 'general-hospital';
+    let patient = await Patient.findOne({ phone, hospital: staffHosp });
     if (!patient) {
-      patient = new Patient({ name, age: parsedAge, gender, phone });
+      patient = new Patient({ name, age: parsedAge, gender, phone, hospital: staffHosp });
     } else {
       patient.visitCount += 1;
       patient.name = name; // Update name/age/gender if changed
@@ -85,12 +86,13 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       return res.status(404).json({ message: 'Doctor not found' });
     }
 
-    // Generate unique token number
-    const count = await Token.countDocuments();
+    // Generate unique token number for this hospital tenant
+    const count = await Token.countDocuments({ hospital: staffHosp });
     const tokenNumber = `T-${101 + count}`;
 
     const token = new Token({
       tokenNumber,
+      hospital: staffHosp,
       status: 'Waiting',
       tokenType: tokenType || 'Regular',
       patient: patient._id,
@@ -275,10 +277,11 @@ router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req
   }
 });
 
-// GET fetch all reminders
+// GET fetch all reminders for the staff member's hospital tenant
 router.get('/reminders', authenticateToken, ensureStaff, async (req, res) => {
   try {
-    const reminders = await Reminder.find()
+    const staffHosp = req.user.hospital || 'general-hospital';
+    const reminders = await Reminder.find({ hospital: staffHosp })
       .populate('patient')
       .populate('doctor')
       .populate('token')
@@ -301,10 +304,11 @@ router.post('/reminders/trigger', authenticateToken, ensureStaff, async (req, re
   }
 });
 
-// GET all registered patients
+// GET all registered patients in the staff member's hospital tenant
 router.get('/patients', authenticateToken, ensureStaff, async (req, res) => {
   try {
-    const patients = await Patient.find().sort({ createdAt: -1 });
+    const staffHosp = req.user.hospital || 'general-hospital';
+    const patients = await Patient.find({ hospital: staffHosp }).sort({ createdAt: -1 });
     res.json(patients);
   } catch (error) {
     console.error('Error fetching patients:', error);
@@ -312,10 +316,11 @@ router.get('/patients', authenticateToken, ensureStaff, async (req, res) => {
   }
 });
 
-// POST register a new patient
+// POST register a new patient within staff's hospital tenant
 router.post('/patients', authenticateToken, ensureStaff, async (req, res) => {
   try {
     const { name, phone, age, gender } = req.body;
+    const staffHosp = req.user.hospital || 'general-hospital';
 
     if (!name || !phone || !age || !gender) {
       return res.status(400).json({ message: 'All patient fields (name, phone, age, gender) are required' });
@@ -334,17 +339,18 @@ router.post('/patients', authenticateToken, ensureStaff, async (req, res) => {
       return res.status(400).json({ message: 'Invalid phone number' });
     }
     
-    // Check if phone number already exists
-    const existingPatient = await Patient.findOne({ phone });
+    // Check if phone number already exists in this hospital tenant
+    const existingPatient = await Patient.findOne({ phone, hospital: staffHosp });
     if (existingPatient) {
-      return res.status(400).json({ message: 'Patient with this phone number already exists' });
+      return res.status(400).json({ message: 'Patient with this phone number already exists in this hospital tenant' });
     }
 
     const patient = new Patient({
       name,
       phone,
       age: parsedAge,
-      gender
+      gender,
+      hospital: staffHosp
     });
     await patient.save();
 
@@ -360,6 +366,7 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
   try {
     const { id } = req.params;
     const { name, phone, age, gender } = req.body;
+    const staffHosp = req.user.hospital || 'general-hospital';
 
     if (name !== undefined && (typeof name !== 'string' || name.trim().length < 2 || name.length > 100)) {
       return res.status(400).json({ message: 'Invalid patient name (2-100 characters)' });
@@ -378,16 +385,16 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
       return res.status(400).json({ message: 'Invalid phone number' });
     }
 
-    const patient = await Patient.findById(id);
+    const patient = await Patient.findOne({ _id: id, hospital: staffHosp });
     if (!patient) {
-      return res.status(404).json({ message: 'Patient not found' });
+      return res.status(404).json({ message: 'Patient not found in this hospital tenant' });
     }
 
-    // Check if new phone conflicts with another patient
+    // Check if new phone conflicts with another patient in this tenant
     if (phone && phone !== patient.phone) {
-      const phoneConflict = await Patient.findOne({ phone });
+      const phoneConflict = await Patient.findOne({ phone, hospital: staffHosp });
       if (phoneConflict) {
-        return res.status(400).json({ message: 'Phone number is already associated with another patient' });
+        return res.status(400).json({ message: 'Phone number is already associated with another patient in this hospital tenant' });
       }
       patient.phone = phone;
     }

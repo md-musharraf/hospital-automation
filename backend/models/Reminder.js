@@ -16,6 +16,12 @@ const ReminderSchema = new mongoose.Schema({
     ref: 'Token',
     required: true
   },
+  hospital: {
+    type: String,
+    required: true,
+    default: 'general-hospital',
+    index: true
+  },
   scheduledDate: {
     type: Date,
     required: true

@@ -19,6 +19,12 @@ const HospitalMessageSchema = new mongoose.Schema({
     type: String, // Doctor ID or generic 'Lab'/'Staff'
     default: null
   },
+  hospital: {
+    type: String,
+    required: true,
+    default: 'general-hospital',
+    index: true
+  },
   content: {
     type: String,
     required: true

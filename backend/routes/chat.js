@@ -275,7 +275,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     session.tempData.phone = cleanMsg;
 
     if (session.tempData.tokenType === 'Re-visit') {
-      const patient = await Patient.findOne({ phone: cleanMsg });
+      const patient = await Patient.findOne({ phone: cleanMsg, hospital: currentHospId });
       if (patient) {
         session.tempData.name = patient.name;
         session.tempData.age = patient.age;
@@ -413,13 +413,14 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
       // Complete booking!
       const phone = session.tempData.phone || `+1 555-${session.sessionId.slice(-4)}`;
-      let patient = await Patient.findOne({ phone });
+      let patient = await Patient.findOne({ phone, hospital: currentHospId });
       if (!patient) {
         patient = new Patient({
           name: session.tempData.name,
           age: session.tempData.age,
           gender: session.tempData.gender,
-          phone
+          phone,
+          hospital: currentHospId
         });
       } else {
         patient.visitCount += 1;
@@ -429,11 +430,12 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       }
       await patient.save();
 
-      const count = await Token.countDocuments();
+      const count = await Token.countDocuments({ hospital: currentHospId });
       const tokenNumber = `T-${101 + count}`;
 
       const token = new Token({
         tokenNumber,
+        hospital: currentHospId,
         status: 'Waiting',
         tokenType: session.tempData.tokenType || 'Regular',
         patient: patient._id,

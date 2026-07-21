@@ -190,10 +190,12 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
           scheduledDate.setDate(scheduledDate.getDate() + parseInt(revisitDays));
           scheduledDate.setHours(9, 0, 0, 0); // 9:00 AM
 
+          const docHosp = req.user.hospital || 'general-hospital';
           const reminder = new Reminder({
             patient: token.patient._id,
             doctor: doctorId,
             token: token._id,
+            hospital: docHosp,
             scheduledDate,
             revisitDays: parseInt(revisitDays),
             status: 'Pending',

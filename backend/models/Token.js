@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 
 const TokenSchema = new mongoose.Schema({
-  tokenNumber: { type: String, required: true, unique: true, index: true }, // e.g., "T-102"
+  tokenNumber: { type: String, required: true, index: true }, // e.g., "T-102"
+  hospital: { type: String, required: true, default: 'general-hospital', index: true },
   status: { 
     type: String, 
     enum: ['Waiting', 'Called', 'Active', 'Completed', 'Absent', 'Delayed'], 
@@ -40,5 +41,8 @@ const TokenSchema = new mongoose.Schema({
   calledAt: { type: Date },
   completedAt: { type: Date }
 }, { timestamps: true });
+
+// Compound index for unique tokenNumber per hospital tenant
+TokenSchema.index({ tokenNumber: 1, hospital: 1 }, { unique: true });
 
 module.exports = mongoose.model('Token', TokenSchema);

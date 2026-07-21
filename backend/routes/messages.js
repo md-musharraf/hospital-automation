@@ -38,14 +38,16 @@ router.post('/', authenticateToken, async (req, res) => {
       senderName,
       receiverRole,
       receiverId: receiverId || null,
+      hospital: req.user.hospital || 'general-hospital',
       content
     });
 
     await message.save();
 
-    // Broadcast message via Socket.io
+    // Broadcast message via Socket.io to hospital tenant room
     if (req.io) {
-      // Broadcast globally so all dashboards pick it up and filter locally
+      const userHosp = req.user.hospital || 'general-hospital';
+      req.io.to(`hospital:${userHosp}`).emit('internal-message-received', message);
       req.io.to('queue:global').emit('internal-message-received', message);
     }
 
@@ -56,11 +58,12 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// GET messages for the active session user
+// GET messages for the active session user within their hospital tenant
 router.get('/', authenticateToken, async (req, res) => {
   try {
     let role = 'Staff';
     let docId = null;
+    const userHosp = req.user.hospital || 'general-hospital';
 
     if (req.user.role === 'doctor') {
       role = 'Doctor';
@@ -71,8 +74,9 @@ router.get('/', authenticateToken, async (req, res) => {
       role = 'Staff';
     }
 
-    // Query messages sent TO this role, or generic broadcasts, or FROM this role (to show conversation history)
+    // Query messages sent TO this role, or generic broadcasts, or FROM this role within this hospital tenant
     const messages = await HospitalMessage.find({
+      hospital: userHosp,
       $or: [
         { receiverRole: role, receiverId: docId },
         { receiverRole: role, receiverId: null },
