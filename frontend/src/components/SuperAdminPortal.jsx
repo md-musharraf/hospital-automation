@@ -15,6 +15,9 @@ export default function SuperAdminPortal() {
   const [hospId, setHospId] = useState('');
   const [name, setName] = useState('');
   const [coverImage, setCoverImage] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  const [galleryImagesStr, setGalleryImagesStr] = useState('');
+  const [doctorCount, setDoctorCount] = useState(1);
   const [description, setDescription] = useState('');
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
@@ -71,6 +74,8 @@ export default function SuperAdminPortal() {
   const [editAddress, setEditAddress] = useState('');
   const [editLogoUrl, setEditLogoUrl] = useState('');
   const [editCoverImage, setEditCoverImage] = useState('');
+  const [editGalleryImagesStr, setEditGalleryImagesStr] = useState('');
+  const [editDoctorCount, setEditDoctorCount] = useState(1);
   const [editDescription, setEditDescription] = useState('');
   const [editWelcomeMessage, setEditWelcomeMessage] = useState('');
   const [editPrimaryColor, setEditPrimaryColor] = useState('#0d9488');
@@ -103,6 +108,8 @@ export default function SuperAdminPortal() {
       setEditAddress(hosp.address || '');
       setEditLogoUrl(hosp.logoUrl || '');
       setEditCoverImage(hosp.coverImage || '');
+      setEditGalleryImagesStr(hosp.galleryImages ? hosp.galleryImages.join(', ') : '');
+      setEditDoctorCount(hosp.doctorCount || 1);
       setEditDescription(hosp.description || '');
       setEditWelcomeMessage(hosp.welcomeMessage || '');
       setEditPrimaryColor(hosp.primaryColor || '#0d9488');
@@ -110,6 +117,34 @@ export default function SuperAdminPortal() {
       setEditClinicSubtype(hosp.clinicSubtype || 'General');
       setEditCustomServices(hosp.customServices || []);
       setEditFeatures(hosp.features || []);
+    }
+  };
+
+  const handleDeleteHospital = async (hospIdToDelete) => {
+    if (!window.confirm(`Are you sure you want to permanently delete facility '${hospIdToDelete}' and all its doctors, staff, and queues? This action cannot be undone.`)) {
+      return;
+    }
+    setError('');
+    setSuccessMsg('');
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/hospital/${hospIdToDelete}`, {
+        method: 'DELETE',
+        headers: { 
+          'X-Admin-Secret': adminSecret
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to delete hospital');
+      }
+      setSuccessMsg(data.message);
+      setEditHospId('');
+      fetchHospitals();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -186,6 +221,10 @@ export default function SuperAdminPortal() {
     setSuccessMsg('');
     setLoading(true);
 
+    const parsedGalleryImages = galleryImagesStr
+      ? galleryImagesStr.split(',').map(s => s.trim()).filter(Boolean)
+      : (coverImage ? [coverImage] : []);
+
     const payload = {
       id: hospId,
       name,
@@ -194,6 +233,9 @@ export default function SuperAdminPortal() {
       phone,
       whatsappNumber,
       coverImage: coverImage || 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
+      logoUrl: logoUrl || '',
+      galleryImages: parsedGalleryImages,
+      doctorCount: parseInt(doctorCount) || 1,
       description,
       city,
       coordinates: {
@@ -315,6 +357,10 @@ export default function SuperAdminPortal() {
     setSuccessMsg('');
     setLoading(true);
 
+    const parsedEditGalleryImages = editGalleryImagesStr
+      ? editGalleryImagesStr.split(',').map(s => s.trim()).filter(Boolean)
+      : (editCoverImage ? [editCoverImage] : []);
+
     const payload = {
       name: editName,
       slug: editHospId,
@@ -322,6 +368,9 @@ export default function SuperAdminPortal() {
       phone: editPhone,
       whatsappNumber: editWhatsapp,
       coverImage: editCoverImage,
+      logoUrl: editLogoUrl,
+      galleryImages: parsedEditGalleryImages,
+      doctorCount: parseInt(editDoctorCount) || 1,
       description: editDescription,
       city: editCity,
       coordinates: {
@@ -329,7 +378,6 @@ export default function SuperAdminPortal() {
         lng: parseFloat(editLng)
       },
       type: editType,
-      logoUrl: editLogoUrl,
       heroImage: editCoverImage,
       primaryColor: editPrimaryColor,
       secondaryColor: editSecondaryColor,
@@ -575,6 +623,8 @@ export default function SuperAdminPortal() {
                       <option>Clinic</option>
                       <option>Medical</option>
                       <option>Lab</option>
+                      <option>Government Hospital</option>
+                      <option>Government Lab</option>
                       <option>Government</option>
                     </select>
                   </div>
@@ -646,7 +696,7 @@ export default function SuperAdminPortal() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="block mb-1">Phone Number *</label>
                     <input
@@ -669,6 +719,17 @@ export default function SuperAdminPortal() {
                       required
                     />
                   </div>
+                  <div>
+                    <label className="block mb-1">Total Doctors Count *</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={doctorCount}
+                      onChange={e => setDoctorCount(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -683,7 +744,17 @@ export default function SuperAdminPortal() {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block mb-1">Logo Image URL (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="https://example.com/logo.png"
+                      value={logoUrl}
+                      onChange={e => setLogoUrl(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                    />
+                  </div>
                   <div>
                     <label className="block mb-1">Cover Image URL (Optional)</label>
                     <input
@@ -695,14 +766,13 @@ export default function SuperAdminPortal() {
                     />
                   </div>
                   <div>
-                    <label className="block mb-1">Short Description *</label>
+                    <label className="block mb-1">Gallery Image URLs (Comma Separated)</label>
                     <input
                       type="text"
-                      placeholder="e.g. Public clinical service dispensary providing basic triage."
-                      value={description}
-                      onChange={e => setDescription(e.target.value)}
+                      placeholder="https://img1.com, https://img2.com"
+                      value={galleryImagesStr}
+                      onChange={e => setGalleryImagesStr(e.target.value)}
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                      required
                     />
                   </div>
                 </div>
@@ -1296,6 +1366,8 @@ export default function SuperAdminPortal() {
                       <option>Clinic</option>
                       <option>Medical</option>
                       <option>Lab</option>
+                      <option>Government Hospital</option>
+                      <option>Government Lab</option>
                       <option>Government</option>
                     </select>
                   </div>
@@ -1367,7 +1439,7 @@ export default function SuperAdminPortal() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="block mb-1">Phone Number *</label>
                     <input
@@ -1384,6 +1456,17 @@ export default function SuperAdminPortal() {
                       type="text"
                       value={editWhatsapp}
                       onChange={e => setEditWhatsapp(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1">Total Doctors Count *</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editDoctorCount}
+                      onChange={e => setEditDoctorCount(e.target.value)}
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
@@ -1409,7 +1492,7 @@ export default function SuperAdminPortal() {
                   <span>3. Dynamic Custom Branding (White-Labeling)</span>
                 </h3>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="block mb-1">Logo URL (Optional)</label>
                     <input
@@ -1427,6 +1510,16 @@ export default function SuperAdminPortal() {
                       placeholder="https://images.unsplash.com/..."
                       value={editCoverImage}
                       onChange={e => setEditCoverImage(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1">Gallery Image URLs (Comma Separated)</label>
+                    <input
+                      type="text"
+                      placeholder="https://img1.com, https://img2.com"
+                      value={editGalleryImagesStr}
+                      onChange={e => setEditGalleryImagesStr(e.target.value)}
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
                   </div>
@@ -1593,18 +1686,30 @@ export default function SuperAdminPortal() {
                 </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={loading || hospitalList.length === 0}
-                className="w-full py-4 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] font-black text-sm rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/15 flex items-center justify-center space-x-2 disabled:opacity-50"
-              >
-                {loading ? <span>Applying customizations...</span> : (
-                  <>
-                    <span className="material-symbols-outlined text-[18px]">save</span>
-                    <span>Save Brand Customizations</span>
-                  </>
-                )}
-              </button>
+              <div className="flex flex-col md:flex-row gap-3">
+                <button
+                  type="submit"
+                  disabled={loading || hospitalList.length === 0}
+                  className="flex-1 py-4 bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] font-black text-sm rounded-xl transition-all transition-all-custom shadow-lg shadow-[var(--primary-color)]/15 flex items-center justify-center space-x-2 disabled:opacity-50"
+                >
+                  {loading ? <span>Applying customizations...</span> : (
+                    <>
+                      <span className="material-symbols-outlined text-[18px]">save</span>
+                      <span>Save Brand Customizations</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={loading || hospitalList.length === 0 || !editHospId}
+                  onClick={() => handleDeleteHospital(editHospId)}
+                  className="px-6 py-4 bg-rose-500 hover:bg-rose-600 text-white font-black text-sm rounded-xl transition-all shadow-lg shadow-rose-500/15 flex items-center justify-center space-x-2 disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[18px]">delete_forever</span>
+                  <span>Delete Facility</span>
+                </button>
+              </div>
             </form>
           )}
 

@@ -248,7 +248,9 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       coordinates,
       type,
       logoUrl: req.body.logoUrl || '',
-      heroImage: req.body.heroImage || '',
+      heroImage: req.body.heroImage || coverImage || '',
+      galleryImages: req.body.galleryImages || (coverImage ? [coverImage] : []),
+      doctorCount: req.body.doctorCount ? parseInt(req.body.doctorCount) : 1,
       primaryColor: req.body.primaryColor || '#0d9488',
       secondaryColor: req.body.secondaryColor || '#0f172a',
       welcomeMessage: req.body.welcomeMessage || '',
@@ -394,6 +396,10 @@ router.post('/super-admin/register-doctor', verifyAdminSecret, async (req, res) 
     });
     await newDoctor.save();
 
+    // Increment doctor count on hospital
+    existingHospital.doctorCount = (existingHospital.doctorCount || 0) + 1;
+    await existingHospital.save();
+
     // Create Queue for Doctor
     const newQueue = new Queue({
       doctor: newDoctor._id,
@@ -481,6 +487,8 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
       type,
       logoUrl,
       heroImage,
+      galleryImages,
+      doctorCount,
       primaryColor,
       secondaryColor,
       welcomeMessage,
@@ -507,6 +515,8 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     if (type !== undefined) hospital.type = type;
     if (logoUrl !== undefined) hospital.logoUrl = logoUrl;
     if (heroImage !== undefined) hospital.heroImage = heroImage;
+    if (galleryImages !== undefined) hospital.galleryImages = galleryImages;
+    if (doctorCount !== undefined) hospital.doctorCount = parseInt(doctorCount);
     if (primaryColor !== undefined) hospital.primaryColor = primaryColor;
     if (secondaryColor !== undefined) hospital.secondaryColor = secondaryColor;
     if (welcomeMessage !== undefined) hospital.welcomeMessage = welcomeMessage;
@@ -520,6 +530,34 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
   } catch (error) {
     console.error('Super admin hospital update error:', error);
     res.status(500).json({ message: 'Server error updating hospital profile' });
+  }
+});
+
+// Delete Hospital (Super Admin Endpoint)
+router.delete('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hospital = await Hospital.findOne({ id });
+    if (!hospital) {
+      return res.status(404).json({ message: 'Hospital not found' });
+    }
+
+    // Delete associated Doctors, Staff, Lab Assistants
+    const doctors = await Doctor.find({ hospital: id });
+    const doctorIds = doctors.map(d => d._id);
+
+    await Queue.deleteMany({ doctor: { $in: doctorIds } });
+    await Doctor.deleteMany({ hospital: id });
+    await Staff.deleteMany({ hospital: id });
+    await LabAssistant.deleteMany({ hospital: id });
+
+    // Delete Hospital document
+    await Hospital.deleteOne({ id });
+
+    res.json({ message: `Hospital '${hospital.name}' and all associated accounts deleted successfully!` });
+  } catch (error) {
+    console.error('Super admin hospital delete error:', error);
+    res.status(500).json({ message: 'Server error deleting hospital' });
   }
 });
 

@@ -17,11 +17,13 @@ const HospitalSchema = new mongoose.Schema({
   type: { 
     type: String, 
     required: true, 
-    enum: ['Hospital', 'Clinic', 'Medical', 'Lab', 'Government'],
+    enum: ['Hospital', 'Clinic', 'Medical', 'Lab', 'Government Hospital', 'Government Lab', 'Government'],
     default: 'Hospital'
   },
   logoUrl: { type: String },
   heroImage: { type: String },
+  galleryImages: [{ type: String }],
+  doctorCount: { type: Number, default: 1 },
   primaryColor: { type: String, default: '#0d9488' },
   secondaryColor: { type: String, default: '#0f172a' },
   welcomeMessage: { type: String },
