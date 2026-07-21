@@ -567,4 +567,163 @@ router.delete('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) =
   }
 });
 
+// GET all personnel and patients for a specific facility (Super Admin)
+router.get('/super-admin/facility-data/:hospitalId', verifyAdminSecret, async (req, res) => {
+  try {
+    const { hospitalId } = req.params;
+    const Patient = require('../models/Patient');
+    
+    const doctors = await Doctor.find({ hospital: hospitalId }).select('-passwordHash');
+    const staff = await Staff.find({ hospital: hospitalId }).select('-passwordHash');
+    const labAssistants = await LabAssistant.find({ hospital: hospitalId }).select('-passwordHash');
+    const patients = await Patient.find({ hospital: hospitalId });
+
+    res.json({ doctors, staff, labAssistants, patients });
+  } catch (error) {
+    console.error('Super admin facility-data error:', error);
+    res.status(500).json({ message: 'Server error fetching facility data' });
+  }
+});
+
+// PUT update Doctor (Super Admin)
+router.put('/super-admin/doctor/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, department, specialization, currentRoom, availabilityStatus, password } = req.body;
+
+    const doctor = await Doctor.findById(id);
+    if (!doctor) return res.status(404).json({ message: 'Doctor not found' });
+
+    if (name) doctor.name = name;
+    if (email) doctor.email = email;
+    if (department) doctor.department = department;
+    if (specialization !== undefined) doctor.specialization = specialization;
+    if (currentRoom) doctor.currentRoom = currentRoom;
+    if (availabilityStatus) doctor.availabilityStatus = availabilityStatus;
+    if (password) doctor.passwordHash = await bcrypt.hash(password, 10);
+
+    await doctor.save();
+    res.json({ message: 'Doctor updated successfully', doctor });
+  } catch (error) {
+    console.error('Super admin update doctor error:', error);
+    res.status(500).json({ message: 'Server error updating doctor' });
+  }
+});
+
+// DELETE Doctor (Super Admin)
+router.delete('/super-admin/doctor/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Queue.deleteOne({ doctor: id });
+    await Doctor.findByIdAndDelete(id);
+    res.json({ message: 'Doctor deleted successfully' });
+  } catch (error) {
+    console.error('Super admin delete doctor error:', error);
+    res.status(500).json({ message: 'Server error deleting doctor' });
+  }
+});
+
+// PUT update Staff (Super Admin)
+router.put('/super-admin/staff/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, username, counterNumber, password } = req.body;
+
+    const staff = await Staff.findById(id);
+    if (!staff) return res.status(404).json({ message: 'Staff member not found' });
+
+    if (name) staff.name = name;
+    if (username) staff.username = username;
+    if (counterNumber) staff.counterNumber = counterNumber;
+    if (password) staff.passwordHash = await bcrypt.hash(password, 10);
+
+    await staff.save();
+    res.json({ message: 'Staff updated successfully', staff });
+  } catch (error) {
+    console.error('Super admin update staff error:', error);
+    res.status(500).json({ message: 'Server error updating staff' });
+  }
+});
+
+// DELETE Staff (Super Admin)
+router.delete('/super-admin/staff/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Staff.findByIdAndDelete(id);
+    res.json({ message: 'Staff member deleted successfully' });
+  } catch (error) {
+    console.error('Super admin delete staff error:', error);
+    res.status(500).json({ message: 'Server error deleting staff' });
+  }
+});
+
+// PUT update Lab Assistant (Super Admin)
+router.put('/super-admin/lab-assistant/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, username, password } = req.body;
+
+    const lab = await LabAssistant.findById(id);
+    if (!lab) return res.status(404).json({ message: 'Lab Assistant not found' });
+
+    if (name) lab.name = name;
+    if (username) lab.username = username;
+    if (password) lab.passwordHash = await bcrypt.hash(password, 10);
+
+    await lab.save();
+    res.json({ message: 'Lab Assistant updated successfully', labAssistant: lab });
+  } catch (error) {
+    console.error('Super admin update lab assistant error:', error);
+    res.status(500).json({ message: 'Server error updating lab assistant' });
+  }
+});
+
+// DELETE Lab Assistant (Super Admin)
+router.delete('/super-admin/lab-assistant/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await LabAssistant.findByIdAndDelete(id);
+    res.json({ message: 'Lab Assistant deleted successfully' });
+  } catch (error) {
+    console.error('Super admin delete lab assistant error:', error);
+    res.status(500).json({ message: 'Server error deleting lab assistant' });
+  }
+});
+
+// PUT update Patient (Super Admin)
+router.put('/super-admin/patient/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const Patient = require('../models/Patient');
+    const { name, phone, age, gender } = req.body;
+
+    const patient = await Patient.findById(id);
+    if (!patient) return res.status(404).json({ message: 'Patient not found' });
+
+    if (name) patient.name = name;
+    if (phone) patient.phone = phone;
+    if (age) patient.age = parseInt(age);
+    if (gender) patient.gender = gender;
+
+    await patient.save();
+    res.json({ message: 'Patient updated successfully', patient });
+  } catch (error) {
+    console.error('Super admin update patient error:', error);
+    res.status(500).json({ message: 'Server error updating patient' });
+  }
+});
+
+// DELETE Patient (Super Admin)
+router.delete('/super-admin/patient/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const Patient = require('../models/Patient');
+    await Patient.findByIdAndDelete(id);
+    res.json({ message: 'Patient record deleted successfully' });
+  } catch (error) {
+    console.error('Super admin delete patient error:', error);
+    res.status(500).json({ message: 'Server error deleting patient' });
+  }
+});
+
 module.exports = router;
