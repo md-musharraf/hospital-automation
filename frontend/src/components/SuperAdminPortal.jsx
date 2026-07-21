@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BACKEND_URL } from '../App';
 import { Activity, ShieldAlert, ArrowLeft } from 'lucide-react';
+import WhatsAppTester from './WhatsAppTester';
 
 export default function SuperAdminPortal() {
   const navigate = useNavigate();
@@ -679,6 +680,17 @@ export default function SuperAdminPortal() {
             }`}
           >
             Edit Facilities
+          </button>
+          <button
+            onClick={() => { setActiveTab('whatsapp'); setError(''); setSuccessMsg(''); }}
+            className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center space-x-1 ${
+              activeTab === 'whatsapp'
+                ? 'bg-emerald-600 text-white shadow-md'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-color)] hover:bg-[var(--border-color)]/20'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[16px]">chat</span>
+            <span>WhatsApp API Tester</span>
           </button>
         </div>
 
@@ -1521,7 +1533,7 @@ export default function SuperAdminPortal() {
                 )}
               </button>
             </form>
-          ) : (
+          ) : activeTab === 'edit' ? (
             <form onSubmit={handleUpdateHospital} className="space-y-8 text-xs font-bold text-[var(--text-secondary)]">
               {/* Select Hospital to Edit */}
               <div className="space-y-4">
@@ -1962,7 +1974,12 @@ export default function SuperAdminPortal() {
                 </button>
               </div>
             </form>
-          )}
+          ) : activeTab === 'whatsapp' ? (
+            <WhatsAppTester
+              initialPhone={editWhatsapp || '+14155238886'}
+              defaultHospId={editHospId || 'general-hospital'}
+            />
+          ) : null}
 
         </div>
       </div>

@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import { BACKEND_URL } from '../App';
+import WhatsAppTester from './WhatsAppTester';
 
 export default function HospitalHub() {
   const [hospitals, setHospitals] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCity, setSelectedCity] = useState('All');
+  const [selectedType, setSelectedType] = useState('All');
   const [userCoords, setUserCoords] = useState(null);
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState('');
@@ -105,18 +107,26 @@ export default function HospitalHub() {
     processedHospitals = processedHospitals.filter(h => h.city === selectedCity);
   }
 
+  // Filter by selected facility type
+  if (selectedType !== 'All') {
+    processedHospitals = processedHospitals.filter(h => (h.type || 'Hospital') === selectedType);
+  }
+
   // Filter by search query
   const filteredHospitals = processedHospitals.filter(h => 
     h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    h.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    h.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (h.city && h.city.toLowerCase().includes(searchQuery.toLowerCase()))
+    (h.description && h.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    (h.address && h.address.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    (h.city && h.city.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    (h.type && h.type.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   // Sort by distance if user location is active
   if (userCoords) {
     filteredHospitals.sort((a, b) => (a.distance || 0) - (b.distance || 0));
   }
+
+  const facilityTypes = ['All', 'Hospital', 'Clinic', 'Medical', 'Lab', 'Government Hospital', 'Government Lab'];
 
   return (
     <div className="flex-1 w-full min-h-screen overflow-y-auto bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 no-scrollbar">
@@ -129,16 +139,16 @@ export default function HospitalHub() {
           <div className="lg:col-span-7 space-y-6">
             <div className="inline-flex items-center space-x-2 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 text-[var(--primary-color)] px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider animate-pulse">
               <span className="material-symbols-outlined text-[15px]">clinical_notes</span>
-              <span>CareSync Medical Solution Infotech</span>
+              <span>CareSync Multi-Facility Healthcare Engine</span>
             </div>
             
             <h1 className="text-4xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none">
               Smart Waiting Lines <br className="hidden sm:inline" />
-              <span className="bg-gradient-to-r from-[var(--primary-color)] to-[var(--tertiary-color)] bg-clip-text text-transparent">For Modern Hospitals</span>
+              <span className="bg-gradient-to-r from-[var(--primary-color)] to-[var(--tertiary-color)] bg-clip-text text-transparent">For Modern Healthcare</span>
             </h1>
             
             <p className="text-sm sm:text-base md:text-md text-[var(--text-secondary)] font-medium leading-relaxed max-w-xl">
-              Eliminate physical waiting lines, check live cabin statuses, and experience real-time AI-powered triage. Select a partner hospital below to book your appointment instantly.
+              Eliminate physical waiting lines, check live cabin statuses, and experience real-time AI-powered triage across Hospitals, Clinics, Labs & Medical Stores. Select a partner facility below to book instantly.
             </p>
 
             {/* Combined Search & Locator Widget */}
@@ -147,7 +157,7 @@ export default function HospitalHub() {
                 <span className="material-symbols-outlined text-zinc-400 mr-2.5 text-[22px]">search</span>
                 <input 
                   type="text" 
-                  placeholder="Search hospital by name, department, or city..." 
+                  placeholder="Search facility by name, type, department, or city..." 
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                   className="w-full bg-transparent border-none outline-none text-sm font-semibold focus:ring-0 text-[var(--text-color)] placeholder-zinc-400"
@@ -166,7 +176,7 @@ export default function HospitalHub() {
                 className={`flex items-center justify-center p-2.5 rounded-xl bg-[var(--bg-color)] hover:bg-[var(--primary-color)] hover:text-[var(--primary-text)] transition-all active:scale-95 duration-100 disabled:opacity-50 border border-[var(--border-color)]/30 text-[var(--text-secondary)] ${
                   userCoords ? 'text-[var(--primary-color)] border-[var(--primary-color)]/40 bg-[var(--primary-color)]/5' : ''
                 }`}
-                title="Find hospitals near me"
+                title="Find facilities near me"
               >
                 <span className={`material-symbols-outlined text-[18px] ${geoLoading ? 'animate-spin' : ''}`}>
                   {geoLoading ? 'refresh' : 'my_location'}
@@ -184,25 +194,48 @@ export default function HospitalHub() {
               </p>
             )}
 
-            {/* City Filters Pills */}
+            {/* Filters Pills (Type & Region) */}
             {!loading && hospitals.length > 0 && (
-              <div className="space-y-2">
-                <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Filter By Region:</span>
-                <div className="flex flex-wrap gap-2">
-                  {cities.map(city => (
-                    <button
-                       key={city}
-                       onClick={() => setSelectedCity(city)}
-                       className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95 duration-100 ${
-                         selectedCity === city
-                           ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-md shadow-[var(--primary-color)]/10'
-                           : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/25'
-                       }`}
-                    >
-                      {city}
-                    </button>
-                  ))}
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1.5">
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Facility Type:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {facilityTypes.map(ftype => (
+                      <button
+                         key={ftype}
+                         onClick={() => setSelectedType(ftype)}
+                         className={`px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95 duration-100 ${
+                           selectedType === ftype
+                             ? 'bg-[var(--tertiary-color)] text-white shadow-md shadow-[var(--tertiary-color)]/20'
+                             : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/25'
+                         }`}
+                      >
+                        {ftype}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+
+                {cities.length > 2 && (
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Region / City:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {cities.map(city => (
+                        <button
+                           key={city}
+                           onClick={() => setSelectedCity(city)}
+                           className={`px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95 duration-100 ${
+                             selectedCity === city
+                               ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-md shadow-[var(--primary-color)]/10'
+                               : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/25'
+                           }`}
+                        >
+                          {city}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -377,12 +410,25 @@ export default function HospitalHub() {
         </div>
       </section>
 
+      {/* 4.5 Live WhatsApp Business API Webhook Simulator */}
+      <section className="py-12 px-6 sm:px-12 max-w-[1280px] mx-auto text-left">
+        <div className="text-center max-w-xl mx-auto mb-8 space-y-2">
+          <span className="text-[10px] uppercase font-black text-emerald-500 tracking-widest bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">Omnichannel Integration</span>
+          <h2 className="text-3xl font-black text-[var(--text-color)]">Live WhatsApp Chatbot Engine</h2>
+          <p className="text-xs text-[var(--text-secondary)] font-semibold leading-relaxed">
+            Test how any WhatsApp Business number acts as an AI booking assistant, symptom triager, and digital prescription dispenser.
+          </p>
+        </div>
+
+        <WhatsAppTester initialPhone="+14155238886" defaultHospId="general-hospital" />
+      </section>
+
       {/* 5. Partner Hospital Directory Grid */}
       <div className="max-w-[1280px] mx-auto py-16 px-6 sm:px-8">
         <div className="flex justify-between items-center mb-8 text-left">
           <div>
-            <h2 className="text-xl sm:text-2xl font-black">Partner Hospital Directory</h2>
-            <p className="text-xs text-[var(--text-secondary)] font-semibold mt-1">Select a facility to check waiting queues</p>
+            <h2 className="text-xl sm:text-2xl font-black">Partner Hospital & Facility Directory</h2>
+            <p className="text-xs text-[var(--text-secondary)] font-semibold mt-1">Select any hospital, clinic, lab, or medical store to check waiting queues</p>
           </div>
           <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest bg-[var(--border-color)]/20 px-3 py-1 rounded-full shrink-0">
             {filteredHospitals.length} Found
@@ -397,8 +443,8 @@ export default function HospitalHub() {
         ) : filteredHospitals.length === 0 ? (
           <div className="text-center py-20 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30 p-8 shadow-sm">
             <span className="material-symbols-outlined text-[54px] text-zinc-300 dark:text-zinc-700 mb-3">clinical_trial</span>
-            <h3 className="text-lg font-black mb-1">No Hospitals Found</h3>
-            <p className="text-sm text-[var(--text-secondary)] max-w-sm mx-auto">We couldn't find any hospitals matching "{searchQuery}". Try adjusting your keywords or search terms.</p>
+            <h3 className="text-lg font-black mb-1">No Facilities Found</h3>
+            <p className="text-sm text-[var(--text-secondary)] max-w-sm mx-auto">We couldn't find any facilities matching "{searchQuery}". Try adjusting your keywords or search terms.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
@@ -419,10 +465,15 @@ export default function HospitalHub() {
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
                   
                   {/* Status Badges */}
-                  <span className="absolute top-4 right-4 bg-[var(--tertiary-color)] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1">
-                    <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping"></span>
-                    <span>Active Queue</span>
-                  </span>
+                  <div className="absolute top-4 right-4 flex flex-col items-end space-y-1.5">
+                    <span className="bg-[var(--tertiary-color)] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1">
+                      <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping"></span>
+                      <span>Active Queue</span>
+                    </span>
+                    <span className="bg-black/60 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded shadow-sm border border-white/10">
+                      {h.type || 'Hospital'}
+                    </span>
+                  </div>
 
                   {/* Proximity Distance Badge */}
                   {h.distance !== undefined && (
@@ -442,18 +493,28 @@ export default function HospitalHub() {
 
                 {/* Content */}
                 <div className="p-6 flex-1 flex flex-col">
-                  <h3 className="text-xl font-extrabold group-hover:text-[var(--primary-color)] transition duration-150 mb-2 leading-tight">
-                    {h.name}
-                  </h3>
+                  <div className="flex justify-between items-start mb-1">
+                    <h3 className="text-xl font-extrabold group-hover:text-[var(--primary-color)] transition duration-150 leading-tight">
+                      {h.name}
+                    </h3>
+                  </div>
+
+                  {/* Sub-facility / Parent hospital indicator */}
+                  {h.parentHospital && (
+                    <p className="text-[10px] font-extrabold text-[var(--primary-color)] bg-[var(--primary-color)]/10 px-2 py-0.5 rounded w-max mb-2">
+                      Sub-facility of: {h.parentHospital}
+                    </p>
+                  )}
+
                   <p className="text-xs text-[var(--text-secondary)] font-medium leading-relaxed mb-4 line-clamp-2">
                     {h.description}
                   </p>
                   
-                  {/* Stats & Metadata */}
-                  <div className="grid grid-cols-2 gap-3 mb-6 bg-[var(--bg-color)] rounded-xl p-3 border border-[var(--border-color)]/20 text-xs font-semibold text-[var(--text-secondary)]">
+                  {/* Stats & Features */}
+                  <div className="grid grid-cols-2 gap-3 mb-4 bg-[var(--bg-color)] rounded-xl p-3 border border-[var(--border-color)]/20 text-xs font-semibold text-[var(--text-secondary)]">
                     <div className="flex items-center space-x-1.5">
                       <span className="material-symbols-outlined text-[16px] text-zinc-400">location_on</span>
-                      <span className="truncate">{h.address.split(',')[0]}</span>
+                      <span className="truncate">{h.address ? h.address.split(',')[0] : h.city}</span>
                     </div>
                     <div className="flex items-center space-x-1.5">
                       <span className="material-symbols-outlined text-[16px] text-zinc-400">call</span>
@@ -461,11 +522,28 @@ export default function HospitalHub() {
                     </div>
                   </div>
 
+                  {/* Feature Tags */}
+                  <div className="flex flex-wrap gap-1.5 mb-6 text-[10px] font-bold">
+                    {h.hasInternalLab && (
+                      <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20">
+                        ✓ Pathology Lab Included
+                      </span>
+                    )}
+                    {h.hasInternalPharmacy && (
+                      <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded border border-blue-500/20">
+                        ✓ Pharmacy Store Included
+                      </span>
+                    )}
+                    <span className="bg-[var(--bg-color)] text-[var(--text-secondary)] px-2 py-0.5 rounded border border-[var(--border-color)]/30">
+                      {h.doctorCount || 4} Doctors Sync
+                    </span>
+                  </div>
+
                   {/* CTA Footer */}
                   <div className="mt-auto pt-4 border-t border-[var(--border-color)]/30 flex justify-between items-center">
                     <div className="flex items-center space-x-2 text-xs font-black text-emerald-600 dark:text-emerald-400">
                       <span className="material-symbols-outlined text-[16px]">chat</span>
-                      <span>WhatsApp Available</span>
+                      <span>WhatsApp Enabled</span>
                     </div>
                     <button 
                       className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] text-xs font-extrabold px-4 py-2 rounded-xl flex items-center space-x-1 shadow-md shadow-[var(--primary-color)]/10 active:scale-95 duration-100 transition-all transition-all-custom"
