@@ -1208,6 +1208,7 @@ export default function PatientPortal() {
           {messages.map((msg, index) => {
             const isBot = msg.sender === 'bot';
             const isSelectDoctorPrompt = msg.text.includes("Please select a Doctor") || msg.text.includes("Please select a Specialist");
+            const isLastBotMessage = isBot && index === messages.findLastIndex(m => m.sender === 'bot');
 
             return (
               <div key={index} className="flex flex-col space-y-2">
@@ -1241,7 +1242,7 @@ export default function PatientPortal() {
                 </div>
 
                 {/* Rich Triage Component: Doctor Bento Cards (If select doctor prompt) */}
-                {isBot && isSelectDoctorPrompt && options.length > 0 && (
+                {isLastBotMessage && isSelectDoctorPrompt && options.length > 0 && (
                   <div className="flex overflow-x-auto gap-4 mt-3 ml-0 sm:ml-10 w-full max-w-[500px] no-scrollbar pb-2 shrink-0">
                     {options.map((opt, idx) => {
                       // Parse Doctor Name and Dept
@@ -1290,7 +1291,7 @@ export default function PatientPortal() {
                 )}
 
                 {/* Option Buttons: Standard choice lists */}
-                {!isSelectDoctorPrompt && isBot && options.length > 0 && (
+                {isLastBotMessage && !isSelectDoctorPrompt && options.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2 ml-0 sm:ml-10">
                     {options.map((opt, idx) => (
                       <button
@@ -1418,7 +1419,7 @@ export default function PatientPortal() {
                   <div className="flex justify-between items-center">
                     <span className="text-white/80">{t('status')}</span>
                     <span className="bg-emerald-550/80 text-white px-2 py-0.5 rounded text-[10px] font-bold">
-                      {t(myToken.status.toLowerCase())}
+                      {t((myToken.status || 'Waiting').toLowerCase())}
                     </span>
                   </div>
                 </div>

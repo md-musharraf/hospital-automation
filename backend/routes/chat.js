@@ -94,17 +94,21 @@ const dictionary = {
 async function processChatMessage({ sessionId, message, hospitalId, socketIo }) {
   let session = await ChatSession.findOne({ sessionId });
   if (!session) {
-    session = new ChatSession({ sessionId, currentState: 'LANGUAGE' });
+    session = new ChatSession({ sessionId, currentState: 'LANGUAGE', tempData: {} });
+  }
+
+  if (!session.tempData) {
+    session.tempData = {};
   }
 
   if (hospitalId) {
-    session.tempData.hospitalId = hospitalId;
-    session.markModified('tempData');
+    session.tempData = { ...session.tempData, hospitalId };
+    session.markModified && session.markModified('tempData');
     await session.save();
   }
 
   const cleanMsg = message ? message.trim() : '';
-  const currentHospId = session.tempData.hospitalId || hospitalId || 'general-hospital';
+  const currentHospId = (session.tempData && session.tempData.hospitalId) || hospitalId || 'general-hospital';
   const hospital = await Hospital.findOne({ id: currentHospId }) || await Hospital.findOne({});
 
   // Reset triggers
@@ -112,6 +116,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   if (resetTriggers.includes(cleanMsg.toLowerCase())) {
     session.currentState = 'LANGUAGE';
     session.tempData = { hospitalId: currentHospId };
+    session.markModified && session.markModified('tempData');
     await session.save();
 
     const rawWhatsapp = hospital ? (hospital.whatsappNumber || process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886') : '+14155238886';
@@ -143,7 +148,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       const infoText = `🏥 *${hospital.name}* (${hospital.type || 'Hospital'})\n📍 ${hospital.address}, ${hospital.city}\n📞 Phone: ${hospital.phone}\n💬 WhatsApp: ${hospital.whatsappNumber}\n👨‍⚕️ Registered Doctors: ${docCount}${logoStr}${coverStr}${galleryStr}${servicesStr}`;
       return {
         messages: [{ sender: 'bot', text: infoText }],
-        options: dictionary[session.tempData.language || 'en'].options
+        options: dictionary[(session.tempData && session.tempData.language) || 'en'].options
       };
     }
   }
@@ -153,6 +158,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     const selectedLanguage = (cleanMsg === 'हिन्दी' || cleanMsg === '2') ? 'hi' : 'en';
     session.tempData = { ...session.tempData, language: selectedLanguage };
     session.currentState = 'WELCOME';
+    session.markModified && session.markModified('tempData');
     await session.save();
 
     const langText = dictionary[selectedLanguage];
@@ -166,7 +172,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   }
 
   // Fetch current language
-  const lang = session.tempData.language || 'en';
+  const lang = (session.tempData && session.tempData.language) || 'en';
   const text = dictionary[lang];
   const state = session.currentState;
 
@@ -180,6 +186,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     if (isRegular) {
       session.currentState = 'AWAITING_PHONE';
       session.tempData = { ...session.tempData, tokenType: 'Regular' };
+      session.markModified && session.markModified('tempData');
       await session.save();
       return {
         messages: [{ sender: 'bot', text: text.enterPhone }],
@@ -189,6 +196,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     else if (isRevisit) {
       session.currentState = 'AWAITING_PHONE';
       session.tempData = { ...session.tempData, tokenType: 'Re-visit' };
+      session.markModified && session.markModified('tempData');
       await session.save();
       return {
         messages: [{ sender: 'bot', text: text.welcomeBackPhone }],
@@ -198,6 +206,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     else if (isEmergency) {
       session.currentState = 'AWAITING_PHONE';
       session.tempData = { ...session.tempData, tokenType: 'Emergency' };
+      session.markModified && session.markModified('tempData');
       await session.save();
       return {
         messages: [{ sender: 'bot', text: text.emergencyPhone }],
@@ -206,6 +215,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     } 
     else if (isCheckStatus) {
       session.tempData = { ...session.tempData, checkingStatus: true };
+      session.markModified && session.markModified('tempData');
       await session.save();
       return {
         messages: [{ sender: 'bot', text: text.enterTokenToCheck }],
@@ -245,6 +255,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
       session.tempData = { language: lang, hospitalId: currentHospId };
       session.currentState = 'WELCOME';
+      session.markModified && session.markModified('tempData');
       await session.save();
 
       return {
@@ -272,15 +283,19 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       };
     }
 
-    session.tempData.phone = cleanMsg;
+    session.tempData = { ...session.tempData, phone: cleanMsg };
 
     if (session.tempData.tokenType === 'Re-visit') {
       const patient = await Patient.findOne({ phone: cleanMsg, hospital: currentHospId });
       if (patient) {
-        session.tempData.name = patient.name;
-        session.tempData.age = patient.age;
-        session.tempData.gender = patient.gender;
+        session.tempData = {
+          ...session.tempData,
+          name: patient.name,
+          age: patient.age,
+          gender: patient.gender
+        };
         session.currentState = 'AWAITING_SYMPTOMS';
+        session.markModified && session.markModified('tempData');
         await session.save();
 
         return {
@@ -292,6 +307,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         };
       } else {
         session.currentState = 'AWAITING_NAME';
+        session.markModified && session.markModified('tempData');
         await session.save();
         return {
           messages: [
@@ -304,6 +320,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     }
 
     session.currentState = 'AWAITING_NAME';
+    session.markModified && session.markModified('tempData');
     await session.save();
     return {
       messages: [{ sender: 'bot', text: text.enterFullNameGeneric }],
@@ -319,8 +336,9 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         options: []
       };
     }
-    session.tempData.name = cleanMsg;
+    session.tempData = { ...session.tempData, name: cleanMsg };
     session.currentState = 'AWAITING_AGE';
+    session.markModified && session.markModified('tempData');
     await session.save();
     return {
       messages: [{ sender: 'bot', text: text.enterAge(cleanMsg) }],
@@ -337,8 +355,9 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         options: []
       };
     }
-    session.tempData.age = age;
+    session.tempData = { ...session.tempData, age };
     session.currentState = 'AWAITING_GENDER';
+    session.markModified && session.markModified('tempData');
     await session.save();
     return {
       messages: [{ sender: 'bot', text: text.selectGender }],
@@ -358,8 +377,9 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         options: text.genderOptions
       };
     }
-    session.tempData.gender = isMale ? 'Male' : isFemale ? 'Female' : 'Other';
+    session.tempData = { ...session.tempData, gender: isMale ? 'Male' : isFemale ? 'Female' : 'Other' };
     session.currentState = 'AWAITING_SYMPTOMS';
+    session.markModified && session.markModified('tempData');
     await session.save();
     return {
       messages: [{ sender: 'bot', text: text.describeSymptomsLong }],
@@ -369,8 +389,9 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
   // AWAITING_SYMPTOMS state
   if (state === 'AWAITING_SYMPTOMS') {
-    if (!session.tempData.symptoms) {
-      session.tempData.symptoms = cleanMsg;
+    if (!session.tempData || !session.tempData.symptoms) {
+      session.tempData = { ...session.tempData, symptoms: cleanMsg };
+      session.markModified && session.markModified('tempData');
       await session.save();
 
       const doctors = await Doctor.find({ 
@@ -412,7 +433,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       }
 
       // Complete booking!
-      const phone = session.tempData.phone || `+1 555-${session.sessionId.slice(-4)}`;
+      const phone = (session.tempData && session.tempData.phone) || `+1 555-${session.sessionId.slice(-4)}`;
       let patient = await Patient.findOne({ phone, hospital: currentHospId });
       if (!patient) {
         patient = new Patient({
@@ -459,6 +480,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       await recalculateQueueTimes(selectedDoc._id);
 
       session.currentState = 'COMPLETED';
+      session.markModified && session.markModified('tempData');
       await session.save();
 
       const refreshedToken = await Token.findById(token._id);
@@ -480,7 +502,9 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         token: {
           id: refreshedToken._id,
           tokenNumber: refreshedToken.tokenNumber,
-          estimatedWaitTime: refreshedToken.estimatedWaitTime
+          estimatedWaitTime: refreshedToken.estimatedWaitTime,
+          status: refreshedToken.status || 'Waiting',
+          department: selectedDoc.department || 'General Practice'
         }
       };
     }
