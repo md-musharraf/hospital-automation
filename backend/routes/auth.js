@@ -254,6 +254,9 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       primaryColor: req.body.primaryColor || '#0d9488',
       secondaryColor: req.body.secondaryColor || '#0f172a',
       welcomeMessage: req.body.welcomeMessage || '',
+      parentHospital: req.body.parentHospital || null,
+      hasInternalLab: req.body.hasInternalLab !== undefined ? req.body.hasInternalLab : true,
+      hasInternalPharmacy: req.body.hasInternalPharmacy !== undefined ? req.body.hasInternalPharmacy : true,
       clinicSubtype: clinicSubtype || 'General',
       customServices: customServices || [],
       features: features || []
@@ -520,6 +523,9 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     if (primaryColor !== undefined) hospital.primaryColor = primaryColor;
     if (secondaryColor !== undefined) hospital.secondaryColor = secondaryColor;
     if (welcomeMessage !== undefined) hospital.welcomeMessage = welcomeMessage;
+    if (req.body.parentHospital !== undefined) hospital.parentHospital = req.body.parentHospital;
+    if (req.body.hasInternalLab !== undefined) hospital.hasInternalLab = req.body.hasInternalLab;
+    if (req.body.hasInternalPharmacy !== undefined) hospital.hasInternalPharmacy = req.body.hasInternalPharmacy;
     if (clinicSubtype !== undefined) hospital.clinicSubtype = clinicSubtype;
     if (customServices !== undefined) hospital.customServices = customServices;
     if (features !== undefined) hospital.features = features;

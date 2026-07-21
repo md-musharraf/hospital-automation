@@ -94,6 +94,18 @@ export default function SuperAdminPortal() {
   const [editCustomServices, setEditCustomServices] = useState([]);
   const [editFeatures, setEditFeatures] = useState([]);
 
+  // Sub-facility and Directory filter states
+  const [parentHospital, setParentHospital] = useState('');
+  const [hasInternalLab, setHasInternalLab] = useState(true);
+  const [hasInternalPharmacy, setHasInternalPharmacy] = useState(true);
+
+  const [editParentHospital, setEditParentHospital] = useState('');
+  const [editHasInternalLab, setEditHasInternalLab] = useState(true);
+  const [editHasInternalPharmacy, setEditHasInternalPharmacy] = useState(true);
+
+  const [facilityFilterType, setFacilityFilterType] = useState('All');
+  const [facilitySearchQuery, setFacilitySearchQuery] = useState('');
+
   const handleSelectHospitalToEdit = (hospId) => {
     const hosp = hospitalList.find(h => h.id === hospId);
     if (hosp) {
@@ -117,6 +129,9 @@ export default function SuperAdminPortal() {
       setEditClinicSubtype(hosp.clinicSubtype || 'General');
       setEditCustomServices(hosp.customServices || []);
       setEditFeatures(hosp.features || []);
+      setEditParentHospital(hosp.parentHospital || '');
+      setEditHasInternalLab(hosp.hasInternalLab !== undefined ? hosp.hasInternalLab : true);
+      setEditHasInternalPharmacy(hosp.hasInternalPharmacy !== undefined ? hosp.hasInternalPharmacy : true);
     }
   };
 
@@ -243,6 +258,9 @@ export default function SuperAdminPortal() {
         lng: parseFloat(lng)
       },
       type,
+      parentHospital: parentHospital || null,
+      hasInternalLab,
+      hasInternalPharmacy,
       clinicSubtype,
       customServices,
       features,
@@ -378,6 +396,9 @@ export default function SuperAdminPortal() {
         lng: parseFloat(editLng)
       },
       type: editType,
+      parentHospital: editParentHospital || null,
+      hasInternalLab: editHasInternalLab,
+      hasInternalPharmacy: editHasInternalPharmacy,
       heroImage: editCoverImage,
       primaryColor: editPrimaryColor,
       secondaryColor: editSecondaryColor,
@@ -458,6 +479,16 @@ export default function SuperAdminPortal() {
     );
   }
 
+  const filteredHospitals = hospitalList.filter(h => {
+    const matchesSearch = !facilitySearchQuery || 
+      h.name.toLowerCase().includes(facilitySearchQuery.toLowerCase()) ||
+      h.city.toLowerCase().includes(facilitySearchQuery.toLowerCase()) ||
+      h.id.toLowerCase().includes(facilitySearchQuery.toLowerCase());
+    
+    if (facilityFilterType === 'All') return matchesSearch;
+    return matchesSearch && h.type === facilityFilterType;
+  });
+
   return (
     <div className="flex-grow bg-[var(--bg-color)] py-8 px-4 sm:px-6 lg:px-8 overflow-y-auto max-h-[calc(100vh-62px)] text-left no-scrollbar">
       <div className="max-w-4xl mx-auto space-y-6">
@@ -474,6 +505,146 @@ export default function SuperAdminPortal() {
           <div className="inline-flex items-center space-x-2 bg-[var(--tertiary-color)]/10 border border-[var(--tertiary-color)]/20 text-[var(--tertiary-color)] px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
             <Activity className="h-3.5 w-3.5 animate-pulse" />
             <span>Super Admin Engine</span>
+          </div>
+        </div>
+
+        {/* Master Facility Quick Selector & Multi-Tenancy Directory Bar */}
+        <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-3xl p-5 shadow-sm space-y-4 text-left">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-[var(--border-color)]/20 pb-3">
+            <div>
+              <div className="flex items-center space-x-2">
+                <span className="material-symbols-outlined text-[20px] text-[var(--primary-color)]">domain_add</span>
+                <h3 className="text-sm font-extrabold uppercase tracking-wider text-[var(--text-color)]">
+                  Master Multi-Facility Directory ({hospitalList.length} Registered)
+                </h3>
+              </div>
+              <p className="text-[11px] text-[var(--text-secondary)] font-semibold mt-0.5">
+                Select any registered hospital, clinic, lab or medical store from the list below to instantly edit or manage accounts.
+              </p>
+            </div>
+
+            {/* Quick Top Dropdown Selector */}
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-bold text-[var(--text-secondary)] whitespace-nowrap">Select to Edit:</span>
+              <select
+                value={editHospId}
+                onChange={e => {
+                  handleSelectHospitalToEdit(e.target.value);
+                  setActiveTab('edit');
+                }}
+                className="bg-[var(--bg-color)] border border-[var(--primary-color)]/60 text-[var(--primary-color)] font-extrabold rounded-xl px-3 py-1.5 outline-none text-xs cursor-pointer shadow-sm"
+              >
+                <option value="">-- Choose Facility --</option>
+                {hospitalList.map(h => (
+                  <option key={h.id} value={h.id}>
+                    {h.name} ({h.type || 'Hospital'} - {h.city})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Filter Pills & Live Search */}
+          <div className="flex flex-col md:flex-row items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-1.5">
+              {['All', 'Hospital', 'Clinic', 'Lab', 'Medical', 'Government Hospital', 'Government Lab'].map(ft => (
+                <button
+                  key={ft}
+                  type="button"
+                  onClick={() => setFacilityFilterType(ft)}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                    facilityFilterType === ft
+                      ? 'bg-[var(--primary-color)] text-white shadow-sm'
+                      : 'bg-[var(--bg-color)] border border-[var(--border-color)]/40 text-[var(--text-secondary)] hover:text-[var(--text-color)]'
+                  }`}
+                >
+                  {ft}
+                </button>
+              ))}
+            </div>
+
+            <input
+              type="text"
+              placeholder="🔍 Search facility by name or city..."
+              value={facilitySearchQuery}
+              onChange={e => setFacilitySearchQuery(e.target.value)}
+              className="w-full md:w-64 bg-[var(--bg-color)] border border-[var(--border-color)]/60 rounded-xl px-3 py-1.5 text-xs text-[var(--text-color)] font-semibold outline-none focus:border-[var(--primary-color)]"
+            />
+          </div>
+
+          {/* Facility Cards Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1 max-h-56 overflow-y-auto no-scrollbar">
+            {filteredHospitals.length === 0 ? (
+              <p className="col-span-full text-xs text-[var(--text-secondary)] font-semibold py-4 text-center">
+                No matching facilities found.
+              </p>
+            ) : (
+              filteredHospitals.map(h => (
+                <div 
+                  key={h.id} 
+                  className={`p-3 rounded-2xl border transition-all text-left flex flex-col justify-between ${
+                    editHospId === h.id 
+                      ? 'border-[var(--primary-color)] bg-[var(--primary-color)]/5 shadow-md'
+                      : 'border-[var(--border-color)]/40 bg-[var(--bg-color)] hover:border-[var(--primary-color)]/40'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 bg-[var(--primary-color)]/10 text-[var(--primary-color)] text-[9px] font-black rounded-md uppercase tracking-wider">
+                        {h.type || 'Hospital'}
+                      </span>
+                      <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                        👨‍⚕️ {h.doctorCount || 1} Dr(s)
+                      </span>
+                    </div>
+
+                    <h4 className="font-extrabold text-xs text-[var(--text-color)] mt-1.5 line-clamp-1">
+                      {h.name}
+                    </h4>
+                    <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
+                      📍 {h.city} • ID: <span className="font-mono text-[var(--primary-color)]">{h.id}</span>
+                    </p>
+
+                    {h.parentHospital && (
+                      <p className="text-[9px] text-[var(--tertiary-color)] font-bold mt-1">
+                        🔗 Parent: {h.parentHospital}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center space-x-1.5 mt-3 pt-2 border-t border-[var(--border-color)]/20">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleSelectHospitalToEdit(h.id);
+                        setActiveTab('edit');
+                      }}
+                      className="flex-1 py-1 bg-[var(--primary-color)] hover:bg-[var(--primary-color)]/90 text-white rounded-lg text-[10px] font-black transition-all text-center"
+                    >
+                      Edit Profile
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedHospital(h.id);
+                        setActiveTab('accounts');
+                      }}
+                      className="px-2 py-1 bg-[var(--bg-color)] border border-[var(--border-color)] text-[var(--text-color)] hover:bg-[var(--border-color)]/20 rounded-lg text-[10px] font-black transition-all"
+                    >
+                      + Accs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteHospital(h.id)}
+                      className="p-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg text-[10px] transition-all"
+                      title="Delete Facility"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">delete</span>
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -774,6 +945,46 @@ export default function SuperAdminPortal() {
                       onChange={e => setGalleryImagesStr(e.target.value)}
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30">
+                  <div>
+                    <label className="block mb-1 font-bold text-[var(--text-color)]">Parent Hospital (If Sub-facility)</label>
+                    <select
+                      value={parentHospital}
+                      onChange={e => setParentHospital(e.target.value)}
+                      className="w-full bg-[var(--card-bg)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                    >
+                      <option value="">-- None (Standalone Facility) --</option>
+                      {hospitalList.filter(h => h.type === 'Hospital' || h.type === 'Government Hospital').map(h => (
+                        <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center space-x-2 pt-4 md:pt-6">
+                    <input
+                      type="checkbox"
+                      id="hasInternalLab"
+                      checked={hasInternalLab}
+                      onChange={e => setHasInternalLab(e.target.checked)}
+                      className="w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer"
+                    />
+                    <label htmlFor="hasInternalLab" className="text-xs font-bold text-[var(--text-color)] cursor-pointer">
+                      Has Internal Pathology Lab
+                    </label>
+                  </div>
+                  <div className="flex items-center space-x-2 pt-4 md:pt-6">
+                    <input
+                      type="checkbox"
+                      id="hasInternalPharmacy"
+                      checked={hasInternalPharmacy}
+                      onChange={e => setHasInternalPharmacy(e.target.checked)}
+                      className="w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer"
+                    />
+                    <label htmlFor="hasInternalPharmacy" className="text-xs font-bold text-[var(--text-color)] cursor-pointer">
+                      Has Internal Pharmacy Store
+                    </label>
                   </div>
                 </div>
               </div>
@@ -1522,6 +1733,46 @@ export default function SuperAdminPortal() {
                       onChange={e => setEditGalleryImagesStr(e.target.value)}
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                     />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30">
+                  <div>
+                    <label className="block mb-1 font-bold text-[var(--text-color)]">Parent Hospital (If Sub-facility)</label>
+                    <select
+                      value={editParentHospital}
+                      onChange={e => setEditParentHospital(e.target.value)}
+                      className="w-full bg-[var(--card-bg)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                    >
+                      <option value="">-- None (Standalone Facility) --</option>
+                      {hospitalList.filter(h => (h.type === 'Hospital' || h.type === 'Government Hospital') && h.id !== editHospId).map(h => (
+                        <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center space-x-2 pt-4 md:pt-6">
+                    <input
+                      type="checkbox"
+                      id="editHasInternalLab"
+                      checked={editHasInternalLab}
+                      onChange={e => setEditHasInternalLab(e.target.checked)}
+                      className="w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer"
+                    />
+                    <label htmlFor="editHasInternalLab" className="text-xs font-bold text-[var(--text-color)] cursor-pointer">
+                      Has Internal Pathology Lab
+                    </label>
+                  </div>
+                  <div className="flex items-center space-x-2 pt-4 md:pt-6">
+                    <input
+                      type="checkbox"
+                      id="editHasInternalPharmacy"
+                      checked={editHasInternalPharmacy}
+                      onChange={e => setEditHasInternalPharmacy(e.target.checked)}
+                      className="w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer"
+                    />
+                    <label htmlFor="editHasInternalPharmacy" className="text-xs font-bold text-[var(--text-color)] cursor-pointer">
+                      Has Internal Pharmacy Store
+                    </label>
                   </div>
                 </div>
 

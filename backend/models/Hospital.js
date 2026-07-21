@@ -27,6 +27,9 @@ const HospitalSchema = new mongoose.Schema({
   primaryColor: { type: String, default: '#0d9488' },
   secondaryColor: { type: String, default: '#0f172a' },
   welcomeMessage: { type: String },
+  parentHospital: { type: String, default: null },
+  hasInternalLab: { type: Boolean, default: true },
+  hasInternalPharmacy: { type: Boolean, default: true },
   clinicSubtype: { type: String, default: 'General' },
   customServices: [
     {
