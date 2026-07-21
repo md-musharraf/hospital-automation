@@ -107,26 +107,112 @@ export default function SuperAdminPortal() {
   const [facilityFilterType, setFacilityFilterType] = useState('All');
   const [facilitySearchQuery, setFacilitySearchQuery] = useState('');
 
-  const handleSelectHospitalToEdit = (hospId) => {
-    const hosp = hospitalList.find(h => h.id === hospId);
+  const [facilityPersonnel, setFacilityPersonnel] = useState({ doctors: [], staff: [], labAssistants: [], patients: [] });
+  const [personnelLoading, setPersonnelLoading] = useState(false);
+
+  const fetchFacilityPersonnel = async (hId) => {
+    if (!hId) return;
+    setPersonnelLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/facility-data/${hId}`, {
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFacilityPersonnel(data);
+      }
+    } catch (err) {
+      console.error('Error fetching facility personnel:', err);
+    } finally {
+      setPersonnelLoading(false);
+    }
+  };
+
+  const handleDeleteDoctor = async (docId) => {
+    if (!window.confirm('Delete this doctor account permanently?')) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/doctor/${docId}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      if (res.ok) {
+        setSuccessMsg('Doctor deleted successfully!');
+        fetchFacilityPersonnel(editHospId);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteStaff = async (staffId) => {
+    if (!window.confirm('Delete this staff account permanently?')) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/staff/${staffId}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      if (res.ok) {
+        setSuccessMsg('Staff member deleted successfully!');
+        fetchFacilityPersonnel(editHospId);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteLab = async (labId) => {
+    if (!window.confirm('Delete this lab assistant account permanently?')) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/lab-assistant/${labId}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      if (res.ok) {
+        setSuccessMsg('Lab assistant deleted successfully!');
+        fetchFacilityPersonnel(editHospId);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeletePatient = async (patId) => {
+    if (!window.confirm('Delete this patient record permanently?')) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/patient/${patId}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      if (res.ok) {
+        setSuccessMsg('Patient record deleted successfully!');
+        fetchFacilityPersonnel(editHospId);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleSelectHospitalToEdit = (selectedId) => {
+    setEditHospId(selectedId);
+    fetchFacilityPersonnel(selectedId);
+    const hosp = hospitalList.find(h => h.id === selectedId);
     if (hosp) {
-      setEditHospId(hosp.id);
       setEditName(hosp.name);
       setEditType(hosp.type || 'Hospital');
       setEditCity(hosp.city || '');
-      setEditLat(hosp.coordinates?.lat || '');
-      setEditLng(hosp.coordinates?.lng || '');
+      setEditLat(hosp.coordinates?.lat || 28.6139);
+      setEditLng(hosp.coordinates?.lng || 77.2090);
+      setEditAddress(hosp.address || '');
       setEditPhone(hosp.phone || '');
       setEditWhatsapp(hosp.whatsappNumber || '');
-      setEditAddress(hosp.address || '');
+      setEditDoctorCount(hosp.doctorCount || 1);
+      setEditDescription(hosp.description || '');
       setEditLogoUrl(hosp.logoUrl || '');
       setEditCoverImage(hosp.coverImage || '');
       setEditGalleryImagesStr(hosp.galleryImages ? hosp.galleryImages.join(', ') : '');
-      setEditDoctorCount(hosp.doctorCount || 1);
-      setEditDescription(hosp.description || '');
+      setEditPrimaryColor(hosp.primaryColor || '#0284c7');
+      setEditSecondaryColor(hosp.secondaryColor || '#0369a1');
       setEditWelcomeMessage(hosp.welcomeMessage || '');
-      setEditPrimaryColor(hosp.primaryColor || '#0d9488');
-      setEditSecondaryColor(hosp.secondaryColor || '#0f172a');
       setEditClinicSubtype(hosp.clinicSubtype || 'General');
       setEditCustomServices(hosp.customServices || []);
       setEditFeatures(hosp.features || []);
@@ -1949,7 +2035,139 @@ export default function SuperAdminPortal() {
                 </div>
               </div>
 
-              <div className="flex flex-col md:flex-row gap-3">
+                {/* Super Admin Facility Personnel & Patient Management Console */}
+                <div className="space-y-4 bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30 shadow-sm text-left">
+                  <div className="flex justify-between items-center border-b border-[var(--border-color)]/20 pb-2">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-[var(--text-color)] flex items-center space-x-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-[var(--primary-color)]">badge</span>
+                      <span>5. Facility Registered Personnel & Patients</span>
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => fetchFacilityPersonnel(editHospId)}
+                      className="px-2.5 py-1 bg-[var(--card-bg)] border border-[var(--border-color)]/50 rounded-lg text-[10px] font-bold text-[var(--text-secondary)] hover:text-[var(--text-color)] flex items-center space-x-1"
+                    >
+                      <span className={`material-symbols-outlined text-[14px] ${personnelLoading ? 'animate-spin' : ''}`}>refresh</span>
+                      <span>Reload Personnel</span>
+                    </button>
+                  </div>
+
+                  {personnelLoading ? (
+                    <p className="text-xs font-bold text-zinc-400 py-4 text-center">Loading registered personnel & patients...</p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Doctors List */}
+                      <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
+                        <span className="text-[10px] font-black uppercase text-[var(--primary-color)] tracking-wider">Registered Doctors ({facilityPersonnel.doctors.length})</span>
+                        {facilityPersonnel.doctors.length === 0 ? (
+                          <p className="text-[11px] text-zinc-400">No doctors registered.</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 no-scrollbar">
+                            {facilityPersonnel.doctors.map(d => (
+                              <div key={d._id} className="flex justify-between items-center bg-[var(--bg-color)] p-2 rounded-lg text-xs">
+                                <div>
+                                  <p className="font-extrabold text-[var(--text-color)]">{d.name}</p>
+                                  <p className="text-[10px] text-[var(--text-secondary)]">{d.department} • {d.currentRoom || 'Cabin'} ({d.availabilityStatus})</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteDoctor(d._id)}
+                                  className="p-1 text-rose-500 hover:bg-rose-500/10 rounded"
+                                  title="Delete Doctor"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">delete</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Staff List */}
+                      <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
+                        <span className="text-[10px] font-black uppercase text-[var(--secondary-color)] tracking-wider">Registered Staff ({facilityPersonnel.staff.length})</span>
+                        {facilityPersonnel.staff.length === 0 ? (
+                          <p className="text-[11px] text-zinc-400">No staff registered.</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 no-scrollbar">
+                            {facilityPersonnel.staff.map(s => (
+                              <div key={s._id} className="flex justify-between items-center bg-[var(--bg-color)] p-2 rounded-lg text-xs">
+                                <div>
+                                  <p className="font-extrabold text-[var(--text-color)]">{s.name}</p>
+                                  <p className="text-[10px] text-[var(--text-secondary)]">{s.username} • {s.counterNumber}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteStaff(s._id)}
+                                  className="p-1 text-rose-500 hover:bg-rose-500/10 rounded"
+                                  title="Delete Staff"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">delete</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Lab Assistants List */}
+                      <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
+                        <span className="text-[10px] font-black uppercase text-emerald-500 tracking-wider">Registered Lab Assistants ({facilityPersonnel.labAssistants.length})</span>
+                        {facilityPersonnel.labAssistants.length === 0 ? (
+                          <p className="text-[11px] text-zinc-400">No lab assistants registered.</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 no-scrollbar">
+                            {facilityPersonnel.labAssistants.map(l => (
+                              <div key={l._id} className="flex justify-between items-center bg-[var(--bg-color)] p-2 rounded-lg text-xs">
+                                <div>
+                                  <p className="font-extrabold text-[var(--text-color)]">{l.name}</p>
+                                  <p className="text-[10px] text-[var(--text-secondary)]">{l.username}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteLab(l._id)}
+                                  className="p-1 text-rose-500 hover:bg-rose-500/10 rounded"
+                                  title="Delete Lab Assistant"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">delete</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Registered Patients List */}
+                      <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
+                        <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider">Registered Patients ({facilityPersonnel.patients.length})</span>
+                        {facilityPersonnel.patients.length === 0 ? (
+                          <p className="text-[11px] text-zinc-400">No patients registered in this facility.</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 no-scrollbar">
+                            {facilityPersonnel.patients.map(p => (
+                              <div key={p._id} className="flex justify-between items-center bg-[var(--bg-color)] p-2 rounded-lg text-xs">
+                                <div>
+                                  <p className="font-extrabold text-[var(--text-color)]">{p.name}</p>
+                                  <p className="text-[10px] text-[var(--text-secondary)]">{p.phone} • {p.age}y ({p.gender}) • {p.visitCount} visits</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePatient(p._id)}
+                                  className="p-1 text-rose-500 hover:bg-rose-500/10 rounded"
+                                  title="Delete Patient Record"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">delete</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col md:flex-row gap-3">
                 <button
                   type="submit"
                   disabled={loading || hospitalList.length === 0}
