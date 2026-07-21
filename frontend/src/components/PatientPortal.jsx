@@ -400,6 +400,7 @@ export default function PatientPortal() {
     } catch (err) {
       console.error(err);
       setMessages(prev => [...prev, { sender: 'bot', text: `⚠️ Error: ${err.message || 'Make sure backend is running.'}` }]);
+      setOptions(['Hi', 'Book New Appointment / Generate Token']);
     }
   };
 

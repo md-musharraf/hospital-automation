@@ -91,6 +91,38 @@ const dictionary = {
   }
 };
 
+// Collision-free unique token number generator per hospital tenant
+async function generateUniqueTokenNumber(hospitalId) {
+  try {
+    const activeHosp = hospitalId || 'general-hospital';
+    const existingTokens = await Token.find({ hospital: activeHosp }).select('tokenNumber');
+    let maxNum = 100;
+    for (let t of existingTokens) {
+      if (t && t.tokenNumber) {
+        const match = t.tokenNumber.match(/T-(\d+)/i) || t.tokenNumber.match(/\d+/);
+        if (match) {
+          const num = parseInt(match[1] || match[0], 10);
+          if (!isNaN(num) && num > maxNum) {
+            maxNum = num;
+          }
+        }
+      }
+    }
+    let nextNum = maxNum + 1;
+    let tokenNumber = `T-${nextNum}`;
+    let exists = await Token.findOne({ tokenNumber, hospital: activeHosp });
+    while (exists) {
+      nextNum++;
+      tokenNumber = `T-${nextNum}`;
+      exists = await Token.findOne({ tokenNumber, hospital: activeHosp });
+    }
+    return tokenNumber;
+  } catch (err) {
+    console.error('Error generating token number:', err);
+    return `T-${Date.now().toString().slice(-4)}`;
+  }
+}
+
 async function processChatMessage({ sessionId, message, hospitalId, socketIo }) {
   let session = await ChatSession.findOne({ sessionId });
   if (!session) {
@@ -286,7 +318,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     session.tempData = { ...session.tempData, phone: cleanMsg };
 
     if (session.tempData.tokenType === 'Re-visit') {
-      const patient = await Patient.findOne({ phone: cleanMsg, hospital: currentHospId });
+      const patient = await Patient.findOne({ 
+        hospital: currentHospId, 
+        $or: [{ phone: cleanMsg }, { phone: cleanMsg.replace(/\s+/g, '') }] 
+      });
       if (patient) {
         session.tempData = {
           ...session.tempData,
@@ -394,10 +429,13 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       session.markModified && session.markModified('tempData');
       await session.save();
 
-      const doctors = await Doctor.find({ 
+      let doctors = await Doctor.find({ 
         hospital: currentHospId, 
         availabilityStatus: { $ne: 'Unavailable' } 
       });
+      if (doctors.length === 0) {
+        doctors = await Doctor.find({ availabilityStatus: { $ne: 'Unavailable' } });
+      }
       if (doctors.length === 0) {
         return {
           messages: [{ sender: 'bot', text: text.noDoctors }],
@@ -412,16 +450,28 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       };
     } 
     else {
-      const doctors = await Doctor.find({ 
+      let doctors = await Doctor.find({ 
         hospital: currentHospId, 
         availabilityStatus: { $ne: 'Unavailable' } 
       });
+      if (doctors.length === 0) {
+        doctors = await Doctor.find({ availabilityStatus: { $ne: 'Unavailable' } });
+      }
+
       let selectedDoc = doctors.find(d => `${d.name} (${d.department})` === cleanMsg);
       
       // Numeric option selection fallback
       const docIdx = parseInt(cleanMsg) - 1;
       if (!selectedDoc && !isNaN(docIdx) && doctors[docIdx]) {
         selectedDoc = doctors[docIdx];
+      }
+
+      // Name-based loose matching fallback
+      if (!selectedDoc) {
+        selectedDoc = doctors.find(d => 
+          cleanMsg.toLowerCase().includes(d.name.toLowerCase()) || 
+          d.name.toLowerCase().includes(cleanMsg.toLowerCase())
+        );
       }
 
       if (!selectedDoc) {
@@ -437,22 +487,22 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       let patient = await Patient.findOne({ phone, hospital: currentHospId });
       if (!patient) {
         patient = new Patient({
-          name: session.tempData.name,
-          age: session.tempData.age,
-          gender: session.tempData.gender,
+          name: (session.tempData && session.tempData.name) || 'Valued Patient',
+          age: (session.tempData && session.tempData.age) || 30,
+          gender: (session.tempData && session.tempData.gender) || 'Other',
           phone,
           hospital: currentHospId
         });
       } else {
-        patient.visitCount += 1;
-        patient.name = session.tempData.name || patient.name;
-        patient.age = session.tempData.age || patient.age;
-        patient.gender = session.tempData.gender || patient.gender;
+        patient.visitCount = (patient.visitCount || 1) + 1;
+        if (session.tempData && session.tempData.name) patient.name = session.tempData.name;
+        if (session.tempData && session.tempData.age) patient.age = session.tempData.age;
+        if (session.tempData && session.tempData.gender) patient.gender = session.tempData.gender;
       }
       await patient.save();
 
-      const count = await Token.countDocuments({ hospital: currentHospId });
-      const tokenNumber = `T-${101 + count}`;
+      // Unique token number generation (collision-free)
+      const tokenNumber = await generateUniqueTokenNumber(currentHospId);
 
       const token = new Token({
         tokenNumber,
@@ -461,7 +511,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         tokenType: session.tempData.tokenType || 'Regular',
         patient: patient._id,
         doctor: selectedDoc._id,
-        symptoms: session.tempData.symptoms
+        symptoms: session.tempData.symptoms || 'General Checkup'
       });
       await token.save();
 
@@ -477,32 +527,47 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       }
       await queue.save();
 
-      await recalculateQueueTimes(selectedDoc._id);
+      try {
+        await recalculateQueueTimes(selectedDoc._id);
+      } catch (qErr) {
+        console.error('Error recalculating queue times:', qErr);
+      }
 
       session.currentState = 'COMPLETED';
       session.markModified && session.markModified('tempData');
       await session.save();
 
-      const refreshedToken = await Token.findById(token._id);
+      const refreshedToken = (await Token.findById(token._id)) || token;
       const trackerLink = `https://hospital-automation-wine.vercel.app/track/${refreshedToken._id}`;
-      const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked successfully for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Estimated wait time: ${refreshedToken.estimatedWaitTime} mins. Track live: ${trackerLink}`;
-      await sendWhatsAppNotification(patient.phone, bookingMessage);
+      const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked successfully for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Estimated wait time: ${refreshedToken.estimatedWaitTime || 0} mins. Track live: ${trackerLink}`;
+      
+      try {
+        await sendWhatsAppNotification(patient.phone, bookingMessage);
+      } catch (waErr) {
+        console.error('WhatsApp notification error:', waErr);
+      }
 
       if (socketIo) {
-        socketIo.to('queue:global').emit('queue-updated', { doctorId: selectedDoc._id });
-        socketIo.to(`doctor:${selectedDoc._id}`).emit('queue-updated');
+        try {
+          socketIo.to('queue:global').emit('queue-updated', { doctorId: selectedDoc._id });
+          socketIo.to(`doctor:${selectedDoc._id}`).emit('queue-updated');
+        } catch (sErr) {
+          console.error('Socket emit error:', sErr);
+        }
       }
+
+      const waitMins = typeof refreshedToken.estimatedWaitTime === 'number' ? refreshedToken.estimatedWaitTime : 0;
 
       return {
         messages: [
           { sender: 'bot', text: text.bookingCompleteHeader },
-          { sender: 'bot', text: text.bookingCompleteBody(refreshedToken.tokenNumber, selectedDoc.name, selectedDoc.currentRoom, refreshedToken.estimatedWaitTime) }
+          { sender: 'bot', text: text.bookingCompleteBody(refreshedToken.tokenNumber, selectedDoc.name, selectedDoc.currentRoom || 'Cabin A', waitMins) }
         ],
         options: text.options,
         token: {
           id: refreshedToken._id,
           tokenNumber: refreshedToken.tokenNumber,
-          estimatedWaitTime: refreshedToken.estimatedWaitTime,
+          estimatedWaitTime: waitMins,
           status: refreshedToken.status || 'Waiting',
           department: selectedDoc.department || 'General Practice'
         }
@@ -545,8 +610,10 @@ router.post('/message', async (req, res) => {
 
     res.json(result);
   } catch (error) {
-    console.error('Chat error:', error);
-    res.status(500).json({ message: 'Server error in chatbot' });
+    console.error('Chat error details:', error);
+    res.status(500).json({ 
+      message: error.message || 'Server error in chatbot'
+    });
   }
 });
 

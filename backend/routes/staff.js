@@ -86,9 +86,26 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       return res.status(404).json({ message: 'Doctor not found' });
     }
 
-    // Generate unique token number for this hospital tenant
-    const count = await Token.countDocuments({ hospital: staffHosp });
-    const tokenNumber = `T-${101 + count}`;
+    // Generate unique token number for this hospital tenant (collision-free)
+    const existingTokens = await Token.find({ hospital: staffHosp }).select('tokenNumber');
+    let maxNum = 100;
+    for (let t of existingTokens) {
+      if (t && t.tokenNumber) {
+        const match = t.tokenNumber.match(/T-(\d+)/i) || t.tokenNumber.match(/\d+/);
+        if (match) {
+          const num = parseInt(match[1] || match[0], 10);
+          if (!isNaN(num) && num > maxNum) maxNum = num;
+        }
+      }
+    }
+    let nextNum = maxNum + 1;
+    let tokenNumber = `T-${nextNum}`;
+    let exists = await Token.findOne({ tokenNumber, hospital: staffHosp });
+    while (exists) {
+      nextNum++;
+      tokenNumber = `T-${nextNum}`;
+      exists = await Token.findOne({ tokenNumber, hospital: staffHosp });
+    }
 
     const token = new Token({
       tokenNumber,
