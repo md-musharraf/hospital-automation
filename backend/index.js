@@ -278,6 +278,10 @@ const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/hospital_queue';
 
 const seedMockData = async () => {
+  if (process.env.AUTO_SEED !== 'true') {
+    console.log('[System DB] Auto-seeding disabled. Operating in clean manual database mode.');
+    return;
+  }
   try {
     const Hospital = require('./models/Hospital');
     const Doctor = require('./models/Doctor');

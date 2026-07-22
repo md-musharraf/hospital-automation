@@ -441,10 +441,25 @@ export default function HospitalHub() {
             <p className="text-sm font-bold text-[var(--text-secondary)]">Loading partner hospitals...</p>
           </div>
         ) : filteredHospitals.length === 0 ? (
-          <div className="text-center py-20 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30 p-8 shadow-sm">
-            <span className="material-symbols-outlined text-[54px] text-zinc-300 dark:text-zinc-700 mb-3">clinical_trial</span>
-            <h3 className="text-lg font-black mb-1">No Facilities Found</h3>
-            <p className="text-sm text-[var(--text-secondary)] max-w-sm mx-auto">We couldn't find any facilities matching "{searchQuery}". Try adjusting your keywords or search terms.</p>
+          <div className="text-center py-20 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30 p-8 shadow-sm space-y-4">
+            <div className="w-16 h-16 rounded-full bg-[var(--primary-color)]/10 text-[var(--primary-color)] flex items-center justify-center mx-auto mb-2">
+              <span className="material-symbols-outlined text-[36px]">domain_disabled</span>
+            </div>
+            <div>
+              <h3 className="text-lg font-black mb-1 text-[var(--text-color)]">No Healthcare Facilities Found</h3>
+              <p className="text-xs text-[var(--text-secondary)] font-medium max-w-md mx-auto">
+                {searchQuery 
+                  ? `No facilities matching "${searchQuery}". Try clearing search filters.` 
+                  : `No registered healthcare facilities in the directory yet. Use the Super Admin Dashboard to register your first hospital, clinic, diagnostic lab, or pharmacy!`}
+              </p>
+            </div>
+            <button
+              onClick={() => navigate('/super-admin')}
+              className="px-5 py-2.5 bg-[var(--primary-color)] text-[var(--primary-text)] font-extrabold text-xs rounded-xl hover:opacity-90 transition-all shadow-md inline-flex items-center space-x-1.5 active:scale-95"
+            >
+              <span className="material-symbols-outlined text-[18px]">add_business</span>
+              <span>Register First Facility (Super Admin)</span>
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">

@@ -250,6 +250,35 @@ export default function SuperAdminPortal() {
     }
   };
 
+  const handleClearDemoData = async () => {
+    if (!window.confirm('Are you sure you want to PERMANENTLY CLEAR ALL DEMO DATA (all sample hospitals, doctors, staff, queues, and tokens)? This action cannot be undone.')) {
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/clear-demo-data`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Secret': adminSecret
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to clear demo data');
+      }
+      setSuccessMsg(data.message);
+      setEditHospId('');
+      fetchHospitals();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'edit' && hospitalList.length > 0) {
       if (!editHospId) {
@@ -777,6 +806,16 @@ export default function SuperAdminPortal() {
           >
             <span className="material-symbols-outlined text-[16px]">chat</span>
             <span>WhatsApp API Tester</span>
+          </button>
+          
+          <button
+            type="button"
+            onClick={handleClearDemoData}
+            className="px-3 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center space-x-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 ml-auto"
+            title="Wipe all demo sample data to start with clean manual entry"
+          >
+            <span className="material-symbols-outlined text-[16px]">delete_sweep</span>
+            <span>Wipe Demo Data</span>
           </button>
         </div>
 

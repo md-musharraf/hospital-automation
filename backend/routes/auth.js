@@ -726,4 +726,36 @@ router.delete('/super-admin/patient/:id', verifyAdminSecret, async (req, res) =>
   }
 });
 
+// POST Clear all demo/sample data (Super Admin Endpoint)
+router.post('/super-admin/clear-demo-data', verifyAdminSecret, async (req, res) => {
+  try {
+    const Patient = require('../models/Patient');
+    const ChatSession = require('../models/ChatSession');
+    const ArchivedToken = require('../models/ArchivedToken');
+    const Reminder = require('../models/Reminder');
+    const Token = require('../models/Token');
+    const Queue = require('../models/Queue');
+
+    await Hospital.deleteMany({});
+    await Doctor.deleteMany({});
+    await Staff.deleteMany({});
+    await LabAssistant.deleteMany({});
+    await Queue.deleteMany({});
+    await Token.deleteMany({});
+    await Patient.deleteMany({});
+    await ChatSession.deleteMany({});
+    await ArchivedToken.deleteMany({});
+    await Reminder.deleteMany({});
+
+    if (req.io) {
+      req.io.emit('queue-reset');
+    }
+
+    res.json({ message: 'All demo and sample data cleared successfully! System is 100% clean for manual hospital entry.' });
+  } catch (error) {
+    console.error('Super admin clear demo data error:', error);
+    res.status(500).json({ message: 'Server error clearing demo data' });
+  }
+});
+
 module.exports = router;
