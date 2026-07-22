@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import { BACKEND_URL } from '../App';
 import WhatsAppTester from './WhatsAppTester';
+import { getFacilityTheme } from '../theme/facilityThemes';
+import useScrollReveal from '../hooks/useScrollReveal';
 
 export default function HospitalHub() {
   const [hospitals, setHospitals] = useState([]);
@@ -127,6 +129,9 @@ export default function HospitalHub() {
   }
 
   const facilityTypes = ['All', 'Hospital', 'Clinic', 'Medical', 'Lab', 'Government Hospital', 'Government Lab'];
+
+  // Animate sections/cards in as they scroll into view (re-scan after data loads).
+  useScrollReveal([loading, filteredHospitals.length, selectedType, selectedCity]);
 
   return (
     <div className="flex-1 w-full min-h-screen overflow-y-auto bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 no-scrollbar">
@@ -332,7 +337,7 @@ export default function HospitalHub() {
 
       {/* 2. Live Metrics Infotech Row */}
       <section className="bg-[var(--card-bg)] border-b border-[var(--border-color)]/25 py-8 px-6 sm:px-12 relative z-10 shadow-sm shadow-black/5">
-        <div className="max-w-[1280px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+        <div className="reveal max-w-[1280px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
           {[
             { value: '-42%', label: 'Lounge Wait Time', icon: 'schedule', color: 'text-[var(--primary-color)]' },
             { value: '99.8%', label: 'Dispatch Accuracy', icon: 'verified', color: 'text-[var(--tertiary-color)]' },
@@ -352,13 +357,13 @@ export default function HospitalHub() {
 
       {/* 3. Advanced Solutions Grid Section */}
       <section className="py-16 px-6 sm:px-12 max-w-[1280px] mx-auto text-left">
-        <div className="text-center max-w-xl mx-auto mb-12 space-y-2">
+        <div className="reveal text-center max-w-xl mx-auto mb-12 space-y-2">
           <span className="text-[10px] uppercase font-black text-[var(--primary-color)] tracking-widest bg-[var(--primary-color)]/10 px-3 py-1 rounded-full">Modular Technology</span>
           <h2 className="text-3xl font-black text-[var(--text-color)]">Healthcare Infotech Modules</h2>
           <p className="text-xs text-[var(--text-secondary)] font-semibold leading-relaxed">Our advanced SaaS queue ecosystem is powered by unified clinics integration, AI patient support, and multi-tenant admin consoles.</p>
         </div>
  
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+        <div className="reveal grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
           {[
             { title: 'Live Queue Telemetry', desc: 'Real-time dashboard visualization for waiting halls. Includes TV audio paging, ABSENT skips, and cabin check-in updates.', icon: 'tv', color: 'bg-[var(--primary-color)]/10 border-[var(--primary-color)]/20 text-[var(--primary-color)]' },
             { title: 'AI Symptom Triage', desc: 'Symptom-checking chatbot routes bookings instantly to appropriate doctors, reducing consultation overhead and queue lengths.', icon: 'smart_toy', color: 'bg-[var(--tertiary-color)]/10 border-[var(--tertiary-color)]/20 text-[var(--tertiary-color)]' },
@@ -381,12 +386,12 @@ export default function HospitalHub() {
       {/* 4. Interactive Step-by-Step Workflow ("How it Works") */}
       <section className="py-12 bg-[var(--card-bg)] border-t border-b border-[var(--border-color)]/25 px-6 sm:px-12">
         <div className="max-w-[1280px] mx-auto text-left">
-          <div className="text-center mb-12 space-y-2">
+          <div className="reveal text-center mb-12 space-y-2">
             <h2 className="text-3xl font-black text-[var(--text-color)]">The Patient Journey</h2>
             <p className="text-xs text-[var(--text-secondary)] font-semibold">How CareSync streamlines queue bookings in three fast steps.</p>
           </div>
- 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
+
+          <div className="reveal grid grid-cols-1 md:grid-cols-3 gap-8 relative">
             {/* Timeline connectors (visible on desktop) */}
             <div className="hidden md:block absolute top-12 left-[15%] right-[15%] h-[2px] bg-gradient-to-r from-[var(--primary-color)] via-[var(--secondary-color)] to-[var(--tertiary-color)] z-0"></div>
  
@@ -463,12 +468,17 @@ export default function HospitalHub() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
-            {filteredHospitals.map(h => (
-              <div 
-                key={h.id} 
+            {filteredHospitals.map(h => {
+              const cardTheme = getFacilityTheme(h.type);
+              return (
+              <div
+                key={h.id}
                 onClick={() => navigate(`/hospital/${h.id}`)}
-                className="group cursor-pointer bg-[var(--card-bg)] border border-[var(--border-color)]/40 hover:border-[var(--primary-color)]/40 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-black/5 hover:-translate-y-1 transition-all duration-300 flex flex-col relative min-w-0"
+                style={{ '--facility-ring': cardTheme.ring, '--primary-color': cardTheme.primary, '--primary-text': '#ffffff' }}
+                className="reveal card-hover group cursor-pointer bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl overflow-hidden shadow-sm flex flex-col relative min-w-0"
               >
+                {/* Themed top accent bar */}
+                <div className="h-1.5 w-full" style={{ background: `linear-gradient(90deg, ${cardTheme.primary}, ${cardTheme.accent})` }} />
                 {/* Cover Image */}
                 <div className="h-48 w-full overflow-hidden relative bg-zinc-800">
                   <img 
@@ -481,12 +491,13 @@ export default function HospitalHub() {
                   
                   {/* Status Badges */}
                   <div className="absolute top-4 right-4 flex flex-col items-end space-y-1.5">
-                    <span className="bg-[var(--tertiary-color)] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1">
+                    <span className="text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center space-x-1" style={{ background: cardTheme.primary }}>
                       <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping"></span>
                       <span>Active Queue</span>
                     </span>
-                    <span className="bg-black/60 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded shadow-sm border border-white/10">
-                      {h.type || 'Hospital'}
+                    <span className="backdrop-blur-md text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded shadow-sm border border-white/10 flex items-center space-x-1" style={{ background: `${cardTheme.secondary}cc` }}>
+                      <span className="material-symbols-outlined text-[12px]">{cardTheme.icon}</span>
+                      <span>{h.type || 'Hospital'}</span>
                     </span>
                   </div>
 
@@ -569,7 +580,8 @@ export default function HospitalHub() {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

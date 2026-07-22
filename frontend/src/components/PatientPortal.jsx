@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { BACKEND_URL, socket } from '../App';
+import { getFacilityTheme, themeVars, patternDataUri } from '../theme/facilityThemes';
+import useScrollReveal from '../hooks/useScrollReveal';
 
 export default function PatientPortal() {
   const { hospitalId } = useParams();
@@ -467,6 +469,9 @@ export default function PatientPortal() {
     }
   }, [myToken, hospitalInfo, currentLang]);
 
+  // Reveal sections on scroll; re-scan when facility loads or view mode flips.
+  useScrollReveal([hospitalInfo?.id, showChatMode, doctorList.length]);
+
   if (loadingHosp) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-[var(--bg-color)] space-y-4">
@@ -477,8 +482,14 @@ export default function PatientPortal() {
   }
 
   const isLab = hospitalInfo?.type === 'Lab';
-  const primaryColor = hospitalInfo?.primaryColor || (isLab ? '#0284c7' : '#0d9488');
-  const secondaryColor = hospitalInfo?.secondaryColor || '#0f172a';
+  // Resolve the facility's design identity (colour mood, gradient, icon, copy).
+  // Partner white-label colours always win over category defaults.
+  const theme = getFacilityTheme(hospitalInfo?.type, {
+    primaryColor: hospitalInfo?.primaryColor,
+    secondaryColor: hospitalInfo?.secondaryColor,
+  });
+  const primaryColor = theme.primary;
+  const secondaryColor = theme.secondary;
 
   const getDeptLabel = (originalDept) => {
     const isClinic = hospitalInfo?.type === 'Clinic';
@@ -496,11 +507,8 @@ export default function PatientPortal() {
 
   if (!showChatMode) {
     return (
-      <div 
-        style={{
-          '--primary-color': primaryColor,
-          '--secondary-color': secondaryColor
-        }}
+      <div
+        style={themeVars(theme)}
         className="flex-1 w-full bg-[var(--bg-color)] text-[var(--text-color)] overflow-y-auto min-w-0 font-sans scroll-smooth"
       >
         {/* LANDING PAGE NAV BAR */}
@@ -509,8 +517,8 @@ export default function PatientPortal() {
             {hospitalInfo?.logoUrl ? (
               <img src={hospitalInfo.logoUrl} alt="Logo" className="w-9 h-9 rounded-full object-cover shadow-sm" />
             ) : (
-              <div className="w-9 h-9 rounded-full bg-[var(--primary-color)]/10 text-[var(--primary-color)] flex items-center justify-center">
-                <span className="material-symbols-outlined text-[20px]">{isLab ? 'biotech' : 'local_hospital'}</span>
+              <div className="w-9 h-9 rounded-full bg-[var(--primary-color)]/10 text-[var(--primary-color)] flex items-center justify-center ring-1 ring-[var(--primary-color)]/20">
+                <span className="material-symbols-outlined text-[20px]">{theme.icon}</span>
               </div>
             )}
             <div>
@@ -555,63 +563,98 @@ export default function PatientPortal() {
           </div>
         </header>
 
-        {/* HERO SECTION */}
-        <section id="home" className="relative py-20 px-6 sm:px-12 max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-          <div className="space-y-6">
-            <div className="inline-flex items-center space-x-2 bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
-              <span className="material-symbols-outlined text-[14px]">verified</span>
-              <span>CareSync Verified B2B Partner</span>
-            </div>
-            <h1 className="text-4xl sm:text-5xl font-black text-[var(--text-color)] tracking-tight leading-tight">
-              {hospitalInfo?.welcomeMessage || (isLab ? 'Better Diagnostics. Brighter Lives.' : 'Transforming Science, Enhancing Lives')}
-            </h1>
-            <p className="text-sm text-[var(--text-secondary)] font-semibold leading-relaxed">
-              {hospitalInfo?.description || (isLab ? 'We are committed to delivering high-quality, precise laboratory testing and diagnostics that improve lives.' : 'We offer highly advanced medical diagnostic care, queue automation workflows, and verified patient treatments.')}
-            </p>
+        {/* HERO SECTION — facility-themed, animated */}
+        <section id="home" className="relative overflow-hidden">
+          {/* Animated themed gradient wash */}
+          <div
+            className="absolute inset-0 opacity-[0.10] dark:opacity-[0.16] animate-gradient pointer-events-none"
+            style={{ backgroundImage: 'linear-gradient(120deg, var(--grad-from), var(--grad-via), var(--grad-to), var(--grad-via))' }}
+          />
+          {/* Ambient facility pattern */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{ backgroundImage: patternDataUri(theme.pattern, theme.primary, 0.5), backgroundRepeat: 'repeat' }}
+          />
+          {/* Floating decorative orbs */}
+          <div className="absolute -top-24 -left-16 w-72 h-72 rounded-full blur-3xl opacity-30 animate-float-slow pointer-events-none" style={{ background: theme.primary }} />
+          <div className="absolute top-10 right-0 w-80 h-80 rounded-full blur-3xl opacity-20 animate-float-slow pointer-events-none" style={{ background: theme.accent, animationDelay: '3s' }} />
 
-            <div className="flex flex-col sm:flex-row gap-3 pt-2">
-              <button 
-                onClick={() => setShowChatMode(true)}
-                className="px-6 py-3.5 bg-[var(--primary-color)] text-[var(--primary-text)] hover:bg-[var(--primary-container)] hover:text-[var(--text-color)] font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-[var(--primary-color)]/20 flex items-center justify-center space-x-2 active:scale-98"
-              >
-                <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-                <span>{currentLang === 'hi' ? 'चैट बुकिंग सहायक' : currentLang === 'bn' ? 'চ্যাট বুকিং অ্যাসিস্ট্যান্ট' : 'Start AI Booking'}</span>
-              </button>
-              <a 
-                href={`https://wa.me/${whatsappNumber.replace(/[^0-9]/g, '')}?text=hi`}
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-2 active:scale-98"
-              >
-                <span className="material-symbols-outlined text-[18px]">chat</span>
-                <span>{currentLang === 'hi' ? 'व्हाट्सएप बुकिंग' : currentLang === 'bn' ? 'হোয়াটসঅ্যাপ বুকিং' : 'Book on WhatsApp'}</span>
-              </a>
-            </div>
-          </div>
+          <div className="relative py-20 px-6 sm:px-12 max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+            <div className="space-y-6">
+              <div className="animate-fade-in-up inline-flex items-center space-x-2 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 text-[var(--primary-color)] px-3.5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider">
+                <span className="material-symbols-outlined text-[15px]">{theme.icon}</span>
+                <span>{theme.heroKicker}</span>
+                <span className="w-1 h-1 rounded-full bg-[var(--primary-color)]/40" />
+                <span className="text-[var(--text-secondary)] normal-case tracking-normal font-bold">{theme.kind}</span>
+              </div>
+              <h1 className="animate-fade-in-up delay-100 text-4xl sm:text-5xl font-black text-[var(--text-color)] tracking-tight leading-[1.08]">
+                {hospitalInfo?.welcomeMessage || theme.heroTitle}
+              </h1>
+              <p className="animate-fade-in-up delay-200 text-sm text-[var(--text-secondary)] font-semibold leading-relaxed max-w-lg">
+                {hospitalInfo?.description || theme.heroSub}
+              </p>
 
-          {/* Hero Image & Waiting status dashboard */}
-          <div className="relative">
-            <div className="w-full h-80 sm:h-96 rounded-3xl overflow-hidden shadow-2xl relative border border-[var(--border-color)]/45">
-              <img 
-                src={hospitalInfo?.coverImage || hospitalInfo?.heroImage || (isLab ? 'https://images.unsplash.com/photo-1579154204601-01588f351167?q=80&w=800&auto=format&fit=crop' : 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop')} 
-                alt="Facility Campus" 
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent"></div>
-              
-              {/* Floating wait times summary */}
-              <div className="absolute bottom-6 left-6 right-6 bg-white/10 dark:bg-black/30 backdrop-blur-md rounded-2xl p-4 border border-white/20 text-white flex justify-between items-center">
-                <div>
-                  <p className="text-[9px] uppercase font-bold text-white/85 tracking-wider">Estimated Wait Times</p>
-                  <p className="text-sm font-black mt-1">
-                    {isLab 
-                      ? `Urgent Counter: ${waitTimes['Emergency']} mins • Blood draw: ${waitTimes['General Practice'] || 15} mins`
-                      : `General: ${waitTimes['General Practice'] || 15} mins • ER: ${waitTimes['Emergency']} mins`
-                    }
-                  </p>
+              <div className="animate-fade-in-up delay-300 flex flex-col sm:flex-row gap-3 pt-2">
+                <button
+                  onClick={() => setShowChatMode(true)}
+                  className="btn-sheen px-6 py-3.5 bg-[var(--primary-color)] text-[var(--primary-text)] hover:brightness-110 font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-[var(--primary-color)]/25 flex items-center justify-center space-x-2 active:scale-95 duration-100"
+                >
+                  <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                  <span>{currentLang === 'hi' ? 'चैट बुकिंग सहायक' : currentLang === 'bn' ? 'চ্যাট বুকিং অ্যাসিস্ট্যান্ট' : 'Start AI Booking'}</span>
+                </button>
+                <a
+                  href={`https://wa.me/${whatsappNumber.replace(/[^0-9]/g, '')}?text=hi`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-2 active:scale-95 duration-100"
+                >
+                  <span className="material-symbols-outlined text-[18px]">chat</span>
+                  <span>{currentLang === 'hi' ? 'व्हाट्सएप बुकिंग' : currentLang === 'bn' ? 'হোয়াটসঅ্যাপ বুকিং' : 'Book on WhatsApp'}</span>
+                </a>
+              </div>
+
+              {/* Trust chips */}
+              <div className="animate-fade-in-up delay-400 flex flex-wrap items-center gap-4 pt-3 text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                <span className="flex items-center space-x-1.5"><span className="material-symbols-outlined text-[15px] text-[var(--primary-color)]">verified_user</span><span>HIPAA Compliant</span></span>
+                <span className="flex items-center space-x-1.5"><span className="material-symbols-outlined text-[15px] text-[var(--primary-color)]">bolt</span><span>Live Queue</span></span>
+                <span className="flex items-center space-x-1.5"><span className="material-symbols-outlined text-[15px] text-[var(--primary-color)]">translate</span><span>Multilingual</span></span>
+              </div>
+            </div>
+
+            {/* Hero Image & live waiting status dashboard */}
+            <div className="animate-scale-in delay-200 relative">
+              {/* Glow ring behind image */}
+              <div className="absolute -inset-3 rounded-[2rem] blur-2xl opacity-30" style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.accent})` }} />
+              <div className="relative w-full h-80 sm:h-96 rounded-3xl overflow-hidden shadow-2xl border border-white/10">
+                <img
+                  src={hospitalInfo?.coverImage || hospitalInfo?.heroImage || theme.heroImage}
+                  alt="Facility Campus"
+                  className="w-full h-full object-cover"
+                  onError={(e) => { e.currentTarget.src = theme.heroImage; }}
+                />
+                <div className="absolute inset-0" style={{ background: `linear-gradient(to top, ${theme.secondary}e6, ${theme.secondary}40 45%, transparent)` }} />
+
+                {/* Floating category badge */}
+                <div className="absolute top-5 left-5 flex items-center space-x-2 bg-white/15 backdrop-blur-md rounded-full px-3 py-1.5 border border-white/20 text-white">
+                  <span className="material-symbols-outlined text-[16px]">{theme.icon}</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider">{theme.label}</span>
                 </div>
-                <div className="bg-emerald-550/80 px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-wider">
-                  Active
+
+                {/* Floating live wait-times summary */}
+                <div className="absolute bottom-6 left-6 right-6 bg-white/10 dark:bg-black/30 backdrop-blur-md rounded-2xl p-4 border border-white/20 text-white flex justify-between items-center">
+                  <div>
+                    <p className="text-[9px] uppercase font-bold text-white/85 tracking-wider">Live Estimated Wait</p>
+                    <p className="text-sm font-black mt-1">
+                      {isLab
+                        ? `Urgent: ${waitTimes['Emergency']}m • Blood draw: ${waitTimes['General Practice'] || 15}m`
+                        : `General: ${waitTimes['General Practice'] || 15}m • ER: ${waitTimes['Emergency']}m`
+                      }
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-1.5 bg-emerald-500/90 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                    <span>Active</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -621,7 +664,7 @@ export default function PatientPortal() {
         {/* SERVICES / SPECIALTIES SECTION */}
         <section id="services" className="bg-[var(--card-bg)] border-y border-[var(--border-color)]/30 py-20 px-6 sm:px-12">
           <div className="max-w-6xl mx-auto space-y-12">
-            <div className="text-center max-w-xl mx-auto space-y-3">
+            <div className="reveal text-center max-w-xl mx-auto space-y-3">
               <span className="text-[10px] font-black uppercase tracking-widest text-[var(--primary-color)] font-sans">
                 {hospitalInfo?.type === 'Clinic' 
                   ? `${hospitalInfo.clinicSubtype || 'General'} Clinic Care` 
@@ -650,10 +693,10 @@ export default function PatientPortal() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="reveal grid grid-cols-1 md:grid-cols-3 gap-6">
               {hospitalInfo?.customServices && hospitalInfo.customServices.length > 0 ? (
                 hospitalInfo.customServices.map((srv, idx) => (
-                  <div key={idx} className="bg-[var(--bg-color)] p-6 rounded-2xl border border-[var(--border-color)]/30 shadow-sm space-y-4 hover:shadow-md transition-shadow">
+                  <div key={idx} className="card-hover bg-[var(--bg-color)] p-6 rounded-2xl border border-[var(--border-color)]/30 shadow-sm space-y-4">
                     <span className="material-symbols-outlined text-[32px] text-[var(--primary-color)] bg-[var(--primary-color)]/10 p-3 rounded-2xl">
                       {srv.icon || 'local_hospital'}
                     </span>
@@ -664,7 +707,7 @@ export default function PatientPortal() {
               ) : (
                 <>
                   {/* Card 1 */}
-                  <div className="bg-[var(--bg-color)] p-6 rounded-2xl border border-[var(--border-color)]/30 shadow-sm space-y-4 hover:shadow-md transition-shadow">
+                  <div className="card-hover bg-[var(--bg-color)] p-6 rounded-2xl border border-[var(--border-color)]/30 shadow-sm space-y-4">
                     <span className="material-symbols-outlined text-[32px] text-rose-500 bg-rose-500/10 p-3 rounded-2xl">
                       {isLab ? 'biotech' : hospitalInfo?.type === 'Medical' ? 'medical_services' : 'local_hospital'}
                     </span>
@@ -682,7 +725,7 @@ export default function PatientPortal() {
                   </div>
 
                   {/* Card 2 */}
-                  <div className="bg-[var(--bg-color)] p-6 rounded-2xl border border-[var(--border-color)]/30 shadow-sm space-y-4 hover:shadow-md transition-shadow">
+                  <div className="card-hover bg-[var(--bg-color)] p-6 rounded-2xl border border-[var(--border-color)]/30 shadow-sm space-y-4">
                     <span className="material-symbols-outlined text-[32px] text-[var(--primary-color)] bg-[var(--primary-color)]/10 p-3 rounded-2xl">
                       {isLab ? 'bloodtype' : hospitalInfo?.type === 'Medical' ? 'biotech' : 'medical_services'}
                     </span>
@@ -700,7 +743,7 @@ export default function PatientPortal() {
                   </div>
 
                   {/* Card 3 */}
-                  <div className="bg-[var(--bg-color)] p-6 rounded-2xl border border-[var(--border-color)]/30 shadow-sm space-y-4 hover:shadow-md transition-shadow">
+                  <div className="card-hover bg-[var(--bg-color)] p-6 rounded-2xl border border-[var(--border-color)]/30 shadow-sm space-y-4">
                     <span className="material-symbols-outlined text-[32px] text-indigo-500 bg-indigo-500/10 p-3 rounded-2xl">
                       {isLab ? 'settings_accessibility' : hospitalInfo?.type === 'Medical' ? 'settings_accessibility' : 'child_care'}
                     </span>
@@ -772,7 +815,7 @@ export default function PatientPortal() {
 
         {/* REGISTERED ACTIVE DOCTORS SECTION */}
         <section id="doctors" className="py-20 px-6 sm:px-12 max-w-6xl mx-auto space-y-12">
-          <div className="text-center max-w-xl mx-auto space-y-3">
+          <div className="reveal text-center max-w-xl mx-auto space-y-3">
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--primary-color)]">Experienced Professionals</span>
             <h2 className="text-3xl font-black text-[var(--text-color)] tracking-tight font-sans">
               {isLab ? 'Our Certified Laboratory Specialists' : 'Our Registered Medical Specialists'}
@@ -791,11 +834,11 @@ export default function PatientPortal() {
               <p className="text-xs text-[var(--text-secondary)] font-bold">No active specialists listed on duty today.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="reveal grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {doctorList.map((doc) => (
-                <div 
+                <div
                   key={doc._id}
-                  className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 hover:shadow-lg transition-all text-center relative overflow-hidden group"
+                  className="card-hover bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 text-center relative overflow-hidden group"
                 >
                   <div className="w-16 h-16 rounded-full overflow-hidden bg-zinc-200 border border-[var(--border-color)]/30 mx-auto mb-4">
                     <img 
@@ -829,37 +872,37 @@ export default function PatientPortal() {
           )}
         </section>
 
-        {/* STATS INFOGRAPHIC (LUMINA INSPIRED) */}
-        <section className="bg-gradient-to-br from-[var(--secondary-color)] to-[var(--primary-color)] text-white py-16 px-6 sm:px-12">
-          <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8 text-center relative z-10">
+        {/* STATS INFOGRAPHIC — themed animated gradient band */}
+        <section
+          className="relative overflow-hidden text-white py-16 px-6 sm:px-12 animate-gradient"
+          style={{ backgroundImage: 'linear-gradient(120deg, var(--grad-to), var(--grad-from), var(--grad-via), var(--grad-from))' }}
+        >
+          <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: patternDataUri(theme.pattern, '#ffffff', 0.7), backgroundRepeat: 'repeat' }} />
+          <div className="reveal max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8 text-center relative z-10">
             <div>
-              <p className="text-4xl sm:text-5xl font-black">{isLab ? '500+' : '25+'}</p>
-              <p className="text-[10px] uppercase font-extrabold tracking-widest text-white/85 mt-2">
-                {isLab ? 'Diagnostic Tests' : 'Years of Excellence'}
-              </p>
+              <p className="text-4xl sm:text-5xl font-black">{theme.stat.value}</p>
+              <p className="text-[10px] uppercase font-extrabold tracking-widest text-white/85 mt-2">{theme.stat.label}</p>
             </div>
             <div>
-              <p className="text-4xl sm:text-5xl font-black">15 Mins</p>
+              <p className="text-4xl sm:text-5xl font-black">15 Min</p>
               <p className="text-[10px] uppercase font-extrabold tracking-widest text-white/85 mt-2">Avg Wait Time</p>
             </div>
             <div>
               <p className="text-4xl sm:text-5xl font-black">100%</p>
               <p className="text-[10px] uppercase font-extrabold tracking-widest text-white/85 mt-2">
-                {isLab ? 'Digital Reports' : 'Verified Reviews'}
+                {isLab ? 'Digital Reports' : hospitalInfo?.type === 'Medical' ? 'Genuine Stock' : 'Verified Reviews'}
               </p>
             </div>
             <div>
-              <p className="text-4xl sm:text-5xl font-black">{isLab ? '3000+' : '4000+'}</p>
-              <p className="text-[10px] uppercase font-extrabold tracking-widest text-white/85 mt-2">
-                {isLab ? 'Screenings Monthly' : 'Patients Treated'}
-              </p>
+              <p className="text-4xl sm:text-5xl font-black">{theme.stat.altValue}</p>
+              <p className="text-[10px] uppercase font-extrabold tracking-widest text-white/85 mt-2">{theme.stat.altLabel}</p>
             </div>
           </div>
         </section>
 
         {/* CONTACT & MAP INFO */}
         <section id="contact" className="py-20 px-6 sm:px-12 max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-          <div className="space-y-6">
+          <div className="reveal space-y-6">
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--primary-color)]">Reach Us Anytime</span>
             <h2 className="text-3xl font-black text-[var(--text-color)] tracking-tight font-sans">Location & Address Details</h2>
             <p className="text-xs text-[var(--text-secondary)] font-semibold leading-relaxed">
