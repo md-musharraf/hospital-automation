@@ -510,10 +510,27 @@ server.listen(PORT, () => {
   console.log(`Backend server listening on port ${PORT}`);
 });
 
+const repairDatabaseIndexes = async () => {
+  try {
+    if (mongoose.connection && mongoose.connection.db) {
+      const collection = mongoose.connection.db.collection('tokens');
+      const indexes = await collection.indexes();
+      const legacyIndex = indexes.find(idx => idx.name === 'tokenNumber_1');
+      if (legacyIndex) {
+        await collection.dropIndex('tokenNumber_1');
+        console.log('[DB REPAIR] Successfully dropped legacy single tokenNumber_1 index to prevent duplicate key collisions.');
+      }
+    }
+  } catch (idxErr) {
+    console.warn('[DB REPAIR] Index check completed:', idxErr.message);
+  }
+};
+
 const connectWithFallback = async (uri) => {
   try {
     await mongoose.connect(uri);
     console.log('Successfully connected to MongoDB.');
+    await repairDatabaseIndexes();
     await seedMockData();
   } catch (err) {
     console.error('Initial database connection failed:', err.message);

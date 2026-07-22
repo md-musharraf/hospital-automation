@@ -7,7 +7,8 @@ const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Hospital = require('../models/Hospital');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
-const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+const { sendWhatsAppNotification, getWhatsAppConfig, setWhatsAppConfig, getWhatsAppHistory } = require('../utils/whatsappHelper');
+const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 
 // Bilingual Translation Dictionary
 const dictionary = {
@@ -91,37 +92,6 @@ const dictionary = {
   }
 };
 
-// Collision-free unique token number generator per hospital tenant
-async function generateUniqueTokenNumber(hospitalId) {
-  try {
-    const activeHosp = hospitalId || 'general-hospital';
-    const existingTokens = await Token.find({ hospital: activeHosp }).select('tokenNumber');
-    let maxNum = 100;
-    for (let t of existingTokens) {
-      if (t && t.tokenNumber) {
-        const match = t.tokenNumber.match(/T-(\d+)/i) || t.tokenNumber.match(/\d+/);
-        if (match) {
-          const num = parseInt(match[1] || match[0], 10);
-          if (!isNaN(num) && num > maxNum) {
-            maxNum = num;
-          }
-        }
-      }
-    }
-    let nextNum = maxNum + 1;
-    let tokenNumber = `T-${nextNum}`;
-    let exists = await Token.findOne({ tokenNumber, hospital: activeHosp });
-    while (exists) {
-      nextNum++;
-      tokenNumber = `T-${nextNum}`;
-      exists = await Token.findOne({ tokenNumber, hospital: activeHosp });
-    }
-    return tokenNumber;
-  } catch (err) {
-    console.error('Error generating token number:', err);
-    return `T-${Date.now().toString().slice(-4)}`;
-  }
-}
 
 async function processChatMessage({ sessionId, message, hospitalId, socketIo }) {
   let session = await ChatSession.findOne({ sessionId });
@@ -513,7 +483,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         doctor: selectedDoc._id,
         symptoms: session.tempData.symptoms || 'General Checkup'
       });
-      await token.save();
+      await saveTokenWithRetry(token);
 
       let queue = await Queue.findOne({ doctor: selectedDoc._id });
       if (!queue) {
@@ -853,6 +823,91 @@ router.post('/token/delay', async (req, res) => {
   } catch (error) {
     console.error('Token delay error:', error);
     res.status(500).json({ message: 'Server error delaying token' });
+  }
+});
+
+// GET WhatsApp API Engine Configuration & Status
+router.get('/whatsapp/config', (req, res) => {
+  try {
+    const config = getWhatsAppConfig();
+    res.json(config);
+  } catch (err) {
+    console.error('Error fetching WhatsApp config:', err);
+    res.status(500).json({ message: 'Failed to fetch WhatsApp API configuration' });
+  }
+});
+
+// POST Update WhatsApp API Sender Number & Auto-Start Engine
+router.post('/whatsapp/config', async (req, res) => {
+  try {
+    const { whatsappNumber, isAutoWorking } = req.body;
+    if (!whatsappNumber || typeof whatsappNumber !== 'string') {
+      return res.status(400).json({ message: 'WhatsApp API number is required (e.g. +14155238886)' });
+    }
+
+    const updatedConfig = setWhatsAppConfig({ whatsappNumber, isAutoWorking });
+
+    // Also sync default hospital whatsappNumber in DB if exists
+    try {
+      let hospital = await Hospital.findOne({ id: 'general-hospital' });
+      if (hospital) {
+        hospital.whatsappNumber = updatedConfig.whatsappNumber;
+        await hospital.save();
+      }
+    } catch (hErr) {
+      console.warn('Could not update hospital DB record for WhatsApp number:', hErr.message);
+    }
+
+    res.json({
+      message: 'WhatsApp API Number updated successfully. Automatic Engine is now ACTIVE!',
+      config: updatedConfig
+    });
+  } catch (err) {
+    console.error('Error updating WhatsApp config:', err);
+    res.status(500).json({ message: 'Failed to update WhatsApp API configuration' });
+  }
+});
+
+// POST Trigger test outgoing WhatsApp notification
+router.post('/whatsapp/send-test', async (req, res) => {
+  try {
+    const { phone, message, type } = req.body;
+    const recipientPhone = phone || '+919876543210';
+    let bodyText = message;
+
+    if (!bodyText) {
+      if (type === 'walkin') {
+        bodyText = `Hello Patient, your walk-in token T-105 has been generated for Dr. Sarah Jenkins in Cabin 101. Estimated wait is 15 mins.`;
+      } else if (type === 'call') {
+        bodyText = `ALERT: Hello Patient, your token T-105 is now ACTIVE! Please proceed to Cabin 101 immediately.`;
+      } else if (type === 'sos') {
+        bodyText = `🚨 EMERGENCY SOS ALERT: Patient token T-999 upgraded to Emergency Priority!`;
+      } else if (type === 'reminder') {
+        bodyText = `CareSync Reminder: You have a follow-up appointment scheduled with Dr. Sarah Jenkins tomorrow at 10:00 AM.`;
+      } else {
+        bodyText = `Test notification from CareSync WhatsApp API Engine (${getWhatsAppConfig().whatsappNumber}). System is working automatically!`;
+      }
+    }
+
+    const result = await sendWhatsAppNotification(recipientPhone, bodyText, req.io);
+    res.json({
+      message: 'WhatsApp notification dispatched successfully',
+      result
+    });
+  } catch (err) {
+    console.error('Error sending test WhatsApp message:', err);
+    res.status(500).json({ message: 'Failed to send WhatsApp message', error: err.message });
+  }
+});
+
+// GET WhatsApp Message History Audit Log
+router.get('/whatsapp/history', (req, res) => {
+  try {
+    const history = getWhatsAppHistory(30);
+    res.json(history);
+  } catch (err) {
+    console.error('Error fetching WhatsApp history:', err);
+    res.status(500).json({ message: 'Failed to fetch WhatsApp history' });
   }
 });
 
