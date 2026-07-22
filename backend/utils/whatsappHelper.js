@@ -169,12 +169,28 @@ async function sendWhatsAppNotification(phone, message, socketIo) {
   if (accountSid && authToken && twilio && cleanPhone) {
     try {
       const client = twilio(accountSid, authToken);
-      const res = await client.messages.create({
-        body: message,
-        from: `whatsapp:${cleanSender}`,
-        to: `whatsapp:${cleanPhone}`
-      });
-      console.log(`[REAL WHATSAPP SENT] Twilio SID: ${res.sid} from ${cleanSender} to ${cleanPhone}`);
+      let res;
+      try {
+        res = await client.messages.create({
+          body: message,
+          from: `whatsapp:${cleanSender}`,
+          to: `whatsapp:${cleanPhone}`
+        });
+      } catch (tErr) {
+        // If channel error occurs (e.g. custom number is not an approved WhatsApp sender yet), retry with Twilio Sandbox number
+        if (tErr.message && tErr.message.includes('Channel') && cleanSender !== '+14155238886') {
+          console.warn('[TWILIO RETRY] Retrying with Twilio Sandbox Sender (+14155238886)...');
+          res = await client.messages.create({
+            body: message,
+            from: 'whatsapp:+14155238886',
+            to: `whatsapp:${cleanPhone}`
+          });
+        } else {
+          throw tErr;
+        }
+      }
+
+      console.log(`[REAL WHATSAPP SENT] Twilio SID: ${res.sid} to ${cleanPhone}`);
       dispatchRecord.sid = res.sid;
       dispatchRecord.provider = 'twilio';
       sentHistory.push(dispatchRecord);
