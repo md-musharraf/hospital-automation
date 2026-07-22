@@ -100,6 +100,8 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo) 
     return { status: 'skipped', provider: 'none', reason: 'missing_phone' };
   }
 
+  const metaConfigured = Boolean(metaToken && metaPhoneId && !metaToken.includes('your_meta_access_token'));
+
   const dispatchRecord = {
     id: `wa_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     timestamp: new Date().toISOString(),
@@ -108,11 +110,11 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo) 
     message: message,
     options: options,
     status: 'sent',
-    provider: (metaToken && metaPhoneId && !metaToken.includes('your_meta_access_token')) ? 'meta' : 'auto_gateway'
+    provider: metaConfigured ? 'meta' : 'auto_gateway'
   };
 
   // Meta WhatsApp Cloud API Direct Dispatch
-  if (metaToken && metaPhoneId && !metaToken.includes('your_meta_access_token') && cleanPhone) {
+  if (metaConfigured && cleanPhone) {
     try {
       const recipientDigits = cleanPhone.replace(/\D/g, '');
       const metaUrl = `https://graph.facebook.com/v20.0/${metaPhoneId}/messages`;
@@ -216,7 +218,32 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo) 
     }
   }
 
-  // Auto-Gateway Mode: Development/Simulation Fallback
+  // If Meta credentials ARE configured but the send above failed (e.g. the
+  // access token expired — Meta error 190 "Authentication Error"), do NOT
+  // pretend it was delivered via the simulation gateway. Report the real
+  // failure so it's visible in the history/UI instead of silently swallowed,
+  // which is exactly what masks an expired-token problem from the operator.
+  if (metaConfigured) {
+    console.error(`[META WHATSAPP UNDELIVERED] To: ${cleanPhone} | Reason: ${dispatchRecord.metaError || 'unknown'}`);
+    dispatchRecord.status = 'failed';
+    dispatchRecord.provider = 'meta';
+    sentHistory.push(dispatchRecord);
+
+    const failIo = socketIo || global.io;
+    if (failIo) {
+      failIo.emit('whatsapp-message-sent', dispatchRecord);
+    }
+
+    return {
+      status: 'failed',
+      provider: 'meta',
+      error: dispatchRecord.metaError || 'Meta WhatsApp Cloud API delivery failed',
+      to: cleanPhone,
+      record: dispatchRecord
+    };
+  }
+
+  // Auto-Gateway Mode: Development/Simulation Fallback (Meta not configured)
   let autoText = message;
   if (options && Array.isArray(options) && options.length > 0) {
     autoText += '\n\n' + options.map((opt, idx) => `${idx + 1}. ${opt}`).join('\n');
