@@ -91,6 +91,15 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo) 
     cleanSender = `+${cleanSender}`;
   }
 
+  // A missing/blank phone number means there's nowhere to actually deliver
+  // this message — don't fall through to Auto-Gateway mode and report
+  // 'sent' anyway, which would mask a real data problem (patient has no
+  // phone on file) as a successful delivery.
+  if (!cleanPhone) {
+    console.warn('[WHATSAPP SKIPPED] No phone number provided — message not dispatched:', message);
+    return { status: 'skipped', provider: 'none', reason: 'missing_phone' };
+  }
+
   const dispatchRecord = {
     id: `wa_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     timestamp: new Date().toISOString(),

@@ -99,6 +99,12 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     session = new ChatSession({ sessionId, currentState: 'LANGUAGE', tempData: {} });
   }
 
+  // Refresh the TTL field on every turn so the 1-hour `expires` index (see
+  // models/ChatSession.js) is a sliding inactivity window, not a hard
+  // 1-hour-from-creation cutoff that would delete an in-progress booking
+  // session out from under an actively chatting patient.
+  session.lastActivity = new Date();
+
   if (!session.tempData) {
     session.tempData = {};
   }
@@ -266,7 +272,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         .populate('patient')
         .populate('doctor');
 
-      if (!token) {
+      if (!token || !token.doctor || !token.patient) {
+        // token.doctor/token.patient can be null if the referenced Doctor or
+        // Patient document was deleted after the token was created — treat
+        // that the same as "not found" instead of crashing on `._id`/`.name`.
         return {
           messages: [{ sender: 'bot', text: text.tokenNotFound }],
           options: []
@@ -749,6 +758,37 @@ router.get('/queues/public-status', async (req, res) => {
   }
 });
 
+// GET sanitized live queue data for the unauthenticated waiting-room TV display
+// (optionally scoped to one hospital via ?hospitalId=). No passwordHash or
+// other sensitive fields are ever populated here.
+router.get('/public-tv-queues', async (req, res) => {
+  try {
+    const { hospitalId } = req.query;
+
+    const filter = {};
+    if (hospitalId) {
+      const doctors = await Doctor.find({ hospital: hospitalId });
+      filter.doctor = { $in: doctors.map(d => d._id) };
+    }
+
+    const queues = await Queue.find(filter)
+      .populate('doctor', '-passwordHash')
+      .populate({
+        path: 'currentToken',
+        populate: { path: 'patient' }
+      })
+      .populate({
+        path: 'activeQueue',
+        populate: { path: 'patient' }
+      });
+
+    res.json(queues);
+  } catch (error) {
+    console.error('Error fetching public TV queues:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // GET token details and queue position by Mongo ID
 router.get('/token/:tokenId', async (req, res) => {
   try {
@@ -758,7 +798,7 @@ router.get('/token/:tokenId', async (req, res) => {
       return res.status(404).json({ message: 'Token not found' });
     }
 
-    const queue = await Queue.findOne({ doctor: token.doctor._id });
+    const queue = token.doctor ? await Queue.findOne({ doctor: token.doctor._id }) : null;
     let position = -1;
     if (queue) {
       if (queue.currentToken && queue.currentToken.toString() === token._id.toString()) {

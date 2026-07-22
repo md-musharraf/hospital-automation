@@ -5,6 +5,7 @@ import { BACKEND_URL } from '../App';
 export default function DigitalPrescriptionViewer() {
   const { tokenId } = useParams();
   const [token, setToken] = useState(null);
+  const [hospitalName, setHospitalName] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -14,6 +15,15 @@ export default function DigitalPrescriptionViewer() {
       const data = await res.json();
       if (res.ok) {
         setToken(data.token);
+        if (data.token?.doctor?.hospital) {
+          fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
+            .then(r => r.json())
+            .then(hospitals => {
+              const match = Array.isArray(hospitals) && hospitals.find(h => h.id === data.token.doctor.hospital);
+              if (match) setHospitalName(match.name);
+            })
+            .catch(() => {});
+        }
       } else {
         setError(data.message || 'Prescription details not found');
       }
@@ -58,7 +68,7 @@ export default function DigitalPrescriptionViewer() {
             </div>
             <div>
               <h2 className="text-xl font-black tracking-tight">
-                {doctor?.hospital === 'pediatrics-clinic' ? 'St. Jude Pediatrics Clinic' : 'CareSync General Hospital'}
+                {hospitalName || 'CareSync Hospital'}
               </h2>
               <p className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">Clinical Care & Diagnostics</p>
             </div>

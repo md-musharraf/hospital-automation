@@ -7,7 +7,7 @@ export default function PublicTVDisplay() {
 
   const fetchQueues = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/staff/queues`);
+      const res = await fetch(`${BACKEND_URL}/api/v1/chat/public-tv-queues`);
       const data = await res.json();
       if (res.ok) {
         setQueues(data);

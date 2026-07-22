@@ -81,10 +81,10 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     }
     await patient.save();
 
-    // Check doctor availability
+    // Check doctor availability and hospital tenant match
     const doctor = await Doctor.findById(doctorId);
-    if (!doctor) {
-      return res.status(404).json({ message: 'Doctor not found' });
+    if (!doctor || doctor.hospital !== staffHosp) {
+      return res.status(404).json({ message: 'Doctor not found in this hospital tenant' });
     }
 
     // Generate unique token number (collision-free)
@@ -167,9 +167,10 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
 router.put('/tokens/:tokenId/override', authenticateToken, ensureStaff, async (req, res) => {
   try {
     const { tokenId } = req.params;
+    const staffHosp = req.user.hospital || 'general-hospital';
     const token = await Token.findById(tokenId);
-    if (!token) {
-      return res.status(404).json({ message: 'Token not found' });
+    if (!token || token.hospital !== staffHosp) {
+      return res.status(404).json({ message: 'Token not found in this hospital tenant' });
     }
 
     if (token.tokenType === 'Emergency') {
@@ -234,9 +235,10 @@ router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req
       return res.status(400).json({ message: 'Invalid token status value' });
     }
 
+    const staffHosp = req.user.hospital || 'general-hospital';
     const token = await Token.findById(tokenId);
-    if (!token) {
-      return res.status(404).json({ message: 'Token not found' });
+    if (!token || token.hospital !== staffHosp) {
+      return res.status(404).json({ message: 'Token not found in this hospital tenant' });
     }
 
     const previousStatus = token.status;

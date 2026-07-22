@@ -50,7 +50,7 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
     }
 
     // Find the test and update it
-    const test = token.labTests.find(t => t.testName === testName);
+    const test = token.labTests.find(t => t.testName.toLowerCase() === testName.toLowerCase());
     if (!test) {
       return res.status(404).json({ message: `Test "${testName}" not found on this token` });
     }

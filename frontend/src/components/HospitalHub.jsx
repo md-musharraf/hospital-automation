@@ -113,8 +113,8 @@ export default function HospitalHub() {
   }
 
   // Filter by search query
-  const filteredHospitals = processedHospitals.filter(h => 
-    h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+  const filteredHospitals = processedHospitals.filter(h =>
+    (h.name && h.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
     (h.description && h.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
     (h.address && h.address.toLowerCase().includes(searchQuery.toLowerCase())) ||
     (h.city && h.city.toLowerCase().includes(searchQuery.toLowerCase())) ||

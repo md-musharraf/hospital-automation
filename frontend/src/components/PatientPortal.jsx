@@ -275,41 +275,49 @@ export default function PatientPortal() {
 
     socket.on('queue-updated', handleQueueUpdated);
 
-    if (!myToken) return;
+    // These listeners only make sense once a token exists, but we must not
+    // `return` early here — that would skip registering the cleanup function
+    // below and leak the `queue-updated` listener above on every re-run of
+    // this effect (e.g. every time currentLang/voiceEnabled changes while
+    // myToken is still null, before a token is booked).
+    let handleTokenCalled = null;
+    let handleQueueReset = null;
 
-    socket.emit('join-room', `patient:${myToken.id}`);
+    if (myToken) {
+      socket.emit('join-room', `patient:${myToken.id}`);
 
-    const handleTokenCalled = (data) => {
-      if (data.status === 'Active') {
-        setCalledAlert(`Please proceed to ${data.roomName || 'Cabin A'}`);
-        if (voiceEnabled) {
-          speakAnnouncement(myToken.tokenNumber, data.roomName || 'Cabin A');
+      handleTokenCalled = (data) => {
+        if (data.status === 'Active') {
+          setCalledAlert(`Please proceed to ${data.roomName || 'Cabin A'}`);
+          if (voiceEnabled) {
+            speakAnnouncement(myToken.tokenNumber, data.roomName || 'Cabin A');
+          }
+          setMyToken(prev => ({ ...prev, status: 'Active' }));
+        } else if (data.status === 'Completed') {
+          setCalledAlert(null);
+          setMyToken(prev => ({ ...prev, status: 'Completed' }));
+        } else if (data.status === 'Absent') {
+          setCalledAlert(null);
+          setMyToken(prev => ({ ...prev, status: 'Absent' }));
+        } else if (data.status === 'Waiting') {
+          setMyToken(prev => ({ ...prev, status: 'Waiting' }));
         }
-        setMyToken(prev => ({ ...prev, status: 'Active' }));
-      } else if (data.status === 'Completed') {
-        setCalledAlert(null);
-        setMyToken(prev => ({ ...prev, status: 'Completed' }));
-      } else if (data.status === 'Absent') {
-        setCalledAlert(null);
-        setMyToken(prev => ({ ...prev, status: 'Absent' }));
-      } else if (data.status === 'Waiting') {
-        setMyToken(prev => ({ ...prev, status: 'Waiting' }));
-      }
-    };
+      };
 
-    const handleQueueReset = () => {
-      setMyToken(null);
-      setCalledAlert(null);
-      loadWaitTimes();
-      setMessages(prev => [...prev, { sender: 'bot', text: '🏥 Midnight maintenance completed. All active queue tokens have been archived.' }]);
-    };
+      handleQueueReset = () => {
+        setMyToken(null);
+        setCalledAlert(null);
+        loadWaitTimes();
+        setMessages(prev => [...prev, { sender: 'bot', text: '🏥 Midnight maintenance completed. All active queue tokens have been archived.' }]);
+      };
 
-    socket.on('token-called', handleTokenCalled);
-    socket.on('queue-reset', handleQueueReset);
+      socket.on('token-called', handleTokenCalled);
+      socket.on('queue-reset', handleQueueReset);
+    }
 
     return () => {
-      socket.off('token-called', handleTokenCalled);
-      socket.off('queue-reset', handleQueueReset);
+      if (handleTokenCalled) socket.off('token-called', handleTokenCalled);
+      if (handleQueueReset) socket.off('queue-reset', handleQueueReset);
       socket.off('queue-updated', handleQueueUpdated);
     };
   }, [myToken, voiceEnabled, currentLang]);

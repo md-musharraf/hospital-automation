@@ -18,6 +18,11 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
           setHospitals(data);
+          // Keep the controlled <select> value in sync with what's actually
+          // available — otherwise 'general-hospital' (the default) can be
+          // sent in the login request while the dropdown visually shows a
+          // different hospital, causing a confusing "Invalid credentials" error.
+          setSelectedHospital(prev => data.some(h => h.id === prev) ? prev : data[0].id);
         }
       })
       .catch(err => console.error('Error fetching hospitals for lab login:', err));
@@ -151,12 +156,16 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
 
     // Join Socket Room
     socket.emit('join-room', 'queue:global');
-    socket.on('queue-updated', () => {
+    const handleQueueUpdated = () => {
       fetchPendingTests();
-    });
+    };
+    socket.on('queue-updated', handleQueueUpdated);
 
     return () => {
-      socket.off('queue-updated');
+      // Pass the same handler reference — `socket` is a shared singleton, so
+      // calling socket.off('queue-updated') with no handler would deregister
+      // every other component's listener for this event too.
+      socket.off('queue-updated', handleQueueUpdated);
     };
   }, []);
 

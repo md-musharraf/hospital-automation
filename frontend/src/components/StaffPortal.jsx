@@ -20,6 +20,14 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
           setHospitals(data);
+          // The <select> below is controlled by `selectedHospital`, which
+          // defaults to 'general-hospital'. If that ID isn't actually in the
+          // fetched list (e.g. a freshly registered tenant with no demo data
+          // seeded), the dropdown visually falls back to showing the first
+          // option while the state — and therefore the login request — still
+          // silently points at 'general-hospital', causing a confusing
+          // "Invalid credentials" error. Keep state in sync with what's shown.
+          setSelectedHospital(prev => data.some(h => h.id === prev) ? prev : data[0].id);
         }
       })
       .catch(err => console.error('Error fetching hospitals for login:', err));
@@ -294,7 +302,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
   const handleStatusChange = async (tokenId, status) => {
     try {
-      await fetch(`${BACKEND_URL}/api/v1/staff/tokens/${tokenId}/status`, {
+      const res = await fetch(`${BACKEND_URL}/api/v1/staff/tokens/${tokenId}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -302,21 +310,31 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         },
         body: JSON.stringify({ status })
       });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to update token status');
+      }
+      setError('');
       loadData();
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     }
   };
 
   const handleEmergencyOverride = async (tokenId) => {
     try {
-      await fetch(`${BACKEND_URL}/api/v1/staff/tokens/${tokenId}/override`, {
+      const res = await fetch(`${BACKEND_URL}/api/v1/staff/tokens/${tokenId}/override`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${staffToken}` }
       });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to escalate token to Emergency');
+      }
+      setError('');
       loadData();
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     }
   };
 
@@ -1016,7 +1034,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             <td className="p-4 whitespace-nowrap font-semibold text-[var(--text-secondary)]">{pat.phone}</td>
                             <td className="p-4 whitespace-nowrap font-bold text-[var(--text-color)]">{pat.age} years</td>
                             <td className="p-4 whitespace-nowrap text-[var(--text-secondary)] font-semibold">{pat.gender}</td>
-                            <td className="p-4 text-center font-black text-[var(--secondary-color)]">{pat.visitHistory ? pat.visitHistory.length : 1}</td>
+                            <td className="p-4 text-center font-black text-[var(--secondary-color)]">{pat.visitCount || 1}</td>
                             <td className="p-4 whitespace-nowrap text-[var(--text-secondary)]">{new Date(pat.createdAt || Date.now()).toLocaleDateString()}</td>
                             <td className="p-4 text-right whitespace-nowrap space-x-2">
                               <button

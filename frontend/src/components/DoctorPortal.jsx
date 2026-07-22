@@ -19,6 +19,11 @@ export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
           setHospitals(data);
+          // Keep the controlled <select> value in sync with what's actually
+          // available — otherwise 'general-hospital' (the default) can be
+          // sent in the login request while the dropdown visually shows a
+          // different hospital, causing a confusing "Invalid credentials" error.
+          setSelectedHospital(prev => data.some(h => h.id === prev) ? prev : data[0].id);
         }
       })
       .catch(err => console.error('Error fetching hospitals for doctor login:', err));
@@ -194,6 +199,10 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
     loadQueue();
 
     socket.emit('join-room', `doctor:${doctorUser?.id || doctorUser?._id}`);
+    // Also join the hospital-wide room: internal chat messages (messages.js)
+    // broadcast to `hospital:${hospital}`, not `doctor:${id}`, so InternalChatBox
+    // needs this room to receive live updates.
+    socket.emit('join-room', `hospital:${doctorUser?.hospital || 'general-hospital'}`);
 
     const handleQueueUpdated = () => {
       loadQueue();
@@ -245,35 +254,49 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
 
   const handleComplete = async (revisitDays = null, medicines = [], advice = '') => {
     try {
-      await fetch(`${BACKEND_URL}/api/v1/doctor/queue/complete`, {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/complete`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${doctorToken}` 
+          'Authorization': `Bearer ${doctorToken}`
         },
         body: JSON.stringify({ revisitDays, medicines, advice })
       });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.message || 'Failed to complete checkup');
+        return false;
+      }
       loadQueue();
+      return true;
     } catch (err) {
       console.error(err);
+      alert('Network error: could not complete checkup');
+      return false;
     }
   };
 
   const handleMarkAbsent = async () => {
     try {
-      await fetch(`${BACKEND_URL}/api/v1/doctor/queue/mark-absent`, {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/mark-absent`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${doctorToken}` }
       });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.message || 'Failed to mark patient absent');
+        return;
+      }
       loadQueue();
     } catch (err) {
       console.error(err);
+      alert('Network error: could not mark patient absent');
     }
   };
 
   const handleAddBuffer = async (mins) => {
     try {
-      await fetch(`${BACKEND_URL}/api/v1/doctor/queue/add-buffer`, {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/add-buffer`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -281,9 +304,15 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
         },
         body: JSON.stringify({ minutes: parseInt(mins) })
       });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.message || 'Failed to update buffer delay');
+        return;
+      }
       loadQueue();
     } catch (err) {
       console.error(err);
+      alert('Network error: could not update buffer delay');
     }
   };
 
@@ -824,11 +853,19 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
               </button>
               <button
                 onClick={async () => {
+                  // These inputs use `required`, but since they aren't inside a
+                  // <form>, HTML5 validation never fires — enforce it manually.
+                  const incomplete = medicines.some(m => !m.name.trim() || !m.dosage.trim() || !m.duration.trim());
+                  if (incomplete) {
+                    alert('Please fill in Medicine Name, Dosage, and Duration for every medicine (or remove the empty row).');
+                    return;
+                  }
                   let days = null;
                   if (revisitSelection !== 'none') {
                     days = revisitSelection === 'custom' ? parseInt(customRevisitDays) : parseInt(revisitSelection);
                   }
-                  await handleComplete(days, medicines, advice);
+                  const success = await handleComplete(days, medicines, advice);
+                  if (!success) return;
                   setShowCompleteModal(false);
                   setRevisitSelection('none');
                   setMedicines([{ name: '', dosage: '1-0-1', duration: '5 days', instructions: 'After food' }]);

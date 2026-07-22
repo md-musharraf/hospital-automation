@@ -135,9 +135,12 @@ export default function SuperAdminPortal() {
         method: 'DELETE',
         headers: { 'X-Admin-Secret': adminSecret }
       });
+      const data = await res.json();
       if (res.ok) {
         setSuccessMsg('Doctor deleted successfully!');
         fetchFacilityPersonnel(editHospId);
+      } else {
+        setError(data.message || 'Failed to delete doctor');
       }
     } catch (err) {
       setError(err.message);
@@ -151,9 +154,12 @@ export default function SuperAdminPortal() {
         method: 'DELETE',
         headers: { 'X-Admin-Secret': adminSecret }
       });
+      const data = await res.json();
       if (res.ok) {
         setSuccessMsg('Staff member deleted successfully!');
         fetchFacilityPersonnel(editHospId);
+      } else {
+        setError(data.message || 'Failed to delete staff member');
       }
     } catch (err) {
       setError(err.message);
@@ -167,9 +173,12 @@ export default function SuperAdminPortal() {
         method: 'DELETE',
         headers: { 'X-Admin-Secret': adminSecret }
       });
+      const data = await res.json();
       if (res.ok) {
         setSuccessMsg('Lab assistant deleted successfully!');
         fetchFacilityPersonnel(editHospId);
+      } else {
+        setError(data.message || 'Failed to delete lab assistant');
       }
     } catch (err) {
       setError(err.message);
@@ -183,9 +192,12 @@ export default function SuperAdminPortal() {
         method: 'DELETE',
         headers: { 'X-Admin-Secret': adminSecret }
       });
+      const data = await res.json();
       if (res.ok) {
         setSuccessMsg('Patient record deleted successfully!');
         fetchFacilityPersonnel(editHospId);
+      } else {
+        setError(data.message || 'Failed to delete patient record');
       }
     } catch (err) {
       setError(err.message);

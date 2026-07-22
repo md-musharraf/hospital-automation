@@ -401,12 +401,13 @@ router.post('/queue/lab-request', authenticateToken, ensureDoctor, async (req, r
 });
 
 // GET patient visit history
-router.get('/patients/:patientId/history', authenticateToken, async (req, res) => {
+router.get('/patients/:patientId/history', authenticateToken, ensureDoctor, async (req, res) => {
   try {
     const { patientId } = req.params;
     const history = await Token.find({
       patient: patientId,
-      status: 'Completed'
+      status: 'Completed',
+      hospital: req.user.hospital || 'general-hospital'
     })
     .populate('doctor', 'name department')
     .sort({ completedAt: -1 });
