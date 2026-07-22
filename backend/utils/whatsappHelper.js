@@ -1,6 +1,6 @@
 // In-Memory Dynamic Config Store for WhatsApp API Engine
 let dynamicConfig = {
-  whatsappNumber: (process.env.META_PHONE_NUMBER_ID ? `+${process.env.META_PHONE_NUMBER_ID}` : '+14155238886').trim(),
+  whatsappNumber: '+917484043690',
   isAutoWorking: true,
   activeTriggers: [
     'Walk-in Appointment Tokens',
