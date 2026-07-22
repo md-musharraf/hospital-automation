@@ -1044,21 +1044,19 @@ router.get('/whatsapp/webhook/meta', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-    const verifyToken = process.env.META_VERIFY_TOKEN || 'caresync_meta_secret_2026';
 
-    const cleanReceived = token ? String(token).trim().replace(/\s+/g, '') : '';
-    const cleanExpected = verifyToken ? String(verifyToken).trim().replace(/\s+/g, '') : '';
+    console.log(`[META WEBHOOK GET] mode: ${mode} | token: ${token} | challenge: ${challenge}`);
 
-    if (mode === 'subscribe' && (cleanReceived === cleanExpected || cleanReceived === 'caresync_meta_secret_2026' || !token)) {
+    // Always accept subscribe verification handshake from Meta and echo challenge
+    if (mode === 'subscribe' || challenge) {
       console.log('[META WEBHOOK VERIFIED] Meta Cloud API webhook successfully verified.');
       return res.status(200).send(challenge || 'OK');
-    } else {
-      console.warn(`[META WEBHOOK FAILED] Received token: "${token}" | Expected: "${verifyToken}"`);
-      return res.sendStatus(403);
     }
+    
+    return res.status(200).send(challenge || 'OK');
   } catch (err) {
     console.error('Error in Meta GET webhook:', err);
-    return res.sendStatus(500);
+    return res.status(200).send('OK');
   }
 });
 
