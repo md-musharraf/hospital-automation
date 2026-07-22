@@ -110,6 +110,43 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   }
 
   const cleanMsg = message ? message.trim() : '';
+
+  // Direct Hospital QR Code Trigger Detector (e.g. "HI_general-hospital", "BOOK_general-hospital", "HI_CITY_CARE")
+  let qrHospital = null;
+  const qrPrefixMatch = cleanMsg.match(/^(?:hi_|book_|hosp_)?([a-z0-9_-]+)$/i);
+  if (qrPrefixMatch && cleanMsg.length >= 3) {
+    const candidateIdOrSlug = qrPrefixMatch[1].toLowerCase();
+    qrHospital = await Hospital.findOne({
+      $or: [
+        { id: candidateIdOrSlug },
+        { slug: candidateIdOrSlug },
+        { id: cleanMsg.toLowerCase() },
+        { slug: cleanMsg.toLowerCase() }
+      ]
+    });
+  }
+
+  // If message is a Hospital QR Code trigger scan
+  if (qrHospital) {
+    session.currentState = 'LANGUAGE';
+    session.tempData = { hospitalId: qrHospital.id };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+
+    const rawWhatsapp = qrHospital.whatsappNumber || process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886';
+    const num = rawWhatsapp.replace(/^whatsapp:/i, '');
+
+    return {
+      messages: [
+        { 
+          sender: 'bot', 
+          text: `🏥 *Welcome to ${qrHospital.name}!*\n📍 ${qrHospital.address}, ${qrHospital.city}\n📞 Phone: ${qrHospital.phone}\n\nPlease select your preferred language / अपनी पसंदीदा भाषा चुनें:\n• English\n• हिन्दी\n\n(Tip: Reply "Info" for facility photos & services)` 
+        }
+      ],
+      options: ['English', 'हिन्दी', 'Facility Info']
+    };
+  }
+
   const currentHospId = (session.tempData && session.tempData.hospitalId) || hospitalId || 'general-hospital';
   const hospital = await Hospital.findOne({ id: currentHospId }) || await Hospital.findOne({});
 
@@ -900,6 +937,44 @@ router.post('/whatsapp/send-test', async (req, res) => {
   }
 });
 
+// GET Hospital WhatsApp QR Code & Direct Deep Link Generator
+router.get('/whatsapp/qr/:hospitalId', async (req, res) => {
+  try {
+    const { hospitalId } = req.params;
+    let hospital = await Hospital.findOne({ 
+      $or: [{ id: hospitalId }, { slug: hospitalId }] 
+    }) || await Hospital.findOne({});
+
+    if (!hospital) {
+      hospital = {
+        id: hospitalId || 'general-hospital',
+        name: 'CareSync Healthcare Hospital',
+        city: 'Main City',
+        address: 'Main Hospital Road',
+        phone: '+919876543210'
+      };
+    }
+
+    const waConfig = getWhatsAppConfig();
+    const cleanNumber = (waConfig.whatsappNumber || '+13613160967').replace(/\D/g, '');
+    const prefilledText = `HI_${hospital.id}`;
+    const waDeepLink = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(prefilledText)}`;
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(waDeepLink)}`;
+
+    res.json({
+      hospitalId: hospital.id,
+      hospitalName: hospital.name,
+      whatsappNumber: waConfig.whatsappNumber,
+      prefilledText: prefilledText,
+      waDeepLink: waDeepLink,
+      qrImageUrl: qrImageUrl
+    });
+  } catch (err) {
+    console.error('Error generating hospital QR:', err);
+    res.status(500).json({ message: 'Failed to generate hospital WhatsApp QR Code' });
+  }
+});
+
 // GET WhatsApp Message History Audit Log
 router.get('/whatsapp/history', (req, res) => {
   try {
@@ -908,6 +983,138 @@ router.get('/whatsapp/history', (req, res) => {
   } catch (err) {
     console.error('Error fetching WhatsApp history:', err);
     res.status(500).json({ message: 'Failed to fetch WhatsApp history' });
+  }
+});
+
+// GET Meta WhatsApp Cloud API Webhook Verification Endpoint
+router.get('/whatsapp/webhook/meta', (req, res) => {
+  try {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    const verifyToken = process.env.META_VERIFY_TOKEN || 'caresync_meta_secret_2026';
+
+    if (mode === 'subscribe' && token === verifyToken) {
+      console.log('[META WEBHOOK VERIFIED] Meta Cloud API webhook successfully verified.');
+      return res.status(200).send(challenge);
+    } else {
+      console.warn('[META WEBHOOK FAILED] Token mismatch or invalid mode.');
+      return res.sendStatus(403);
+    }
+  } catch (err) {
+    console.error('Error in Meta GET webhook:', err);
+    return res.sendStatus(500);
+  }
+});
+
+// POST Meta WhatsApp Cloud API Webhook Event Handler (Incoming Messages)
+router.post('/whatsapp/webhook/meta', async (req, res) => {
+  try {
+    const body = req.body;
+
+    // Acknowledge receipt to Meta immediately (must respond within 3 seconds)
+    res.status(200).send('EVENT_RECEIVED');
+
+    if (body && body.object === 'whatsapp_business_account' && body.entry) {
+      for (const entry of body.entry) {
+        if (!entry.changes) continue;
+        for (const change of entry.changes) {
+          const value = change.value;
+          if (value && value.messages && value.messages.length > 0) {
+            for (const msg of value.messages) {
+              const fromPhone = msg.from; // e.g. "15551234567" or "919876543210"
+              let textContent = '';
+
+              if (msg.type === 'text' && msg.text) {
+                textContent = msg.text.body;
+              } else if (msg.type === 'interactive' && msg.interactive) {
+                if (msg.interactive.type === 'button_reply' && msg.interactive.button_reply) {
+                  textContent = msg.interactive.button_reply.title || msg.interactive.button_reply.id;
+                } else if (msg.interactive.type === 'list_reply' && msg.interactive.list_reply) {
+                  textContent = msg.interactive.list_reply.title || msg.interactive.list_reply.id;
+                }
+              } else if (msg.type === 'button' && msg.button) {
+                textContent = msg.button.text || msg.button.payload;
+              }
+
+              if (fromPhone && textContent) {
+                const formattedPhone = fromPhone.startsWith('+') ? fromPhone : `+${fromPhone}`;
+                const sessionId = `wa_${formattedPhone.replace(/\D/g, '')}`;
+
+                console.log(`[META INCOMING WHATSAPP] From: ${formattedPhone} | Session: ${sessionId} | Text: "${textContent}"`);
+
+                // Feed input into CareSync patient appointment state engine
+                const botResponse = await processChatMessage({
+                  sessionId,
+                  message: textContent,
+                  hospitalId: 'general-hospital',
+                  socketIo: req.io || global.io
+                });
+
+                // Dispatch state machine response back to user via Meta Cloud API
+                if (botResponse && botResponse.messages) {
+                  for (let i = 0; i < botResponse.messages.length; i++) {
+                    const m = botResponse.messages[i];
+                    let textToSend = m.text;
+
+                    // Append menu choices if options exist on last message
+                    if (i === botResponse.messages.length - 1 && botResponse.options && botResponse.options.length > 0) {
+                      textToSend += '\n\n' + botResponse.options.map((opt, idx) => `${idx + 1}. ${opt}`).join('\n');
+                    }
+
+                    await sendWhatsAppNotification(formattedPhone, textToSend, req.io || global.io);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error processing Meta POST webhook:', err);
+  }
+});
+
+// POST Twilio WhatsApp Incoming Webhook Handler
+router.post('/whatsapp/webhook/twilio', async (req, res) => {
+  try {
+    const { From, Body } = req.body;
+
+    // Twilio expects a TwiML response
+    res.setHeader('Content-Type', 'text/xml');
+    res.status(200).send('<Response></Response>');
+
+    if (From && Body) {
+      const cleanPhone = From.replace(/^whatsapp:/i, '').trim();
+      const formattedPhone = cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
+      const sessionId = `wa_${formattedPhone.replace(/\D/g, '')}`;
+
+      console.log(`[TWILIO INCOMING WHATSAPP] From: ${formattedPhone} | Session: ${sessionId} | Text: "${Body}"`);
+
+      // Feed message to CareSync patient appointment state engine
+      const botResponse = await processChatMessage({
+        sessionId,
+        message: Body.trim(),
+        hospitalId: 'general-hospital',
+        socketIo: req.io || global.io
+      });
+
+      if (botResponse && botResponse.messages) {
+        for (let i = 0; i < botResponse.messages.length; i++) {
+          const m = botResponse.messages[i];
+          let textToSend = m.text;
+
+          if (i === botResponse.messages.length - 1 && botResponse.options && botResponse.options.length > 0) {
+            textToSend += '\n\n' + botResponse.options.map((opt, idx) => `${idx + 1}. ${opt}`).join('\n');
+          }
+
+          await sendWhatsAppNotification(formattedPhone, textToSend, req.io || global.io);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error processing Twilio POST webhook:', err);
   }
 });
 

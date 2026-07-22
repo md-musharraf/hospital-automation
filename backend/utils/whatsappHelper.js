@@ -28,13 +28,25 @@ function getWhatsAppConfig() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const hasTwilio = Boolean(accountSid && authToken && twilio);
+  const metaToken = process.env.META_WHATSAPP_ACCESS_TOKEN || process.env.META_ACCESS_TOKEN;
+  const metaPhoneId = process.env.META_PHONE_NUMBER_ID;
+  const hasMeta = Boolean(metaToken && metaPhoneId && !metaToken.includes('your_meta_access_token'));
+
+  let providerMode = 'Auto-Gateway (API Number Active)';
+  if (hasMeta) {
+    providerMode = 'Meta WhatsApp Cloud API';
+  } else if (hasTwilio) {
+    providerMode = 'Twilio Cloud API';
+  }
 
   return {
     whatsappNumber: dynamicConfig.whatsappNumber,
     isAutoWorking: dynamicConfig.isAutoWorking,
     activeTriggers: dynamicConfig.activeTriggers,
-    providerMode: hasTwilio ? 'Twilio Cloud API' : 'Auto-Gateway (API Number Active)',
-    hasCredentials: hasTwilio,
+    providerMode,
+    hasCredentials: hasMeta || hasTwilio,
+    hasMeta,
+    hasTwilio,
     totalSentCount: sentHistory.length
   };
 }
@@ -67,6 +79,7 @@ function getWhatsAppHistory(limit = 20) {
 
 /**
  * Sends a WhatsApp notification to a patient.
+ * If Meta WhatsApp Cloud API credentials are present, dispatches via Meta Graph API.
  * If Twilio credentials are provided in env, sends a real WhatsApp message via Twilio.
  * If ONLY WhatsApp API number is provided, automatically dispatches via Auto-Gateway mode.
  * 
@@ -76,11 +89,13 @@ function getWhatsAppHistory(limit = 20) {
  * @returns {Promise<object>} Status of the notification dispatch
  */
 async function sendWhatsAppNotification(phone, message, socketIo) {
+  const metaToken = process.env.META_WHATSAPP_ACCESS_TOKEN || process.env.META_ACCESS_TOKEN;
+  const metaPhoneId = process.env.META_PHONE_NUMBER_ID;
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromWhatsApp = dynamicConfig.whatsappNumber || process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886';
 
-  // Normalize recipient phone number (ensure + prefix)
+  // Normalize recipient phone number (ensure + prefix for logging)
   let cleanPhone = phone ? phone.trim() : '';
   if (cleanPhone && !cleanPhone.startsWith('+')) {
     cleanPhone = `+${cleanPhone}`;
@@ -99,10 +114,58 @@ async function sendWhatsAppNotification(phone, message, socketIo) {
     to: cleanPhone,
     message: message,
     status: 'sent',
-    provider: (accountSid && authToken && twilio) ? 'twilio' : 'auto_gateway'
+    provider: metaToken && metaPhoneId ? 'meta' : (accountSid && authToken && twilio) ? 'twilio' : 'auto_gateway'
   };
 
-  // If full Twilio credentials are present, attempt direct Twilio message delivery
+  // 1. Meta WhatsApp Cloud API Direct Dispatch
+  if (metaToken && metaPhoneId && !metaToken.includes('your_meta_access_token') && cleanPhone) {
+    try {
+      const recipientDigits = cleanPhone.replace(/\D/g, '');
+      const metaUrl = `https://graph.facebook.com/v20.0/${metaPhoneId}/messages`;
+      
+      const payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: recipientDigits,
+        type: 'text',
+        text: { preview_url: false, body: message }
+      };
+
+      const res = await (global.fetch || require('node-fetch'))(metaUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${metaToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.messages && data.messages.length > 0) {
+        const msgId = data.messages[0].id;
+        console.log(`[META WHATSAPP SENT] Message ID: ${msgId} to ${cleanPhone}`);
+        dispatchRecord.sid = msgId;
+        dispatchRecord.provider = 'meta';
+        sentHistory.push(dispatchRecord);
+
+        const io = socketIo || global.io;
+        if (io) {
+          io.emit('whatsapp-message-sent', dispatchRecord);
+        }
+        return { status: 'sent', provider: 'meta', messageId: msgId, record: dispatchRecord };
+      } else {
+        const errDetail = (data && data.error && data.error.message) || JSON.stringify(data);
+        console.error('[META WHATSAPP FAILED] Error:', errDetail, '| Falling back...');
+        dispatchRecord.metaError = errDetail;
+      }
+    } catch (err) {
+      console.error('[META WHATSAPP FAILED] Exception:', err.message, '| Falling back...');
+      dispatchRecord.metaError = err.message;
+    }
+  }
+
+  // 2. Twilio Cloud API Dispatch
   if (accountSid && authToken && twilio && cleanPhone) {
     try {
       const client = twilio(accountSid, authToken);
@@ -127,7 +190,7 @@ async function sendWhatsAppNotification(phone, message, socketIo) {
     }
   }
 
-  // Auto-Gateway Mode: When ONLY WhatsApp API Number is provided
+  // 3. Auto-Gateway Mode: When ONLY WhatsApp API Number is provided
   console.log(`[WHATSAPP AUTO-GATEWAY DISPATCH] From: whatsapp:${cleanSender} -> To: whatsapp:${cleanPhone} | Msg: "${message}"`);
   dispatchRecord.provider = 'auto_gateway';
   dispatchRecord.note = 'Dispatched via WhatsApp API Number Auto-Gateway';
