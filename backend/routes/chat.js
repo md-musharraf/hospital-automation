@@ -1041,22 +1041,30 @@ router.get('/whatsapp/history', (req, res) => {
 // GET Meta WhatsApp Cloud API Webhook Verification Endpoint
 router.get('/whatsapp/webhook/meta', (req, res) => {
   try {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
+    // express-mongo-sanitize (mounted globally in index.js) strips/rewrites
+    // dotted keys from req.query to block NoSQL-injection payloads — but
+    // Meta's verification handshake uses fixed, non-negotiable dotted keys
+    // (hub.mode, hub.verify_token, hub.challenge), so req.query['hub.mode']
+    // is always undefined by the time it gets here. Read them straight off
+    // the raw, untouched query string instead.
+    const rawQuery = new URLSearchParams(req.originalUrl.split('?')[1] || '');
+    const mode = rawQuery.get('hub.mode');
+    const token = rawQuery.get('hub.verify_token');
+    const challenge = rawQuery.get('hub.challenge');
+    const expectedToken = process.env.META_VERIFY_TOKEN;
 
     console.log(`[META WEBHOOK GET] mode: ${mode} | token: ${token} | challenge: ${challenge}`);
 
-    // Always accept subscribe verification handshake from Meta and echo challenge
-    if (mode === 'subscribe' || challenge) {
+    if (mode === 'subscribe' && expectedToken && token === expectedToken) {
       console.log('[META WEBHOOK VERIFIED] Meta Cloud API webhook successfully verified.');
-      return res.status(200).send(challenge || 'OK');
+      return res.status(200).send(challenge);
     }
-    
-    return res.status(200).send(challenge || 'OK');
+
+    console.warn('[META WEBHOOK VERIFICATION FAILED] hub.mode or hub.verify_token did not match META_VERIFY_TOKEN.');
+    return res.status(403).send('Forbidden: verify token mismatch');
   } catch (err) {
     console.error('Error in Meta GET webhook:', err);
-    return res.status(200).send('OK');
+    return res.status(500).send('Server error');
   }
 });
 
