@@ -1067,14 +1067,11 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                 if (botResponse && botResponse.messages) {
                   for (let i = 0; i < botResponse.messages.length; i++) {
                     const m = botResponse.messages[i];
-                    let textToSend = m.text;
+                    const opts = (i === botResponse.messages.length - 1 && botResponse.options && botResponse.options.length > 0)
+                      ? botResponse.options
+                      : [];
 
-                    // Append menu choices if options exist on last message
-                    if (i === botResponse.messages.length - 1 && botResponse.options && botResponse.options.length > 0) {
-                      textToSend += '\n\n' + botResponse.options.map((opt, idx) => `${idx + 1}. ${opt}`).join('\n');
-                    }
-
-                    await sendWhatsAppNotification(formattedPhone, textToSend, req.io || global.io);
+                    await sendWhatsAppNotification(formattedPhone, m.text, opts, req.io || global.io);
                   }
                 }
               }
@@ -1085,48 +1082,6 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
     }
   } catch (err) {
     console.error('Error processing Meta POST webhook:', err);
-  }
-});
-
-// POST Twilio WhatsApp Incoming Webhook Handler
-router.post('/whatsapp/webhook/twilio', async (req, res) => {
-  try {
-    const { From, Body } = req.body;
-
-    // Twilio expects a TwiML response
-    res.setHeader('Content-Type', 'text/xml');
-    res.status(200).send('<Response></Response>');
-
-    if (From && Body) {
-      const cleanPhone = From.replace(/^whatsapp:/i, '').trim();
-      const formattedPhone = cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
-      const sessionId = `wa_${formattedPhone.replace(/\D/g, '')}`;
-
-      console.log(`[TWILIO INCOMING WHATSAPP] From: ${formattedPhone} | Session: ${sessionId} | Text: "${Body}"`);
-
-      // Feed message to CareSync patient appointment state engine
-      const botResponse = await processChatMessage({
-        sessionId,
-        message: Body.trim(),
-        hospitalId: 'general-hospital',
-        socketIo: req.io || global.io
-      });
-
-      if (botResponse && botResponse.messages) {
-        for (let i = 0; i < botResponse.messages.length; i++) {
-          const m = botResponse.messages[i];
-          let textToSend = m.text;
-
-          if (i === botResponse.messages.length - 1 && botResponse.options && botResponse.options.length > 0) {
-            textToSend += '\n\n' + botResponse.options.map((opt, idx) => `${idx + 1}. ${opt}`).join('\n');
-          }
-
-          await sendWhatsAppNotification(formattedPhone, textToSend, req.io || global.io);
-        }
-      }
-    }
-  } catch (err) {
-    console.error('Error processing Twilio POST webhook:', err);
   }
 });
 

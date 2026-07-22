@@ -1,13 +1,6 @@
-let twilio;
-try {
-  twilio = require('twilio');
-} catch (e) {
-  // twilio package not installed locally, will use console simulation fallback
-}
-
 // In-Memory Dynamic Config Store for WhatsApp API Engine
 let dynamicConfig = {
-  whatsappNumber: (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886').replace(/^whatsapp:/i, '').trim(),
+  whatsappNumber: (process.env.META_PHONE_NUMBER_ID ? `+${process.env.META_PHONE_NUMBER_ID}` : '+14155238886').trim(),
   isAutoWorking: true,
   activeTriggers: [
     'Walk-in Appointment Tokens',
@@ -25,28 +18,17 @@ const sentHistory = [];
  * Gets current active WhatsApp API configuration and engine status
  */
 function getWhatsAppConfig() {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const hasTwilio = Boolean(accountSid && authToken && twilio);
   const metaToken = process.env.META_WHATSAPP_ACCESS_TOKEN || process.env.META_ACCESS_TOKEN;
   const metaPhoneId = process.env.META_PHONE_NUMBER_ID;
   const hasMeta = Boolean(metaToken && metaPhoneId && !metaToken.includes('your_meta_access_token'));
-
-  let providerMode = 'Auto-Gateway (API Number Active)';
-  if (hasMeta) {
-    providerMode = 'Meta WhatsApp Cloud API';
-  } else if (hasTwilio) {
-    providerMode = 'Twilio Cloud API';
-  }
 
   return {
     whatsappNumber: dynamicConfig.whatsappNumber,
     isAutoWorking: dynamicConfig.isAutoWorking,
     activeTriggers: dynamicConfig.activeTriggers,
-    providerMode,
-    hasCredentials: hasMeta || hasTwilio,
-    hasMeta,
-    hasTwilio,
+    providerMode: hasMeta ? 'Meta WhatsApp Cloud API' : 'Auto-Gateway (API Number Active)',
+    hasCredentials: hasMeta,
+    hasMeta: hasMeta,
     totalSentCount: sentHistory.length
   };
 }
@@ -65,7 +47,7 @@ function setWhatsAppConfig(config) {
   if (typeof config.isAutoWorking === 'boolean') {
     dynamicConfig.isAutoWorking = config.isAutoWorking;
   } else {
-    dynamicConfig.isAutoWorking = true; // Auto-start working when API number is provided
+    dynamicConfig.isAutoWorking = true;
   }
   return getWhatsAppConfig();
 }
@@ -78,30 +60,32 @@ function getWhatsAppHistory(limit = 20) {
 }
 
 /**
- * Sends a WhatsApp notification to a patient.
- * If Meta WhatsApp Cloud API credentials are present, dispatches via Meta Graph API.
- * If Twilio credentials are provided in env, sends a real WhatsApp message via Twilio.
- * If ONLY WhatsApp API number is provided, automatically dispatches via Auto-Gateway mode.
+ * Sends a WhatsApp notification to a patient using Meta WhatsApp Cloud API v20.0.
+ * Supports text messages and interactive quick reply buttons / list options.
+ * Falls back cleanly to Auto-Gateway mode if Meta credentials are not configured.
  * 
  * @param {string} phone Patient's phone number
  * @param {string} message Message body
+ * @param {Array<string>} [options] Optional button/list options for interactive messaging
  * @param {object} [socketIo] Optional Socket.io instance for real-time delivery broadcasting
  * @returns {Promise<object>} Status of the notification dispatch
  */
-async function sendWhatsAppNotification(phone, message, socketIo) {
+async function sendWhatsAppNotification(phone, message, options = [], socketIo) {
+  // Allow signature overloading sendWhatsAppNotification(phone, message, socketIo)
+  if (options && !Array.isArray(options) && typeof options === 'object') {
+    socketIo = options;
+    options = [];
+  }
+
   const metaToken = process.env.META_WHATSAPP_ACCESS_TOKEN || process.env.META_ACCESS_TOKEN;
   const metaPhoneId = process.env.META_PHONE_NUMBER_ID;
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const fromWhatsApp = dynamicConfig.whatsappNumber || process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886';
+  const fromWhatsApp = dynamicConfig.whatsappNumber || '+14155238886';
 
-  // Normalize recipient phone number (ensure + prefix for logging)
   let cleanPhone = phone ? phone.trim() : '';
   if (cleanPhone && !cleanPhone.startsWith('+')) {
     cleanPhone = `+${cleanPhone}`;
   }
 
-  // Normalize sender WhatsApp number
   let cleanSender = fromWhatsApp.replace(/^whatsapp:/i, '').trim();
   if (!cleanSender.startsWith('+')) {
     cleanSender = `+${cleanSender}`;
@@ -113,23 +97,81 @@ async function sendWhatsAppNotification(phone, message, socketIo) {
     from: cleanSender,
     to: cleanPhone,
     message: message,
+    options: options,
     status: 'sent',
-    provider: metaToken && metaPhoneId ? 'meta' : (accountSid && authToken && twilio) ? 'twilio' : 'auto_gateway'
+    provider: (metaToken && metaPhoneId && !metaToken.includes('your_meta_access_token')) ? 'meta' : 'auto_gateway'
   };
 
-  // 1. Meta WhatsApp Cloud API Direct Dispatch
+  // Meta WhatsApp Cloud API Direct Dispatch
   if (metaToken && metaPhoneId && !metaToken.includes('your_meta_access_token') && cleanPhone) {
     try {
       const recipientDigits = cleanPhone.replace(/\D/g, '');
       const metaUrl = `https://graph.facebook.com/v20.0/${metaPhoneId}/messages`;
       
-      const payload = {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: recipientDigits,
-        type: 'text',
-        text: { preview_url: false, body: message }
-      };
+      let payload;
+
+      // 1. Interactive Quick Reply Buttons (1 to 3 options, e.g. Male / Female / Other)
+      if (options && Array.isArray(options) && options.length > 0 && options.length <= 3) {
+        payload = {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: recipientDigits,
+          type: 'interactive',
+          interactive: {
+            type: 'button',
+            body: { text: message },
+            action: {
+              buttons: options.map((opt, idx) => ({
+                type: 'reply',
+                reply: {
+                  id: `btn_${idx + 1}_${opt.substring(0, 10).replace(/\s+/g, '_')}`,
+                  title: opt.substring(0, 20) // Meta max button title length is 20 chars
+                }
+              }))
+            }
+          }
+        };
+      } 
+      // 2. Interactive List Menu (> 3 options, up to 10 items)
+      else if (options && Array.isArray(options) && options.length > 3 && options.length <= 10) {
+        payload = {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: recipientDigits,
+          type: 'interactive',
+          interactive: {
+            type: 'list',
+            body: { text: message },
+            action: {
+              button: 'Select Option',
+              sections: [
+                {
+                  title: 'Available Choices',
+                  rows: options.slice(0, 10).map((opt, idx) => ({
+                    id: `opt_${idx + 1}`,
+                    title: opt.substring(0, 24),
+                    description: `Option ${idx + 1}`
+                  }))
+                }
+              ]
+            }
+          }
+        };
+      } 
+      // 3. Plain Text Message
+      else {
+        let fullText = message;
+        if (options && Array.isArray(options) && options.length > 0) {
+          fullText += '\n\n' + options.map((opt, idx) => `${idx + 1}. ${opt}`).join('\n');
+        }
+        payload = {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: recipientDigits,
+          type: 'text',
+          text: { preview_url: false, body: fullText }
+        };
+      }
 
       const res = await (global.fetch || require('node-fetch'))(metaUrl, {
         method: 'POST',
@@ -165,54 +207,17 @@ async function sendWhatsAppNotification(phone, message, socketIo) {
     }
   }
 
-  // 2. Twilio Cloud API Dispatch
-  if (accountSid && authToken && twilio && cleanPhone) {
-    try {
-      const client = twilio(accountSid, authToken);
-      let res;
-      try {
-        res = await client.messages.create({
-          body: message,
-          from: `whatsapp:${cleanSender}`,
-          to: `whatsapp:${cleanPhone}`
-        });
-      } catch (tErr) {
-        // If channel error occurs (e.g. custom number is not an approved WhatsApp sender yet), retry with Twilio Sandbox number
-        if (tErr.message && tErr.message.includes('Channel') && cleanSender !== '+14155238886') {
-          console.warn('[TWILIO RETRY] Retrying with Twilio Sandbox Sender (+14155238886)...');
-          res = await client.messages.create({
-            body: message,
-            from: 'whatsapp:+14155238886',
-            to: `whatsapp:${cleanPhone}`
-          });
-        } else {
-          throw tErr;
-        }
-      }
-
-      console.log(`[REAL WHATSAPP SENT] Twilio SID: ${res.sid} to ${cleanPhone}`);
-      dispatchRecord.sid = res.sid;
-      dispatchRecord.provider = 'twilio';
-      sentHistory.push(dispatchRecord);
-      
-      const io = socketIo || global.io;
-      if (io) {
-        io.emit('whatsapp-message-sent', dispatchRecord);
-      }
-      return { status: 'sent', provider: 'twilio', sid: res.sid, record: dispatchRecord };
-    } catch (err) {
-      console.error('[REAL WHATSAPP FAILED] Twilio error:', err.message, '| Falling back to Auto-Gateway mode');
-      dispatchRecord.twilioError = err.message;
-    }
+  // Auto-Gateway Mode: Development/Simulation Fallback
+  let autoText = message;
+  if (options && Array.isArray(options) && options.length > 0) {
+    autoText += '\n\n' + options.map((opt, idx) => `${idx + 1}. ${opt}`).join('\n');
   }
 
-  // 3. Auto-Gateway Mode: When ONLY WhatsApp API Number is provided
-  console.log(`[WHATSAPP AUTO-GATEWAY DISPATCH] From: whatsapp:${cleanSender} -> To: whatsapp:${cleanPhone} | Msg: "${message}"`);
+  console.log(`[WHATSAPP AUTO-GATEWAY DISPATCH] From: whatsapp:${cleanSender} -> To: whatsapp:${cleanPhone} | Msg: "${autoText}"`);
   dispatchRecord.provider = 'auto_gateway';
-  dispatchRecord.note = 'Dispatched via WhatsApp API Number Auto-Gateway';
+  dispatchRecord.note = 'Dispatched via Meta WhatsApp Cloud API Auto-Gateway';
   sentHistory.push(dispatchRecord);
 
-  // Broadcast real-time delivery event to connected frontends
   const io = socketIo || global.io;
   if (io) {
     io.emit('whatsapp-message-sent', dispatchRecord);
@@ -223,7 +228,7 @@ async function sendWhatsAppNotification(phone, message, socketIo) {
     provider: 'auto_gateway',
     from: cleanSender,
     to: cleanPhone,
-    body: message,
+    body: autoText,
     record: dispatchRecord
   };
 }
