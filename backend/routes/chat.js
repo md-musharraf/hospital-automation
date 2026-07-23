@@ -221,8 +221,11 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   const text = dictionary[lang];
   const state = session.currentState;
 
-  // WELCOME state processing
-  if (state === 'WELCOME') {
+  // WELCOME state processing.
+  // COMPLETED is handled here too: after a booking finishes, the menu options
+  // are shown again, so selecting one (e.g. "Book New Appointment") must start
+  // a fresh booking instead of endlessly repeating "previous booking complete".
+  if (state === 'WELCOME' || state === 'COMPLETED') {
     const isRegular = cleanMsg === '1' || cleanMsg === 'Book New Appointment / Generate Token' || cleanMsg === 'नया अपॉइंटमेंट बुक करें / टोकन जेनरेट करें';
     const isRevisit = cleanMsg === '2' || cleanMsg === 'Re-visit (Existing Patient)' || cleanMsg === 'दोबारा विजिट (मौजूदा मरीज)';
     const isEmergency = cleanMsg === '3' || cleanMsg === 'Emergency SOS Token' || cleanMsg === 'इमरजेंसी एसओएस टोकन';
@@ -1100,10 +1103,16 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
               if (msg.type === 'text' && msg.text) {
                 textContent = msg.text.body;
               } else if (msg.type === 'interactive' && msg.interactive) {
-                if (msg.interactive.type === 'button_reply' && msg.interactive.button_reply) {
-                  textContent = msg.interactive.button_reply.title || msg.interactive.button_reply.id;
-                } else if (msg.interactive.type === 'list_reply' && msg.interactive.list_reply) {
-                  textContent = msg.interactive.list_reply.title || msg.interactive.list_reply.id;
+                const reply = msg.interactive.button_reply || msg.interactive.list_reply;
+                if (reply) {
+                  // Our interactive ids encode the 1-based option number
+                  // (buttons: "btn_2_Female", lists: "opt_2"). WhatsApp echoes
+                  // the TITLE back truncated to 20/24 chars, so the full option
+                  // strings the state engine compares against ("Book New
+                  // Appointment / Generate Token") never match. Extract the
+                  // number from the id instead — every step accepts "1", "2", …
+                  const idMatch = (reply.id || '').match(/^(?:btn|opt)_(\d+)/);
+                  textContent = idMatch ? idMatch[1] : (reply.title || reply.id || '');
                 }
               } else if (msg.type === 'button' && msg.button) {
                 textContent = msg.button.text || msg.button.payload;
