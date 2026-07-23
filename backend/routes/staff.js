@@ -148,15 +148,24 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
 
     const createdToken = await Token.findById(token._id).populate('patient').populate('doctor');
 
-    // Auto alert message: WhatsApp booking confirmation for Walk-in Patient
+    // Auto alert message: WhatsApp booking confirmation for Walk-in Patient.
+    // Capture the real dispatch result so reception can see when a message did
+    // NOT actually reach the patient (e.g. an expired Meta access token returns
+    // { status: 'failed' }) instead of silently assuming it was delivered.
+    let whatsapp = { status: 'skipped', reason: 'no_phone_on_file' };
     if (createdToken.patient && createdToken.patient.phone) {
       const docName = createdToken.doctor ? createdToken.doctor.name : 'Doctor';
       const roomName = createdToken.doctor ? (createdToken.doctor.currentRoom || 'Cabin A') : 'Cabin A';
       const walkInMsg = `Hello ${createdToken.patient.name}, your walk-in token ${createdToken.tokenNumber} has been successfully generated for ${docName} in ${roomName}. Estimated wait time is ${createdToken.estimatedWaitTime} mins.`;
-      await sendWhatsAppNotification(createdToken.patient.phone, walkInMsg);
+      try {
+        whatsapp = await sendWhatsAppNotification(createdToken.patient.phone, walkInMsg);
+      } catch (waErr) {
+        console.error('Walk-in WhatsApp dispatch error:', waErr);
+        whatsapp = { status: 'failed', error: waErr.message };
+      }
     }
 
-    res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken });
+    res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken, whatsapp });
   } catch (error) {
     console.error('Error booking walk-in:', error);
     res.status(500).json({ message: 'Server error' });

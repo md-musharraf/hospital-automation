@@ -7,13 +7,13 @@ const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Hospital = require('../models/Hospital');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
-const { sendWhatsAppNotification, getWhatsAppConfig, setWhatsAppConfig, getWhatsAppHistory } = require('../utils/whatsappHelper');
+const { sendWhatsAppNotification, getWhatsAppConfig, setWhatsAppConfig, getWhatsAppHistory, getPrimaryWhatsAppNumber } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 
 // Bilingual Translation Dictionary
 const dictionary = {
   en: {
-    welcome: 'Welcome to CareSync AI Assistant! 🏥 (You can also chat with us on WhatsApp at ' + (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886').replace(/^whatsapp:/i, '') + ')',
+    welcome: 'Welcome to CareSync AI Assistant! 🏥 (You can also chat with us on WhatsApp at ' + getPrimaryWhatsAppNumber() + ')',
     selectOption: 'Please select an option below to proceed:',
     options: [
       'Book New Appointment / Generate Token',
@@ -52,7 +52,7 @@ const dictionary = {
     tokenDetailsBody: (patient, doctor, dept, statusText) => `• Patient: ${patient}\n• Doctor: ${doctor} (${dept})\n• Live Status: ${statusText}`
   },
   hi: {
-    welcome: 'केयरसिंक एआई असिस्टेंट में आपका स्वागत है! 🏥 (आप हमसे सीधे व्हाट्सएप पर ' + (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886').replace(/^whatsapp:/i, '') + ' पर भी चैट कर सकते हैं)',
+    welcome: 'केयरसिंक एआई असिस्टेंट में आपका स्वागत है! 🏥 (आप हमसे सीधे व्हाट्सएप पर ' + getPrimaryWhatsAppNumber() + ' पर भी चैट कर सकते हैं)',
     selectOption: 'कृपया आगे बढ़ने के लिए नीचे दिए गए विकल्पों में से एक चुनें:',
     options: [
       'नया अपॉइंटमेंट बुक करें / टोकन जेनरेट करें',
@@ -139,7 +139,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     session.markModified && session.markModified('tempData');
     await session.save();
 
-    const rawWhatsapp = qrHospital.whatsappNumber || process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886';
+    const rawWhatsapp = qrHospital.whatsappNumber || getPrimaryWhatsAppNumber();
     const num = rawWhatsapp.replace(/^whatsapp:/i, '');
 
     return {
@@ -164,7 +164,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     session.markModified && session.markModified('tempData');
     await session.save();
 
-    const rawWhatsapp = hospital ? (hospital.whatsappNumber || process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886') : '+14155238886';
+    const rawWhatsapp = (hospital && hospital.whatsappNumber) || getPrimaryWhatsAppNumber();
     const num = rawWhatsapp.replace(/^whatsapp:/i, '');
     const facilityName = hospital ? hospital.name : 'CareSync';
 
@@ -659,10 +659,18 @@ router.post('/whatsapp', async (req, res) => {
     const cleanTo = toNumber ? toNumber.replace(/^whatsapp:/i, '').trim() : '';
     const cleanFrom = fromNumber.replace(/^whatsapp:/i, '').trim();
 
-    // Match hospital by registered WhatsApp Business number
+    // Match hospital by registered WhatsApp Business number.
+    // Compare on digits only — feeding a raw phone number like "+917484043690"
+    // straight into `new RegExp()` throws "Nothing to repeat" (the leading `+`
+    // is an invalid quantifier), which used to crash the whole webhook so the
+    // patient's reply never got a response ("aage kuch nahi ho raha tha").
     let hospital = null;
-    if (cleanTo) {
-      hospital = await Hospital.findOne({ whatsappNumber: new RegExp(cleanTo, 'i') });
+    const toDigits = cleanTo.replace(/\D/g, '');
+    if (toDigits) {
+      const allHospitals = await Hospital.find({});
+      hospital = allHospitals.find(
+        h => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === toDigits
+      ) || null;
     }
     if (!hospital) {
       hospital = await Hospital.findOne({}) || { id: 'general-hospital' };
@@ -744,8 +752,8 @@ router.get('/queues/public-status', async (req, res) => {
     const activeHospId = hospitalId || 'general-hospital';
     const hospital = await Hospital.findOne({ id: activeHospId }) || await Hospital.findOne({});
     const rawWhatsapp = hospital
-      ? (hospital.id === 'general-hospital' ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886') : hospital.whatsappNumber)
-      : '+14155238886';
+      ? (hospital.id === 'general-hospital' ? getPrimaryWhatsAppNumber() : hospital.whatsappNumber)
+      : getPrimaryWhatsAppNumber();
     const cleanWhatsapp = rawWhatsapp.replace(/^whatsapp:/i, '');
 
     res.json({
@@ -821,8 +829,8 @@ router.get('/hospitals', async (req, res) => {
   try {
     const dbHospitals = await Hospital.find({});
     const formattedHospitals = dbHospitals.map(h => {
-      const rawWhatsapp = h.id === 'general-hospital' 
-        ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
+      const rawWhatsapp = h.id === 'general-hospital'
+        ? getPrimaryWhatsAppNumber()
         : h.whatsappNumber;
       return {
         ...h.toObject(),
@@ -845,7 +853,7 @@ router.get('/hospital/:hospitalId', async (req, res) => {
       return res.status(404).json({ message: 'Hospital not found' });
     }
     const rawWhatsapp = hospital.id === 'general-hospital'
-      ? (process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886')
+      ? getPrimaryWhatsAppNumber()
       : hospital.whatsappNumber;
     res.json({
       ...hospital.toObject(),
@@ -931,7 +939,7 @@ router.post('/whatsapp/config', async (req, res) => {
   try {
     const { whatsappNumber, isAutoWorking } = req.body;
     if (!whatsappNumber || typeof whatsappNumber !== 'string') {
-      return res.status(400).json({ message: 'WhatsApp API number is required (e.g. +14155238886)' });
+      return res.status(400).json({ message: 'WhatsApp API number is required (e.g. +917484043690)' });
     }
 
     const updatedConfig = setWhatsAppConfig({ whatsappNumber, isAutoWorking });
@@ -1081,6 +1089,9 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
         if (!entry.changes) continue;
         for (const change of entry.changes) {
           const value = change.value;
+          // The number that RECEIVED this message (74 or 555). Reply FROM this
+          // exact number so request & response stay on ONE number.
+          const receivingPhoneNumberId = value && value.metadata && value.metadata.phone_number_id;
           if (value && value.messages && value.messages.length > 0) {
             for (const msg of value.messages) {
               const fromPhone = msg.from; // e.g. "15551234567" or "919876543210"
@@ -1102,7 +1113,7 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                 const formattedPhone = fromPhone.startsWith('+') ? fromPhone : `+${fromPhone}`;
                 const sessionId = `wa_${formattedPhone.replace(/\D/g, '')}`;
 
-                console.log(`[META INCOMING WHATSAPP] From: ${formattedPhone} | Session: ${sessionId} | Text: "${textContent}"`);
+                console.log(`[META INCOMING WHATSAPP] From: ${formattedPhone} | To(phone_number_id): ${receivingPhoneNumberId} | Session: ${sessionId} | Text: "${textContent}"`);
 
                 // Feed input into CareSync patient appointment state engine
                 const botResponse = await processChatMessage({
@@ -1120,7 +1131,7 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                       ? botResponse.options
                       : [];
 
-                    await sendWhatsAppNotification(formattedPhone, m.text, opts, req.io || global.io);
+                    await sendWhatsAppNotification(formattedPhone, m.text, opts, req.io || global.io, receivingPhoneNumberId);
                   }
                 }
               }

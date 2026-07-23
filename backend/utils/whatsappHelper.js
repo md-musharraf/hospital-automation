@@ -1,6 +1,16 @@
+// Single source of truth for the hospital's public WhatsApp number.
+// Everything (welcome text, QR deep links, hospital records, webhook matching)
+// must derive from THIS one number so the patient always sees, and always
+// replies to, the exact same number — no more "do alag-alag number" mismatch
+// between a Twilio placeholder and the real registered number.
+const DEFAULT_WHATSAPP_NUMBER =
+  process.env.META_DISPLAY_NUMBER ||
+  process.env.TWILIO_WHATSAPP_NUMBER ||
+  '+917484043690';
+
 // In-Memory Dynamic Config Store for WhatsApp API Engine
 let dynamicConfig = {
-  whatsappNumber: '+917484043690',
+  whatsappNumber: DEFAULT_WHATSAPP_NUMBER,
   isAutoWorking: true,
   activeTriggers: [
     'Walk-in Appointment Tokens',
@@ -60,6 +70,15 @@ function getWhatsAppHistory(limit = 20) {
 }
 
 /**
+ * The one canonical public WhatsApp number, normalised (no `whatsapp:` prefix).
+ * Use this anywhere the old `process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886'`
+ * pattern used to appear so there is exactly one number across the whole app.
+ */
+function getPrimaryWhatsAppNumber() {
+  return (dynamicConfig.whatsappNumber || DEFAULT_WHATSAPP_NUMBER).replace(/^whatsapp:/i, '');
+}
+
+/**
  * Sends a WhatsApp notification to a patient using Meta WhatsApp Cloud API v20.0.
  * Supports text messages and interactive quick reply buttons / list options.
  * Falls back cleanly to Auto-Gateway mode if Meta credentials are not configured.
@@ -68,9 +87,14 @@ function getWhatsAppHistory(limit = 20) {
  * @param {string} message Message body
  * @param {Array<string>} [options] Optional button/list options for interactive messaging
  * @param {object} [socketIo] Optional Socket.io instance for real-time delivery broadcasting
+ * @param {string} [fromPhoneNumberId] Optional Meta phone-number-id to send FROM. When a
+ *   patient messages the business, this is set to the id of the number that RECEIVED the
+ *   message (webhook `metadata.phone_number_id`) so the reply always goes back from the
+ *   exact same number — no more "request 74 par, reply 555 se" split. Falls back to the
+ *   configured META_PHONE_NUMBER_ID for app-initiated sends (walk-in tokens, reminders).
  * @returns {Promise<object>} Status of the notification dispatch
  */
-async function sendWhatsAppNotification(phone, message, options = [], socketIo) {
+async function sendWhatsAppNotification(phone, message, options = [], socketIo, fromPhoneNumberId) {
   // Allow signature overloading sendWhatsAppNotification(phone, message, socketIo)
   if (options && !Array.isArray(options) && typeof options === 'object') {
     socketIo = options;
@@ -78,8 +102,10 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo) 
   }
 
   const metaToken = process.env.META_WHATSAPP_ACCESS_TOKEN || process.env.META_ACCESS_TOKEN;
-  const metaPhoneId = process.env.META_PHONE_NUMBER_ID;
-  const fromWhatsApp = dynamicConfig.whatsappNumber || '+14155238886';
+  // Reply FROM the number that received the message when we know it; otherwise
+  // use the configured default sender.
+  const metaPhoneId = fromPhoneNumberId || process.env.META_PHONE_NUMBER_ID;
+  const fromWhatsApp = dynamicConfig.whatsappNumber || DEFAULT_WHATSAPP_NUMBER;
 
   let cleanPhone = phone ? phone.trim() : '';
   if (cleanPhone && !cleanPhone.startsWith('+')) {
@@ -273,5 +299,7 @@ module.exports = {
   sendWhatsAppNotification,
   getWhatsAppConfig,
   setWhatsAppConfig,
-  getWhatsAppHistory
+  getWhatsAppHistory,
+  getPrimaryWhatsAppNumber,
+  DEFAULT_WHATSAPP_NUMBER
 };

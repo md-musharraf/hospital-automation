@@ -299,7 +299,7 @@ const seedMockData = async () => {
           slug: 'general-hospital',
           address: '123 Healthcare Blvd, Medical District',
           phone: '+1 (555) 123-4567',
-          whatsappNumber: process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886',
+          whatsappNumber: require('./utils/whatsappHelper').getPrimaryWhatsAppNumber(),
           coverImage: 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
           description: 'Full-service tertiary care facility specializing in cardiology, internal medicine, and emergency care.',
           city: 'Delhi',
