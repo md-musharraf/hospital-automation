@@ -113,7 +113,7 @@ export default function SuperAdminPortal() {
   const [facilityFilterType, setFacilityFilterType] = useState('All');
   const [facilitySearchQuery, setFacilitySearchQuery] = useState('');
 
-  const [facilityPersonnel, setFacilityPersonnel] = useState({ doctors: [], staff: [], labAssistants: [], patients: [] });
+  const [facilityPersonnel, setFacilityPersonnel] = useState({ doctors: [], staff: [], labAssistants: [], pharmacists: [], patients: [] });
   const [personnelLoading, setPersonnelLoading] = useState(false);
 
   const fetchFacilityPersonnel = async (hId) => {
@@ -185,6 +185,25 @@ export default function SuperAdminPortal() {
         fetchFacilityPersonnel(editHospId);
       } else {
         setError(data.message || 'Failed to delete lab assistant');
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeletePharmacist = async (pharmId) => {
+    if (!window.confirm('Delete this pharmacy / medical account permanently?')) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/pharmacist/${pharmId}`, {
+        method: 'DELETE',
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSuccessMsg('Pharmacy account deleted successfully!');
+        fetchFacilityPersonnel(editHospId);
+      } else {
+        setError(data.message || 'Failed to delete pharmacy account');
       }
     } catch (err) {
       setError(err.message);
@@ -468,6 +487,11 @@ export default function SuperAdminPortal() {
       url = `${BACKEND_URL}/api/v1/auth/super-admin/register-lab`;
       payload.username = addUsername;
       payload.password = addPassword;
+    } else if (accountType === 'pharmacy') {
+      url = `${BACKEND_URL}/api/v1/auth/super-admin/register-pharmacist`;
+      payload.username = addUsername;
+      payload.password = addPassword;
+      payload.counterNumber = addCounterNumber;
     }
 
     try {
@@ -1525,7 +1549,8 @@ export default function SuperAdminPortal() {
                   {[
                     { type: 'doctor', label: 'Doctor', icon: 'stethoscope' },
                     { type: 'staff', label: 'Receptionist / Staff', icon: 'verified_user' },
-                    { type: 'lab', label: 'Lab Assistant', icon: 'science' }
+                    { type: 'lab', label: 'Lab Assistant', icon: 'science' },
+                    { type: 'pharmacy', label: 'Pharmacy / Medical', icon: 'local_pharmacy' }
                   ].map(item => (
                     <button
                       key={item.type}
@@ -1707,6 +1732,32 @@ export default function SuperAdminPortal() {
                         className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                         required
                       />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {accountType === 'pharmacy' && (
+                <div className="space-y-4 border-t border-[var(--border-color)]/20 pt-4">
+                  <h3 className="text-sm font-black text-[var(--text-color)]">Pharmacy / Medical Store Setup</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block mb-1">Pharmacist Name</label>
+                      <input type="text" placeholder="e.g. Store Pharmacist" value={addName} onChange={e => setAddName(e.target.value)} className={fieldCls} required />
+                    </div>
+                    <div>
+                      <label className="block mb-1">Pharmacy Username *</label>
+                      <input type="text" placeholder="e.g. city_pharmacy" value={addUsername} onChange={e => setAddUsername(e.target.value)} className={fieldCls} required />
+                    </div>
+                    <div>
+                      <label className="block mb-1">Password *</label>
+                      <input type="password" placeholder="••••••••" value={addPassword} onChange={e => setAddPassword(e.target.value)} className={fieldCls} required />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block mb-1">Pharmacy Counter</label>
+                      <input type="text" placeholder="e.g. Pharmacy Counter 1" value={addCounterNumber} onChange={e => setAddCounterNumber(e.target.value)} className={fieldCls} />
                     </div>
                   </div>
                 </div>
@@ -2234,6 +2285,33 @@ export default function SuperAdminPortal() {
                                   onClick={() => handleDeleteLab(l._id)}
                                   className="p-1 text-rose-500 hover:bg-rose-500/10 rounded"
                                   title="Delete Lab Assistant"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">delete</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Pharmacists List */}
+                      <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
+                        <span className="text-[10px] font-black uppercase text-amber-500 tracking-wider">Registered Pharmacy / Medical ({(facilityPersonnel.pharmacists || []).length})</span>
+                        {(facilityPersonnel.pharmacists || []).length === 0 ? (
+                          <p className="text-[11px] text-zinc-400">No pharmacy accounts registered.</p>
+                        ) : (
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 no-scrollbar">
+                            {facilityPersonnel.pharmacists.map(ph => (
+                              <div key={ph._id} className="flex justify-between items-center bg-[var(--bg-color)] p-2 rounded-lg text-xs">
+                                <div>
+                                  <p className="font-extrabold text-[var(--text-color)]">{ph.name}</p>
+                                  <p className="text-[10px] text-[var(--text-secondary)]">{ph.username}{ph.counterNumber ? ' • ' + ph.counterNumber : ''}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePharmacist(ph._id)}
+                                  className="p-1 text-rose-500 hover:bg-rose-500/10 rounded"
+                                  title="Delete Pharmacy Account"
                                 >
                                   <span className="material-symbols-outlined text-[14px]">delete</span>
                                 </button>
