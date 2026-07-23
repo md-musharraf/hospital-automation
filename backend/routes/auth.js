@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const Doctor = require('../models/Doctor');
 const Staff = require('../models/Staff');
 const LabAssistant = require('../models/LabAssistant');
+const Pharmacist = require('../models/Pharmacist');
 const Hospital = require('../models/Hospital');
 const Queue = require('../models/Queue');
 const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
@@ -144,6 +145,47 @@ router.post('/lab/login', loginLimiter, async (req, res) => {
   }
 });
 
+// Pharmacist Login (rate-limited)
+router.post('/pharmacy/login', loginLimiter, async (req, res) => {
+  try {
+    const { username, password, hospital } = req.body;
+    if (!username || !password || !hospital) {
+      return res.status(400).json({ message: 'Username, password, and facility selection are required' });
+    }
+
+    const pharmacist = await Pharmacist.findOne({ username, hospital });
+    if (!pharmacist) {
+      return res.status(401).json({ message: 'Invalid credentials for the selected facility' });
+    }
+
+    const isMatch = await bcrypt.compare(password, pharmacist.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      { id: pharmacist._id, username: pharmacist.username, role: 'pharmacy', hospital: pharmacist.hospital },
+      JWT_SECRET,
+      { expiresIn: '12h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: pharmacist._id,
+        name: pharmacist.name,
+        username: pharmacist.username,
+        counterNumber: pharmacist.counterNumber,
+        hospital: pharmacist.hospital,
+        role: 'pharmacy'
+      }
+    });
+  } catch (error) {
+    console.error('Pharmacy login error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get currently logged-in user
 router.get('/me', authenticateToken, async (req, res) => {
   try {
@@ -159,6 +201,10 @@ router.get('/me', authenticateToken, async (req, res) => {
       const lab = await LabAssistant.findById(req.user.id).select('-passwordHash');
       if (!lab) return res.status(404).json({ message: 'Lab Assistant not found' });
       return res.json({ user: { ...lab.toObject(), role: 'lab' } });
+    } else if (req.user.role === 'pharmacy') {
+      const pharmacist = await Pharmacist.findById(req.user.id).select('-passwordHash');
+      if (!pharmacist) return res.status(404).json({ message: 'Pharmacist not found' });
+      return res.json({ user: { ...pharmacist.toObject(), role: 'pharmacy' } });
     }
     res.status(400).json({ message: 'Invalid role' });
   } catch (error) {
@@ -184,129 +230,152 @@ router.post('/super-admin/verify', verifyAdminSecret, (req, res) => {
 // Register Hospital (Super Admin Endpoint — requires authentication via admin secret)
 router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res) => {
   try {
-    const { 
-      // Hospital details
-      id, name, slug, address, phone, whatsappNumber, coverImage, description, city, coordinates, type,
-      clinicSubtype, customServices, features,
-      // Initial Staff Member
-      staffName, staffUsername, staffPassword, counterNumber,
-      // Initial Doctor
-      docName, docEmail, docPassword, docDepartment, docRoom,
-      // Initial Lab Assistant
-      labName, labUsername, labPassword
-    } = req.body;
+    const b = req.body;
+    const {
+      id, name, slug, address, phone, whatsappNumber, coverImage, description,
+      city, coordinates, type, clinicSubtype, customServices, features
+    } = b;
 
-    // Validate hospital parameters
+    // Validate core facility parameters
     if (!id || !name || !slug || !address || !phone || !whatsappNumber || !city || !coordinates || !type) {
-      return res.status(400).json({ message: 'All hospital details (id, name, slug, address, phone, whatsappNumber, city, coordinates, type) are required' });
+      return res.status(400).json({ message: 'All facility details (id, name, slug, address, phone, whatsappNumber, city, coordinates, type) are required' });
     }
 
-    // Validate staff, doctor, lab parameters
-    if (!staffUsername || !staffPassword || !docEmail || !docPassword || !labUsername || !labPassword) {
-      return res.status(400).json({ message: 'Initial staff, doctor, and lab assistant credentials are required' });
+    const hasInternalLab = b.hasInternalLab !== undefined ? b.hasInternalLab : true;
+    const hasInternalPharmacy = b.hasInternalPharmacy !== undefined ? b.hasInternalPharmacy : true;
+
+    // Normalize personnel: accept either the new ARRAY form (doctors[],
+    // staffMembers[], labAssistants[], pharmacists[]) or the legacy single-account
+    // fields, so an admin can onboard "2-3 doctors, 1-2 labs, a pharmacy" in ONE
+    // registration. Internal lab/pharmacy accounts are only created when the
+    // facility declares it has that unit.
+    const doctors = (Array.isArray(b.doctors) && b.doctors.length)
+      ? b.doctors
+      : (b.docEmail ? [{ name: b.docName, email: b.docEmail, password: b.docPassword, department: b.docDepartment, currentRoom: b.docRoom, specialization: b.docSpecialization, averageCheckupTime: b.docCheckupTime }] : []);
+
+    const staffMembers = (Array.isArray(b.staffMembers) && b.staffMembers.length)
+      ? b.staffMembers
+      : (b.staffUsername ? [{ name: b.staffName, username: b.staffUsername, password: b.staffPassword, counterNumber: b.counterNumber }] : []);
+
+    const labAssistants = hasInternalLab
+      ? ((Array.isArray(b.labAssistants) && b.labAssistants.length)
+          ? b.labAssistants
+          : (b.labUsername ? [{ name: b.labName, username: b.labUsername, password: b.labPassword }] : []))
+      : [];
+
+    const pharmacists = hasInternalPharmacy
+      ? ((Array.isArray(b.pharmacists) && b.pharmacists.length)
+          ? b.pharmacists
+          : (b.pharmUsername ? [{ name: b.pharmName, username: b.pharmUsername, password: b.pharmPassword, counterNumber: b.pharmCounter }] : []))
+      : [];
+
+    // A facility must have at least one login account to be operable
+    if (!staffMembers.length && !doctors.length && !labAssistants.length && !pharmacists.length) {
+      return res.status(400).json({ message: 'At least one account (reception, doctor, lab, or pharmacy) is required to register a facility.' });
     }
 
-    // Check if hospital ID or slug is already taken
+    // Validate each account + reject duplicates WITHIN this request
+    const seen = { doctor: new Set(), staff: new Set(), lab: new Set(), pharmacy: new Set() };
+    for (const d of doctors) {
+      if (!d.email || !d.password) return res.status(400).json({ message: 'Every doctor needs an email and password.' });
+      if (seen.doctor.has(d.email)) return res.status(400).json({ message: `Duplicate doctor email '${d.email}' in this registration.` });
+      seen.doctor.add(d.email);
+    }
+    for (const s of staffMembers) {
+      if (!s.username || !s.password) return res.status(400).json({ message: 'Every reception account needs a username and password.' });
+      if (seen.staff.has(s.username)) return res.status(400).json({ message: `Duplicate reception username '${s.username}' in this registration.` });
+      seen.staff.add(s.username);
+    }
+    for (const l of labAssistants) {
+      if (!l.username || !l.password) return res.status(400).json({ message: 'Every lab account needs a username and password.' });
+      if (seen.lab.has(l.username)) return res.status(400).json({ message: `Duplicate lab username '${l.username}' in this registration.` });
+      seen.lab.add(l.username);
+    }
+    for (const p of pharmacists) {
+      if (!p.username || !p.password) return res.status(400).json({ message: 'Every pharmacy account needs a username and password.' });
+      if (seen.pharmacy.has(p.username)) return res.status(400).json({ message: `Duplicate pharmacy username '${p.username}' in this registration.` });
+      seen.pharmacy.add(p.username);
+    }
+
+    // Check if facility ID or slug is already taken
     const existingHospital = await Hospital.findOne({ $or: [{ id }, { slug }] });
     if (existingHospital) {
-      return res.status(400).json({ message: 'Hospital ID or Slug is already registered.' });
+      return res.status(400).json({ message: 'Facility ID or Slug is already registered.' });
     }
 
-    // Check if credentials collide in the target hospital tenant
-    const existingStaff = await Staff.findOne({ username: staffUsername, hospital: id });
-    if (existingStaff) {
-      return res.status(400).json({ message: `Staff username '${staffUsername}' is already taken in this hospital tenant.` });
+    // Check credential collisions against existing accounts in this tenant
+    for (const s of staffMembers) {
+      if (await Staff.findOne({ username: s.username, hospital: id })) return res.status(400).json({ message: `Reception username '${s.username}' is already taken in this facility.` });
+    }
+    for (const d of doctors) {
+      if (await Doctor.findOne({ email: d.email, hospital: id })) return res.status(400).json({ message: `Doctor email '${d.email}' is already registered in this facility.` });
+    }
+    for (const l of labAssistants) {
+      if (await LabAssistant.findOne({ username: l.username, hospital: id })) return res.status(400).json({ message: `Lab username '${l.username}' is already taken in this facility.` });
+    }
+    for (const p of pharmacists) {
+      if (await Pharmacist.findOne({ username: p.username, hospital: id })) return res.status(400).json({ message: `Pharmacy username '${p.username}' is already taken in this facility.` });
     }
 
-    const existingDoc = await Doctor.findOne({ email: docEmail, hospital: id });
-    if (existingDoc) {
-      return res.status(400).json({ message: `Doctor email '${docEmail}' is already registered in this hospital tenant.` });
-    }
-
-    const existingLab = await LabAssistant.findOne({ username: labUsername, hospital: id });
-    if (existingLab) {
-      return res.status(400).json({ message: `Lab assistant username '${labUsername}' is already taken in this hospital tenant.` });
-    }
-
-    // Hash passwords
     const salt = await bcrypt.genSalt(10);
-    const staffPasswordHash = await bcrypt.hash(staffPassword, salt);
-    const docPasswordHash = await bcrypt.hash(docPassword, salt);
-    const labPasswordHash = await bcrypt.hash(labPassword, salt);
+    const hash = (pw) => bcrypt.hash(pw, salt);
 
-    // Create and save Hospital
+    // Create the facility
     const newHospital = new Hospital({
-      id,
-      name,
-      slug,
-      address,
-      phone,
-      whatsappNumber,
+      id, name, slug, address, phone, whatsappNumber,
       coverImage: coverImage || 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
       description: description || 'Specialized clinical care service.',
-      city,
-      coordinates,
-      type,
-      logoUrl: req.body.logoUrl || '',
-      heroImage: req.body.heroImage || coverImage || '',
-      galleryImages: req.body.galleryImages || (coverImage ? [coverImage] : []),
-      doctorCount: req.body.doctorCount ? parseInt(req.body.doctorCount) : 1,
-      primaryColor: req.body.primaryColor || '#0d9488',
-      secondaryColor: req.body.secondaryColor || '#0f172a',
-      welcomeMessage: req.body.welcomeMessage || '',
-      parentHospital: req.body.parentHospital || null,
-      hasInternalLab: req.body.hasInternalLab !== undefined ? req.body.hasInternalLab : true,
-      hasInternalPharmacy: req.body.hasInternalPharmacy !== undefined ? req.body.hasInternalPharmacy : true,
+      city, coordinates, type,
+      logoUrl: b.logoUrl || '',
+      heroImage: b.heroImage || coverImage || '',
+      galleryImages: b.galleryImages || (coverImage ? [coverImage] : []),
+      doctorCount: doctors.length || (b.doctorCount ? parseInt(b.doctorCount) : 0),
+      primaryColor: b.primaryColor || '#0d9488',
+      secondaryColor: b.secondaryColor || '#0f172a',
+      welcomeMessage: b.welcomeMessage || '',
+      parentHospital: b.parentHospital || null,
+      hasInternalLab,
+      hasInternalPharmacy,
       clinicSubtype: clinicSubtype || 'General',
       customServices: customServices || [],
       features: features || []
     });
     await newHospital.save();
 
-    // Create and save Staff
-    const newStaff = new Staff({
-      name: staffName || 'Staff Assistant',
-      username: staffUsername,
-      passwordHash: staffPasswordHash,
-      counterNumber: counterNumber || 'Counter 1',
-      hospital: id
-    });
-    await newStaff.save();
+    // Create every personnel account for this facility tenant
+    const created = { staff: [], doctors: [], labAssistants: [], pharmacists: [] };
 
-    // Create and save Doctor
-    const newDoctor = new Doctor({
-      name: docName || 'Doctor Consultant',
-      email: docEmail,
-      passwordHash: docPasswordHash,
-      department: docDepartment || 'General Practice',
-      specialization: 'General Consultation',
-      availabilityStatus: 'Available',
-      averageCheckupTime: 10,
-      currentRoom: docRoom || 'Cabin 1',
-      hospital: id
-    });
-    await newDoctor.save();
-
-    // Create Queue for Doctor
-    const newQueue = new Queue({
-      doctor: newDoctor._id,
-      currentToken: null,
-      activeQueue: []
-    });
-    await newQueue.save();
-
-    // Create and save Lab Assistant
-    const newLab = new LabAssistant({
-      name: labName || 'Lab Assistant',
-      username: labUsername,
-      passwordHash: labPasswordHash,
-      hospital: id
-    });
-    await newLab.save();
+    for (const s of staffMembers) {
+      const doc = new Staff({ name: s.name || 'Reception Staff', username: s.username, passwordHash: await hash(s.password), counterNumber: s.counterNumber || 'Counter 1', hospital: id });
+      await doc.save();
+      created.staff.push(doc.username);
+    }
+    for (const d of doctors) {
+      const doc = new Doctor({
+        name: d.name || 'Doctor Consultant', email: d.email, passwordHash: await hash(d.password),
+        department: d.department || 'General Practice', specialization: d.specialization || 'General Consultation',
+        availabilityStatus: 'Available', averageCheckupTime: d.averageCheckupTime ? parseInt(d.averageCheckupTime) : 10,
+        currentRoom: d.currentRoom || 'Cabin 1', hospital: id
+      });
+      await doc.save();
+      await new Queue({ doctor: doc._id, currentToken: null, activeQueue: [] }).save();
+      created.doctors.push(doc.email);
+    }
+    for (const l of labAssistants) {
+      const doc = new LabAssistant({ name: l.name || 'Lab Assistant', username: l.username, passwordHash: await hash(l.password), hospital: id });
+      await doc.save();
+      created.labAssistants.push(doc.username);
+    }
+    for (const p of pharmacists) {
+      const doc = new Pharmacist({ name: p.name || 'Pharmacist', username: p.username, passwordHash: await hash(p.password), counterNumber: p.counterNumber || 'Pharmacy Counter', hospital: id });
+      await doc.save();
+      created.pharmacists.push(doc.username);
+    }
 
     res.status(201).json({
-      message: 'Hospital registered successfully alongside initial Staff, Doctor, and Lab accounts!',
-      hospital: newHospital
+      message: `Facility '${name}' registered with ${created.staff.length} reception, ${created.doctors.length} doctor(s), ${created.labAssistants.length} lab, ${created.pharmacists.length} pharmacy account(s).`,
+      hospital: newHospital,
+      created
     });
 
   } catch (error) {
@@ -473,6 +542,52 @@ router.post('/super-admin/register-lab', verifyAdminSecret, async (req, res) => 
   }
 });
 
+// Register Additional Pharmacist (Medical store operator)
+router.post('/super-admin/register-pharmacist', verifyAdminSecret, async (req, res) => {
+  try {
+    const { hospital, name, username, password, counterNumber } = req.body;
+    if (!hospital || !username || !password) {
+      return res.status(400).json({ message: 'Facility selection, username, and password are required' });
+    }
+
+    const existingHospital = await Hospital.findOne({ id: hospital });
+    if (!existingHospital) {
+      return res.status(404).json({ message: 'Selected facility does not exist' });
+    }
+
+    const existingPharmacist = await Pharmacist.findOne({ username, hospital });
+    if (existingPharmacist) {
+      return res.status(400).json({ message: `Pharmacy username '${username}' is already taken in this facility.` });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const newPharmacist = new Pharmacist({
+      name: name || 'Pharmacist',
+      username,
+      passwordHash,
+      counterNumber: counterNumber || 'Pharmacy Counter',
+      hospital
+    });
+    await newPharmacist.save();
+
+    res.status(201).json({
+      message: `Pharmacy account '${username}' registered successfully!`,
+      pharmacist: {
+        id: newPharmacist._id,
+        name: newPharmacist.name,
+        username: newPharmacist.username,
+        counterNumber: newPharmacist.counterNumber,
+        hospital: newPharmacist.hospital
+      }
+    });
+  } catch (error) {
+    console.error('Super admin pharmacist registration error:', error);
+    res.status(500).json({ message: 'Server error registering pharmacist account' });
+  }
+});
+
 // Update Hospital Details (Super Admin Endpoint)
 router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
   try {
@@ -556,6 +671,7 @@ router.delete('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) =
     await Doctor.deleteMany({ hospital: id });
     await Staff.deleteMany({ hospital: id });
     await LabAssistant.deleteMany({ hospital: id });
+    await Pharmacist.deleteMany({ hospital: id });
 
     // Delete Hospital document
     await Hospital.deleteOne({ id });
@@ -576,9 +692,10 @@ router.get('/super-admin/facility-data/:hospitalId', verifyAdminSecret, async (r
     const doctors = await Doctor.find({ hospital: hospitalId }).select('-passwordHash');
     const staff = await Staff.find({ hospital: hospitalId }).select('-passwordHash');
     const labAssistants = await LabAssistant.find({ hospital: hospitalId }).select('-passwordHash');
+    const pharmacists = await Pharmacist.find({ hospital: hospitalId }).select('-passwordHash');
     const patients = await Patient.find({ hospital: hospitalId });
 
-    res.json({ doctors, staff, labAssistants, patients });
+    res.json({ doctors, staff, labAssistants, pharmacists, patients });
   } catch (error) {
     console.error('Super admin facility-data error:', error);
     res.status(500).json({ message: 'Server error fetching facility data' });
@@ -690,6 +807,40 @@ router.delete('/super-admin/lab-assistant/:id', verifyAdminSecret, async (req, r
   }
 });
 
+// PUT update Pharmacist (Super Admin)
+router.put('/super-admin/pharmacist/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, username, counterNumber, password } = req.body;
+
+    const pharmacist = await Pharmacist.findById(id);
+    if (!pharmacist) return res.status(404).json({ message: 'Pharmacist not found' });
+
+    if (name) pharmacist.name = name;
+    if (username) pharmacist.username = username;
+    if (counterNumber) pharmacist.counterNumber = counterNumber;
+    if (password) pharmacist.passwordHash = await bcrypt.hash(password, 10);
+
+    await pharmacist.save();
+    res.json({ message: 'Pharmacist updated successfully', pharmacist });
+  } catch (error) {
+    console.error('Super admin update pharmacist error:', error);
+    res.status(500).json({ message: 'Server error updating pharmacist' });
+  }
+});
+
+// DELETE Pharmacist (Super Admin)
+router.delete('/super-admin/pharmacist/:id', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Pharmacist.findByIdAndDelete(id);
+    res.json({ message: 'Pharmacist deleted successfully' });
+  } catch (error) {
+    console.error('Super admin delete pharmacist error:', error);
+    res.status(500).json({ message: 'Server error deleting pharmacist' });
+  }
+});
+
 // PUT update Patient (Super Admin)
 router.put('/super-admin/patient/:id', verifyAdminSecret, async (req, res) => {
   try {
@@ -740,6 +891,7 @@ router.post('/super-admin/clear-demo-data', verifyAdminSecret, async (req, res) 
     await Doctor.deleteMany({});
     await Staff.deleteMany({});
     await LabAssistant.deleteMany({});
+    await Pharmacist.deleteMany({});
     await Queue.deleteMany({});
     await Token.deleteMany({});
     await Patient.deleteMany({});
