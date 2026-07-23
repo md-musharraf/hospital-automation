@@ -31,6 +31,7 @@ const chatRoutes = require('./routes/chat');
 const staffRoutes = require('./routes/staff');
 const doctorRoutes = require('./routes/doctor');
 const labRoutes = require('./routes/lab');
+const pharmacyRoutes = require('./routes/pharmacy');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
 
@@ -147,6 +148,7 @@ app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/staff', staffRoutes);
 app.use('/api/v1/doctor', doctorRoutes);
 app.use('/api/v1/lab', labRoutes);
+app.use('/api/v1/pharmacy', pharmacyRoutes);
 app.use('/api/v1/messages', messageRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 

@@ -39,6 +39,8 @@ const DoctorLogin = React.lazy(() => import('./components/DoctorPortal').then(mo
 const DoctorDashboard = React.lazy(() => import('./components/DoctorPortal').then(module => ({ default: module.DoctorDashboard })));
 const LabLogin = React.lazy(() => import('./components/LabPortal').then(module => ({ default: module.LabLogin })));
 const LabDashboard = React.lazy(() => import('./components/LabPortal').then(module => ({ default: module.LabDashboard })));
+const PharmacyLogin = React.lazy(() => import('./components/PharmacyPortal').then(module => ({ default: module.PharmacyLogin })));
+const PharmacyDashboard = React.lazy(() => import('./components/PharmacyPortal').then(module => ({ default: module.PharmacyDashboard })));
 
 const LoadingFallback = () => (
   <div className="flex-1 flex flex-col items-center justify-center bg-[var(--bg-color)] space-y-4 min-h-[400px]">
@@ -78,6 +80,15 @@ function AppContent() {
   const [labUser, setLabUser] = useState(() => {
     try {
       const u = localStorage.getItem('labUser');
+      return u && u !== 'undefined' ? JSON.parse(u) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const [pharmacyToken, setPharmacyToken] = useState(localStorage.getItem('pharmacyToken') || '');
+  const [pharmacyUser, setPharmacyUser] = useState(() => {
+    try {
+      const u = localStorage.getItem('pharmacyUser');
       return u && u !== 'undefined' ? JSON.parse(u) : null;
     } catch (e) {
       return null;
@@ -131,6 +142,14 @@ function AppContent() {
     setLabToken('');
     setLabUser(null);
     navigate('/lab/login');
+  };
+
+  const handlePharmacyLogout = () => {
+    localStorage.removeItem('pharmacyToken');
+    localStorage.removeItem('pharmacyUser');
+    setPharmacyToken('');
+    setPharmacyUser(null);
+    navigate('/pharmacy/login');
   };
 
   return (
@@ -188,6 +207,14 @@ function AppContent() {
           >
             <span className="material-symbols-outlined text-[16px] shrink-0">science</span>
             <span className="hidden sm:inline-block">Lab Console</span>
+          </button>
+
+          <button
+            onClick={() => navigate(pharmacyToken ? '/pharmacy/dashboard' : '/pharmacy/login')}
+            className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/pharmacy') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+          >
+            <span className="material-symbols-outlined text-[16px] shrink-0">local_pharmacy</span>
+            <span className="hidden sm:inline-block">Pharmacy</span>
           </button>
         </div>
       </div>
@@ -281,6 +308,34 @@ function AppContent() {
                   <Navigate to="/lab/login" replace />
                 )
               } 
+            />
+            <Route
+              path="/pharmacy/login"
+              element={
+                pharmacyToken ? (
+                  <Navigate to="/pharmacy/dashboard" replace />
+                ) : (
+                  <PharmacyLogin
+                    setPharmacyToken={setPharmacyToken}
+                    setPharmacyUser={setPharmacyUser}
+                    onSuccess={() => navigate('/pharmacy/dashboard')}
+                  />
+                )
+              }
+            />
+            <Route
+              path="/pharmacy/dashboard"
+              element={
+                pharmacyToken ? (
+                  <PharmacyDashboard
+                    pharmacyToken={pharmacyToken}
+                    pharmacyUser={pharmacyUser}
+                    onLogout={handlePharmacyLogout}
+                  />
+                ) : (
+                  <Navigate to="/pharmacy/login" replace />
+                )
+              }
             />
             <Route path="/track/:tokenId" element={<PatientLiveTracker />} />
             <Route path="/prescription/:tokenId" element={<DigitalPrescriptionViewer />} />

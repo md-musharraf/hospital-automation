@@ -35,7 +35,11 @@ const TokenSchema = new mongoose.Schema({
       duration: { type: String },
       instructions: { type: String }
     }],
-    advice: { type: String }
+    advice: { type: String },
+    // Set by the facility's pharmacy/medical store when the medicines are handed over
+    dispensed: { type: Boolean, default: false },
+    dispensedAt: { type: Date },
+    dispensedBy: { type: String }
   },
   estimatedWaitTime: { type: Number, default: 0 }, // in minutes
   calledAt: { type: Date },
