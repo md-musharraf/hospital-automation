@@ -6,7 +6,10 @@ import useScrollReveal from '../hooks/useScrollReveal';
 
 export default function PatientPortal() {
   const { hospitalId } = useParams();
-  const [whatsappNumber, setWhatsappNumber] = useState('+1 (415) 523-8886');
+  // Default to the real registered bot number so the "Book on WhatsApp" link
+  // is correct even before the backend config loads. It is overwritten by the
+  // hospital's configured whatsappNumber once fetched below.
+  const [whatsappNumber, setWhatsappNumber] = useState('+917484043690');
   const [hospitalInfo, setHospitalInfo] = useState(null);
   const [loadingHosp, setLoadingHosp] = useState(true);
   const navigate = useNavigate();
@@ -603,7 +606,7 @@ export default function PatientPortal() {
                   <span>{currentLang === 'hi' ? 'चैट बुकिंग सहायक' : currentLang === 'bn' ? 'চ্যাট বুকিং অ্যাসিস্ট্যান্ট' : 'Start AI Booking'}</span>
                 </button>
                 <a
-                  href={`https://wa.me/${whatsappNumber.replace(/[^0-9]/g, '')}?text=hi`}
+                  href={`https://wa.me/${whatsappNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent('HI_' + (hospitalId || 'general-hospital'))}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center space-x-2 active:scale-95 duration-100"
