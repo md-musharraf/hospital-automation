@@ -44,14 +44,27 @@ const rateLimit = require('express-rate-limit');
 const app = express();
 const server = http.createServer(app);
 
-// Rate limiter: 60 requests per minute per IP
+// Behind Render/Vercel's reverse proxy the real client IP is in X-Forwarded-For.
+// Trust the first proxy hop so express-rate-limit keys on the actual visitor IP
+// instead of the proxy IP — otherwise EVERY user shares one bucket and the whole
+// site gets throttled (or the limiter never bites). Required for the per-IP
+// DDoS/abuse throttling below to work at all in production.
+app.set('trust proxy', 1);
+
+// Global anti-DoS throttle: max 60 requests per minute per client IP across the
+// whole API. Abusive floods get a 429 while normal usage (a page load makes only
+// a handful of calls) stays well under the cap. The health check is exempt so
+// uptime monitors / Render health pings are never throttled.
 const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 60, // Limit each IP to 60 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
+  // Note: mounted on '/api/', so req.path here is relative (mount stripped) —
+  // match on req.originalUrl to reliably exempt the health check + CORS preflight.
+  skip: (req) => req.originalUrl.startsWith('/api/v1/health') || req.method === 'OPTIONS',
   message: {
-    message: 'Too many requests from this IP, please try again after a minute.'
+    message: 'Too many requests from this IP, please slow down and try again in a minute.'
   }
 });
 app.use('/api/', apiLimiter);
