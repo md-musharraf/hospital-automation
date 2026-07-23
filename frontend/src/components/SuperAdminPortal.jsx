@@ -46,6 +46,12 @@ export default function SuperAdminPortal() {
   const [labUsername, setLabUsername] = useState('');
   const [labPassword, setLabPassword] = useState('');
 
+  // Extra doctors / labs / pharmacists — onboard several units in ONE registration.
+  const [extraDoctors, setExtraDoctors] = useState([]); // {name,email,password,department,room}
+  const [extraLabs, setExtraLabs] = useState([]);        // {name,username,password}
+  const [pharmacists, setPharmacists] = useState([]);    // {name,username,password}
+  const fieldCls = "w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all";
+
   // Tab & account registration states
   const [activeTab, setActiveTab] = useState('hospital'); // 'hospital' or 'accounts'
   const [accountType, setAccountType] = useState('doctor'); // 'doctor', 'staff', 'lab'
@@ -392,18 +398,17 @@ export default function SuperAdminPortal() {
       clinicSubtype,
       customServices,
       features,
-      staffName,
-      staffUsername,
-      staffPassword,
-      counterNumber,
-      docName,
-      docEmail,
-      docPassword,
-      docDepartment,
-      docRoom,
-      labName,
-      labUsername,
-      labPassword
+      staffMembers: [{ name: staffName, username: staffUsername, password: staffPassword, counterNumber }],
+      doctors: [
+        { name: docName, email: docEmail, password: docPassword, department: docDepartment, currentRoom: docRoom },
+        ...extraDoctors.map(d => ({ name: d.name, email: d.email, password: d.password, department: d.department, currentRoom: d.room }))
+      ].filter(d => d.email && d.password),
+      labAssistants: hasInternalLab
+        ? [{ name: labName, username: labUsername, password: labPassword }, ...extraLabs].filter(l => l.username && l.password)
+        : [],
+      pharmacists: hasInternalPharmacy
+        ? pharmacists.filter(p => p.username && p.password)
+        : []
     };
 
     try {
@@ -1374,6 +1379,23 @@ export default function SuperAdminPortal() {
                     />
                   </div>
                 </div>
+
+                {/* Additional doctors (a hospital can have 2-3) */}
+                {extraDoctors.map((d, i) => (
+                  <div key={i} className="grid grid-cols-1 md:grid-cols-5 gap-2 items-center border-t border-dashed border-[var(--border-color)]/20 pt-3">
+                    <input placeholder="Name" value={d.name || ''} onChange={e => setExtraDoctors(p => p.map((r, idx) => idx === i ? { ...r, name: e.target.value } : r))} className={fieldCls} />
+                    <input type="email" placeholder="Email *" value={d.email || ''} onChange={e => setExtraDoctors(p => p.map((r, idx) => idx === i ? { ...r, email: e.target.value } : r))} className={fieldCls} />
+                    <input type="password" placeholder="Password *" value={d.password || ''} onChange={e => setExtraDoctors(p => p.map((r, idx) => idx === i ? { ...r, password: e.target.value } : r))} className={fieldCls} />
+                    <input placeholder="Department" value={d.department || ''} onChange={e => setExtraDoctors(p => p.map((r, idx) => idx === i ? { ...r, department: e.target.value } : r))} className={fieldCls} />
+                    <div className="flex gap-1.5">
+                      <input placeholder="Room" value={d.room || ''} onChange={e => setExtraDoctors(p => p.map((r, idx) => idx === i ? { ...r, room: e.target.value } : r))} className={fieldCls} />
+                      <button type="button" title="Remove doctor" onClick={() => setExtraDoctors(p => p.filter((_, idx) => idx !== i))} className="shrink-0 px-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 font-black">×</button>
+                    </div>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setExtraDoctors(p => [...p, { name: '', email: '', password: '', department: '', room: '' }])} className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[16px]">add_circle</span> Add another doctor
+                </button>
               </div>
 
               {/* SECTION D: Lab Tech Onboarding */}
@@ -1417,6 +1439,39 @@ export default function SuperAdminPortal() {
                     />
                   </div>
                 </div>
+
+                {/* Additional lab assistants (a facility can run 1-2 labs) */}
+                {extraLabs.map((l, i) => (
+                  <div key={i} className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center border-t border-dashed border-[var(--border-color)]/20 pt-3">
+                    <input placeholder="Lab Name" value={l.name || ''} onChange={e => setExtraLabs(p => p.map((r, idx) => idx === i ? { ...r, name: e.target.value } : r))} className={fieldCls} />
+                    <input placeholder="Username *" value={l.username || ''} onChange={e => setExtraLabs(p => p.map((r, idx) => idx === i ? { ...r, username: e.target.value } : r))} className={fieldCls} />
+                    <input type="password" placeholder="Password *" value={l.password || ''} onChange={e => setExtraLabs(p => p.map((r, idx) => idx === i ? { ...r, password: e.target.value } : r))} className={fieldCls} />
+                    <button type="button" title="Remove lab" onClick={() => setExtraLabs(p => p.filter((_, idx) => idx !== i))} className="justify-self-start md:justify-self-end px-3 py-2 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 font-black text-[11px]">Remove</button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setExtraLabs(p => [...p, { name: '', username: '', password: '' }])} className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[16px]">add_circle</span> Add another lab
+                </button>
+              </div>
+
+              {/* SECTION E: Pharmacy / Medical Store Onboarding */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">local_pharmacy</span>
+                  <span>5. Pharmacy / Medical Store Setup <span className="font-semibold text-[var(--text-secondary)]">(optional)</span></span>
+                </h3>
+                <p className="text-[11px] text-[var(--text-secondary)] font-semibold -mt-2">The facility's internal medical store operator(s). Add one per pharmacy counter.</p>
+                {pharmacists.map((p, i) => (
+                  <div key={i} className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center border-t border-dashed border-[var(--border-color)]/20 pt-3">
+                    <input placeholder="Pharmacist Name" value={p.name || ''} onChange={e => setPharmacists(prev => prev.map((r, idx) => idx === i ? { ...r, name: e.target.value } : r))} className={fieldCls} />
+                    <input placeholder="Username *" value={p.username || ''} onChange={e => setPharmacists(prev => prev.map((r, idx) => idx === i ? { ...r, username: e.target.value } : r))} className={fieldCls} />
+                    <input type="password" placeholder="Password *" value={p.password || ''} onChange={e => setPharmacists(prev => prev.map((r, idx) => idx === i ? { ...r, password: e.target.value } : r))} className={fieldCls} />
+                    <button type="button" title="Remove pharmacy" onClick={() => setPharmacists(prev => prev.filter((_, idx) => idx !== i))} className="justify-self-start md:justify-self-end px-3 py-2 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 font-black text-[11px]">Remove</button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setPharmacists(prev => [...prev, { name: '', username: '', password: '' }])} className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[16px]">add_circle</span> Add a pharmacy / medical store account
+                </button>
               </div>
 
               <button
