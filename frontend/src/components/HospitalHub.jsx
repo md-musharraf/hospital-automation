@@ -1,10 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity } from 'lucide-react';
 import { BACKEND_URL } from '../App';
-import WhatsAppTester from './WhatsAppTester';
 import { getFacilityTheme } from '../theme/facilityThemes';
 import useScrollReveal from '../hooks/useScrollReveal';
+import HeroTelemetry from './HeroTelemetry';
+import DeferUntilVisible from './DeferUntilVisible';
+
+// Heavy, below-the-fold demo widget — code-split so it never weighs down the
+// landing page's initial bundle; it streams in only when the user scrolls to it.
+const WhatsAppTester = React.lazy(() => import('./WhatsAppTester'));
 
 export default function HospitalHub() {
   const [hospitals, setHospitals] = useState([]);
@@ -16,11 +20,6 @@ export default function HospitalHub() {
   const [geoError, setGeoError] = useState('');
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-
-  // State to simulate real-time live telemetry dashboard activity
-  const [telemetryTime, setTelemetryTime] = useState(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-  const [telemetryToken, setTelemetryToken] = useState('GP-08');
-  const [telemetryCabin, setTelemetryCabin] = useState('Cabin A');
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
@@ -36,25 +35,6 @@ export default function HospitalHub() {
         console.error('Error fetching hospitals:', err);
         setLoading(false);
       });
-
-    // Rotate simulated token in the hero dashboard preview
-    const intervalToken = setInterval(() => {
-      const tokens = ['GP-08', 'EM-03', 'PD-05', 'GP-09', 'EM-04'];
-      const cabins = ['Cabin A', 'Cabin C (ER)', 'Cabin B', 'Cabin A', 'Cabin C (ER)'];
-      const randomIndex = Math.floor(Math.random() * tokens.length);
-      setTelemetryToken(tokens[randomIndex]);
-      setTelemetryCabin(cabins[randomIndex]);
-    }, 4000);
-
-    // Update telemetry clock
-    const intervalClock = setInterval(() => {
-      setTelemetryTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    }, 1000);
-
-    return () => {
-      clearInterval(intervalToken);
-      clearInterval(intervalClock);
-    };
   }, []);
 
   // Haversine formula to calculate distance in km between two lat/lng coordinates
@@ -138,26 +118,31 @@ export default function HospitalHub() {
       
       {/* 1. Hero Section (Split-Screen SaaS Layout) */}
       <section className="relative overflow-hidden bg-gradient-to-b from-[var(--primary-color)]/10 via-[var(--bg-color)] to-[var(--bg-color)] py-12 md:py-20 px-6 sm:px-12 border-b border-[var(--border-color)]/25">
-        <div className="max-w-[1280px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-center text-left">
-          
+        {/* Ambient animated gradient blobs for depth */}
+        <div aria-hidden="true" className="pointer-events-none absolute -top-24 -left-24 w-96 h-96 rounded-full bg-[var(--primary-color)]/20 blur-3xl animate-float-slow"></div>
+        <div aria-hidden="true" className="pointer-events-none absolute -bottom-32 right-0 w-[28rem] h-[28rem] rounded-full bg-[var(--tertiary-color)]/15 blur-3xl animate-float-slow" style={{ animationDelay: '3s' }}></div>
+
+        <div className="relative max-w-[1280px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-center text-left">
+
           {/* Left Column: Core Copy & Tools */}
           <div className="lg:col-span-7 space-y-6">
-            <div className="inline-flex items-center space-x-2 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 text-[var(--primary-color)] px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider animate-pulse">
+            <div className="animate-fade-in-up inline-flex items-center space-x-2 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 text-[var(--primary-color)] px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider">
+              <span className="w-2 h-2 rounded-full bg-[var(--primary-color)] animate-ping"></span>
               <span className="material-symbols-outlined text-[15px]">clinical_notes</span>
               <span>CareSync Multi-Facility Healthcare Engine</span>
             </div>
-            
-            <h1 className="text-4xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none">
+
+            <h1 className="animate-fade-in-up delay-100 text-4xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none">
               Smart Waiting Lines <br className="hidden sm:inline" />
               <span className="bg-gradient-to-r from-[var(--primary-color)] to-[var(--tertiary-color)] bg-clip-text text-transparent">For Modern Healthcare</span>
             </h1>
-            
-            <p className="text-sm sm:text-base md:text-md text-[var(--text-secondary)] font-medium leading-relaxed max-w-xl">
+
+            <p className="animate-fade-in-up delay-200 text-sm sm:text-base md:text-md text-[var(--text-secondary)] font-medium leading-relaxed max-w-xl">
               Eliminate physical waiting lines, check live cabin statuses, and experience real-time AI-powered triage across Hospitals, Clinics, Labs & Medical Stores. Select a partner facility below to book instantly.
             </p>
 
             {/* Combined Search & Locator Widget */}
-            <div className="flex items-center max-w-xl bg-[var(--card-bg)] border border-[var(--border-color)]/70 rounded-2xl p-2 shadow-lg shadow-black/5 relative group focus-within:border-[var(--primary-color)] transition-all duration-300">
+            <div className="animate-fade-in-up delay-300 flex items-center max-w-xl bg-[var(--card-bg)] border border-[var(--border-color)]/70 rounded-2xl p-2 shadow-lg shadow-black/5 relative group focus-within:border-[var(--primary-color)] transition-all duration-300">
               <div className="flex-1 flex items-center px-2">
                 <span className="material-symbols-outlined text-zinc-400 mr-2.5 text-[22px]">search</span>
                 <input 
@@ -245,92 +230,8 @@ export default function HospitalHub() {
             )}
           </div>
 
-          {/* Right Column: Interactive SaaS Telemetry Preview Dashboard */}
-          <div className="lg:col-span-5 relative w-full h-[380px] bg-gradient-to-tr from-zinc-950 to-zinc-900 rounded-3xl p-6 shadow-2xl border border-white/5 overflow-hidden flex flex-col justify-between text-white text-xs select-none">
-            {/* Background grid line decoration */}
-            <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none"></div>
-            
-            {/* Telemetry Header */}
-            <div className="flex justify-between items-center border-b border-white/10 pb-3 relative z-10">
-              <div className="flex items-center space-x-2">
-                <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping"></div>
-                <span className="font-extrabold tracking-wider uppercase text-[10px] text-zinc-400">CareSync Telemetry Dashboard</span>
-              </div>
-              <span className="font-mono text-zinc-400 text-[10px] bg-white/5 px-2 py-0.5 rounded">{telemetryTime}</span>
-            </div>
-
-            {/* Telemetry Core Grid Layout */}
-            <div className="grid grid-cols-2 gap-4 my-4 relative z-10 flex-1">
-              {/* Call Out screen */}
-              <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] uppercase font-bold text-zinc-400">Current Paging call</span>
-                  <h4 className="text-3xl font-black text-[var(--primary-color)] tracking-tight mt-1 animate-pulse">{telemetryToken}</h4>
-                </div>
-                <div>
-                  <p className="text-[10px] text-zinc-300 font-bold">Proceed To:</p>
-                  <p className="text-xs text-white font-extrabold flex items-center space-x-1">
-                    <span className="material-symbols-outlined text-[14px] text-[var(--primary-color)]">sensor_door</span>
-                    <span>{telemetryCabin}</span>
-                  </p>
-                </div>
-              </div>
-
-              {/* Wait Time graph simulation */}
-              <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
-                <div>
-                  <span className="text-[9px] uppercase font-bold text-zinc-400">Queue wait efficiency</span>
-                  <p className="text-xl font-black text-emerald-400 mt-1">-42% Wait</p>
-                </div>
-                {/* SVG Graph representation */}
-                <div className="h-16 w-full">
-                  <svg viewBox="0 0 100 40" className="w-full h-full">
-                    <path 
-                      d="M0,35 Q20,15 40,30 T80,10 T100,5" 
-                      fill="none" 
-                      stroke="#10b981" 
-                      strokeWidth="2" 
-                      strokeLinecap="round"
-                    />
-                    <path 
-                      d="M0,35 Q20,15 40,30 T80,10 T100,5 L100,40 L0,40 Z" 
-                      fill="url(#gradient-telemetry)" 
-                      opacity="0.1"
-                    />
-                    <defs>
-                      <linearGradient id="gradient-telemetry" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stopColor="#10b981" />
-                        <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            {/* Active Cabins listing inside preview */}
-            <div className="space-y-2 border-t border-white/10 pt-3 relative z-10">
-              <span className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider block">Live Cabin Telemetry status</span>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { name: 'Dr. Sarah Jenkins', room: 'Cabin A', status: 'Consulting', color: 'bg-emerald-500' },
-                  { name: 'Dr. Robert Chen', room: 'Cabin B', status: 'Calling', color: 'bg-[var(--primary-color)]' },
-                  { name: 'Dr. Emily Taylor', room: 'Cabin C', status: 'Surgery', color: 'bg-rose-500' }
-                ].map((cab, idx) => (
-                  <div key={idx} className="bg-white/5 border border-white/5 p-2 rounded-xl text-[9px] font-semibold space-y-1">
-                    <p className="text-white truncate font-bold">{cab.name}</p>
-                    <div className="flex items-center justify-between text-zinc-400">
-                      <span>{cab.room}</span>
-                      <div className="flex items-center space-x-1">
-                        <span className={`w-1.5 h-1.5 rounded-full ${cab.color}`}></span>
-                        <span>{cab.status}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          {/* Right Column: Interactive SaaS Telemetry Preview (isolated + memoized for perf) */}
+          <HeroTelemetry />
 
         </div>
       </section>
@@ -425,7 +326,21 @@ export default function HospitalHub() {
           </p>
         </div>
 
-        <WhatsAppTester initialPhone="+14155238886" defaultHospId="general-hospital" />
+        <DeferUntilVisible minHeight={420} fallback={
+          <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30">
+            <span className="material-symbols-outlined text-[36px] text-[var(--primary-color)] animate-spin">refresh</span>
+            <p className="text-xs font-bold text-[var(--text-secondary)]">Loading live chatbot engine…</p>
+          </div>
+        }>
+          <Suspense fallback={
+            <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30">
+              <span className="material-symbols-outlined text-[36px] text-[var(--primary-color)] animate-spin">refresh</span>
+              <p className="text-xs font-bold text-[var(--text-secondary)]">Loading live chatbot engine…</p>
+            </div>
+          }>
+            <WhatsAppTester initialPhone="+14155238886" defaultHospId="general-hospital" />
+          </Suspense>
+        </DeferUntilVisible>
       </section>
 
       {/* 5. Partner Hospital Directory Grid */}
