@@ -7,8 +7,9 @@ const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Hospital = require('../models/Hospital');
 const { recalculateQueueTimes } = require('../utils/queueHelper');
-const { sendWhatsAppNotification, getWhatsAppConfig, setWhatsAppConfig, getWhatsAppHistory, getPrimaryWhatsAppNumber } = require('../utils/whatsappHelper');
+const { sendWhatsAppNotification, getWhatsAppConfig, setWhatsAppConfig, getWhatsAppHistory, getPrimaryWhatsAppNumber, checkMetaToken } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
+const { resolveLocation } = require('../utils/locationHelper');
 
 // Bilingual Translation Dictionary
 const dictionary = {
@@ -677,14 +678,24 @@ router.post('/whatsapp', async (req, res) => {
         h => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === toDigits
       ) || null;
     }
-    if (!hospital) {
-      hospital = await Hospital.findOne({}) || { id: 'general-hospital' };
+
+    // Which facility does this chat belong to? A hospital the session ALREADY
+    // locked onto (e.g. via a scanned facility QR) must win on every later turn —
+    // only SEED from the receiving number for a brand-new conversation, so we
+    // never overwrite the patient's chosen facility mid-booking.
+    const waSessionId = `wa_${cleanFrom}`;
+    const priorSession = await ChatSession.findOne({ sessionId: waSessionId });
+    let seedHospitalId;
+    if (priorSession && priorSession.tempData && priorSession.tempData.hospitalId) {
+      seedHospitalId = undefined; // preserve the session's facility
+    } else {
+      seedHospitalId = hospital ? hospital.id : undefined; // fall back to default inside the engine
     }
 
     const result = await processChatMessage({
-      sessionId: `wa_${cleanFrom}`,
+      sessionId: waSessionId,
       message: incomingBody,
-      hospitalId: hospital.id,
+      hospitalId: seedHospitalId,
       socketIo: req.io
     });
 
@@ -834,11 +845,17 @@ router.get('/hospitals', async (req, res) => {
   try {
     const dbHospitals = await Hospital.find({});
     const formattedHospitals = dbHospitals.map(h => {
+      const obj = h.toObject();
       const rawWhatsapp = h.id === 'general-hospital'
         ? getPrimaryWhatsAppNumber()
         : h.whatsappNumber;
+      // Always expose a state + district (derived from city when not stored) so
+      // the State → District discovery filter works for every facility.
+      const loc = resolveLocation(obj);
       return {
-        ...h.toObject(),
+        ...obj,
+        state: loc.state,
+        district: loc.district,
         whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
       };
     });
@@ -860,8 +877,12 @@ router.get('/hospital/:hospitalId', async (req, res) => {
     const rawWhatsapp = hospital.id === 'general-hospital'
       ? getPrimaryWhatsAppNumber()
       : hospital.whatsappNumber;
+    const hObj = hospital.toObject();
+    const loc = resolveLocation(hObj);
     res.json({
-      ...hospital.toObject(),
+      ...hObj,
+      state: loc.state,
+      district: loc.district,
       whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
     });
   } catch (err) {
@@ -1040,6 +1061,20 @@ router.get('/whatsapp/qr/:hospitalId', async (req, res) => {
   }
 });
 
+// GET live Meta WhatsApp credential health. Makes one read-only call to Meta and
+// says plainly whether the token is VALID, EXPIRED (code 190), or BLOCKED by Meta
+// (code 200) — so you can verify a newly-pasted token in one click instead of
+// booking a test token and hunting through logs.
+router.get('/whatsapp/health', async (req, res) => {
+  try {
+    const health = await checkMetaToken();
+    res.status(health.ok ? 200 : 503).json(health);
+  } catch (err) {
+    console.error('WhatsApp health check error:', err);
+    res.status(500).json({ ok: false, message: 'Health check failed', error: err.message });
+  }
+});
+
 // GET WhatsApp Message History Audit Log
 router.get('/whatsapp/history', (req, res) => {
   try {
@@ -1097,6 +1132,10 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
           // The number that RECEIVED this message (74 or 555). Reply FROM this
           // exact number so request & response stay on ONE number.
           const receivingPhoneNumberId = value && value.metadata && value.metadata.phone_number_id;
+          // The display number that received the message (e.g. "917484043690").
+          // Used to figure out WHICH facility this WhatsApp conversation belongs
+          // to when it's a brand-new chat (multi-number setups).
+          const receivingDisplayNumber = value && value.metadata && value.metadata.display_phone_number;
           if (value && value.messages && value.messages.length > 0) {
             for (const msg of value.messages) {
               const fromPhone = msg.from; // e.g. "15551234567" or "919876543210"
@@ -1124,13 +1163,33 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                 const formattedPhone = fromPhone.startsWith('+') ? fromPhone : `+${fromPhone}`;
                 const sessionId = `wa_${formattedPhone.replace(/\D/g, '')}`;
 
-                console.log(`[META INCOMING WHATSAPP] From: ${formattedPhone} | To(phone_number_id): ${receivingPhoneNumberId} | Session: ${sessionId} | Text: "${textContent}"`);
+                // Decide which facility this WhatsApp chat belongs to.
+                // Priority: a hospital the session ALREADY locked onto (e.g. the
+                // patient scanned a facility QR "HI_<id>") must ALWAYS win — never
+                // clobber it on later turns (that was the old bug: every message
+                // forced 'general-hospital', so QR-scanned facilities were lost).
+                // Only for a BRAND-NEW chat do we seed the facility from the number
+                // that RECEIVED the message (metadata.display_phone_number).
+                let seedHospitalId; // undefined => let the session / default decide
+                const existingSession = await ChatSession.findOne({ sessionId });
+                if (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) {
+                  seedHospitalId = undefined; // preserve the session's facility
+                } else if (receivingDisplayNumber) {
+                  const rxDigits = receivingDisplayNumber.replace(/\D/g, '');
+                  const allHosp = await Hospital.find({});
+                  const matched = allHosp.find(
+                    h => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === rxDigits
+                  );
+                  seedHospitalId = matched ? matched.id : undefined;
+                }
+
+                console.log(`[META INCOMING WHATSAPP] From: ${formattedPhone} | To(phone_number_id): ${receivingPhoneNumberId} | RxNumber: ${receivingDisplayNumber || '-'} | Facility: ${seedHospitalId || (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) || 'default'} | Session: ${sessionId} | Text: "${textContent}"`);
 
                 // Feed input into CareSync patient appointment state engine
                 const botResponse = await processChatMessage({
                   sessionId,
                   message: textContent,
-                  hospitalId: 'general-hospital',
+                  hospitalId: seedHospitalId,
                   socketIo: req.io || global.io
                 });
 

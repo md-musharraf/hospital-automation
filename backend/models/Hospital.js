@@ -10,6 +10,11 @@ const HospitalSchema = new mongoose.Schema({
   coverImage: { type: String },
   description: { type: String },
   city: { type: String, required: true },
+  // State and district power the location-based discovery flow (choose State →
+  // District → facility). Optional so pre-existing facilities that only stored a
+  // city keep working — the API derives a sensible fallback from the city.
+  state: { type: String, default: '' },
+  district: { type: String, default: '' },
   coordinates: {
     lat: { type: Number, required: true },
     lng: { type: Number, required: true }

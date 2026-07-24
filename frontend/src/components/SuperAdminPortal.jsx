@@ -24,6 +24,8 @@ export default function SuperAdminPortal() {
   const [phone, setPhone] = useState('');
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [city, setCity] = useState('');
+  const [regState, setRegState] = useState('');
+  const [district, setDistrict] = useState('');
   const [lat, setLat] = useState('28.6139');
   const [lng, setLng] = useState('77.2090');
   const [type, setType] = useState('Hospital');
@@ -406,6 +408,8 @@ export default function SuperAdminPortal() {
       doctorCount: parseInt(doctorCount) || 1,
       description,
       city,
+      state: regState,
+      district,
       coordinates: {
         lat: parseFloat(lat),
         lng: parseFloat(lng)
@@ -1018,6 +1022,29 @@ export default function SuperAdminPortal() {
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       required
                     />
+                  </div>
+                  {/* State & District power the patient-facing State → District facility finder */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block mb-1">State</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Delhi"
+                        value={regState}
+                        onChange={e => setRegState(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1">District</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. New Delhi"
+                        value={district}
+                        onChange={e => setDistrict(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>

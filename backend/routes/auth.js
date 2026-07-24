@@ -326,6 +326,8 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       coverImage: coverImage || 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
       description: description || 'Specialized clinical care service.',
       city, coordinates, type,
+      state: b.state || '',
+      district: b.district || '',
       logoUrl: b.logoUrl || '',
       heroImage: b.heroImage || coverImage || '',
       galleryImages: b.galleryImages || (coverImage ? [coverImage] : []),
@@ -629,6 +631,8 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     if (coverImage !== undefined) hospital.coverImage = coverImage;
     if (description !== undefined) hospital.description = description;
     if (city !== undefined) hospital.city = city;
+    if (req.body.state !== undefined) hospital.state = req.body.state;
+    if (req.body.district !== undefined) hospital.district = req.body.district;
     if (coordinates !== undefined) hospital.coordinates = coordinates;
     if (type !== undefined) hospital.type = type;
     if (logoUrl !== undefined) hospital.logoUrl = logoUrl;

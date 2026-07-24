@@ -13,7 +13,8 @@ const WhatsAppTester = React.lazy(() => import('./WhatsAppTester'));
 export default function HospitalHub() {
   const [hospitals, setHospitals] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCity, setSelectedCity] = useState('All');
+  const [selectedState, setSelectedState] = useState('All');
+  const [selectedDistrict, setSelectedDistrict] = useState('All');
   const [selectedType, setSelectedType] = useState('All');
   const [userCoords, setUserCoords] = useState(null);
   const [geoLoading, setGeoLoading] = useState(false);
@@ -72,8 +73,23 @@ export default function HospitalHub() {
     );
   };
 
-  // Get unique list of cities
-  const cities = ['All', ...new Set(hospitals.map(h => h.city).filter(Boolean))];
+  // Location cascade: choose State → District → facility.
+  const states = ['All', ...Array.from(new Set(hospitals.map(h => h.state).filter(Boolean))).sort()];
+  // Districts depend on the chosen state (all districts when state = 'All').
+  const districts = ['All', ...Array.from(new Set(
+    hospitals
+      .filter(h => selectedState === 'All' || h.state === selectedState)
+      .map(h => h.district)
+      .filter(Boolean)
+  )).sort()];
+
+  // When the state changes, a previously-picked district may no longer belong to
+  // it — snap the district back to 'All' so the list never shows an empty result
+  // from a stale pairing.
+  const handleStateChange = (st) => {
+    setSelectedState(st);
+    setSelectedDistrict('All');
+  };
 
   // Process sorting, city filtering, and searching
   let processedHospitals = hospitals.map(h => {
@@ -84,9 +100,12 @@ export default function HospitalHub() {
     return h;
   });
 
-  // Filter by selected city
-  if (selectedCity !== 'All') {
-    processedHospitals = processedHospitals.filter(h => h.city === selectedCity);
+  // Filter by selected state, then district
+  if (selectedState !== 'All') {
+    processedHospitals = processedHospitals.filter(h => h.state === selectedState);
+  }
+  if (selectedDistrict !== 'All') {
+    processedHospitals = processedHospitals.filter(h => h.district === selectedDistrict);
   }
 
   // Filter by selected facility type
@@ -111,7 +130,7 @@ export default function HospitalHub() {
   const facilityTypes = ['All', 'Hospital', 'Clinic', 'Medical', 'Lab', 'Government Hospital', 'Government Lab'];
 
   // Animate sections/cards in as they scroll into view (re-scan after data loads).
-  useScrollReveal([loading, filteredHospitals.length, selectedType, selectedCity]);
+  useScrollReveal([loading, filteredHospitals.length, selectedType, selectedState, selectedDistrict]);
 
   return (
     <div className="flex-1 w-full min-h-screen overflow-y-auto bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 no-scrollbar">
@@ -206,26 +225,51 @@ export default function HospitalHub() {
                   </div>
                 </div>
 
-                {cities.length > 2 && (
-                  <div className="space-y-1.5">
-                    <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Region / City:</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {cities.map(city => (
-                        <button
-                           key={city}
-                           onClick={() => setSelectedCity(city)}
-                           className={`px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95 duration-100 ${
-                             selectedCity === city
-                               ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-md shadow-[var(--primary-color)]/10'
-                               : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/25'
-                           }`}
-                        >
-                          {city}
-                        </button>
-                      ))}
+                {/* Location cascade: pick your State, then District */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Find by Location:</span>
+                  <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
+                    <div className="flex-1 relative">
+                      <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[18px] text-[var(--primary-color)] pointer-events-none">public</span>
+                      <select
+                        value={selectedState}
+                        onChange={e => handleStateChange(e.target.value)}
+                        className="w-full appearance-none bg-[var(--card-bg)] border border-[var(--border-color)]/60 rounded-xl pl-9 pr-8 py-2.5 text-xs font-bold text-[var(--text-color)] outline-none focus:border-[var(--primary-color)] transition-colors cursor-pointer"
+                      >
+                        {states.map(st => (
+                          <option key={st} value={st}>{st === 'All' ? 'All States' : st}</option>
+                        ))}
+                      </select>
+                      <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-[18px] text-zinc-400 pointer-events-none">expand_more</span>
                     </div>
+
+                    <div className="flex-1 relative">
+                      <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[18px] text-[var(--tertiary-color)] pointer-events-none">location_city</span>
+                      <select
+                        value={selectedDistrict}
+                        onChange={e => setSelectedDistrict(e.target.value)}
+                        disabled={districts.length <= 1}
+                        className="w-full appearance-none bg-[var(--card-bg)] border border-[var(--border-color)]/60 rounded-xl pl-9 pr-8 py-2.5 text-xs font-bold text-[var(--text-color)] outline-none focus:border-[var(--primary-color)] transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {districts.map(d => (
+                          <option key={d} value={d}>{d === 'All' ? 'All Districts' : d}</option>
+                        ))}
+                      </select>
+                      <span className="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-[18px] text-zinc-400 pointer-events-none">expand_more</span>
+                    </div>
+
+                    {(selectedState !== 'All' || selectedDistrict !== 'All') && (
+                      <button
+                        onClick={() => { setSelectedState('All'); setSelectedDistrict('All'); }}
+                        className="shrink-0 px-3 py-2.5 rounded-xl text-xs font-bold bg-[var(--bg-color)] border border-[var(--border-color)]/40 text-[var(--text-secondary)] hover:bg-[var(--border-color)]/25 transition-colors flex items-center justify-center gap-1 active:scale-95 duration-100"
+                        title="Clear location filter"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">close</span>
+                        <span className="hidden sm:inline">Clear</span>
+                      </button>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             )}
           </div>
@@ -368,9 +412,11 @@ export default function HospitalHub() {
             <div>
               <h3 className="text-lg font-black mb-1 text-[var(--text-color)]">No Healthcare Facilities Found</h3>
               <p className="text-xs text-[var(--text-secondary)] font-medium max-w-md mx-auto">
-                {searchQuery 
-                  ? `No facilities matching "${searchQuery}". Try clearing search filters.` 
-                  : `No registered healthcare facilities in the directory yet. Use the Super Admin Dashboard to register your first hospital, clinic, diagnostic lab, or pharmacy!`}
+                {searchQuery
+                  ? `No facilities matching "${searchQuery}". Try clearing search filters.`
+                  : (selectedState !== 'All' || selectedDistrict !== 'All')
+                    ? `No facilities found in ${selectedDistrict !== 'All' ? selectedDistrict + ', ' : ''}${selectedState !== 'All' ? selectedState : 'this area'}. Try another location or clear the filter.`
+                    : `No registered healthcare facilities in the directory yet. Use the Super Admin Dashboard to register your first hospital, clinic, diagnostic lab, or pharmacy!`}
               </p>
             </div>
             <button

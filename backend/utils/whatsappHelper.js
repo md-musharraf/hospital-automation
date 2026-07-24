@@ -79,6 +79,65 @@ function getPrimaryWhatsAppNumber() {
 }
 
 /**
+ * Maps a Meta Graph API error object to a short, actionable classification.
+ * Keeps the "what do I actually do about it" logic in one place so both the
+ * send path and the health check agree.
+ */
+function classifyMetaError(mErr = {}) {
+  if (mErr.code === 190) return 'token_expired_or_invalid';
+  if (mErr.code === 200) return 'api_access_blocked';
+  if (mErr.code === 10 || mErr.code === 131030) return 'recipient_not_allowlisted';
+  if (mErr.code === 131026) return 'message_undeliverable';
+  if (mErr.code === 100) return 'invalid_parameter';
+  return 'unknown';
+}
+
+/**
+ * Live health-check of the configured Meta WhatsApp credentials. Makes ONE
+ * read-only call (phone-number status) and classifies the result so an operator
+ * can tell an EXPIRED token (code 190) apart from a Meta-side ACCESS BLOCK
+ * (code 200) apart from a genuinely healthy setup — without digging through
+ * server logs. Powers GET /api/v1/chat/whatsapp/health.
+ */
+async function checkMetaToken() {
+  const metaToken = process.env.META_WHATSAPP_ACCESS_TOKEN || process.env.META_ACCESS_TOKEN;
+  const metaPhoneId = process.env.META_PHONE_NUMBER_ID;
+  if (!metaToken || !metaPhoneId || metaToken.includes('your_meta_access_token')) {
+    return {
+      ok: false, configured: false, classification: 'not_configured',
+      message: 'Meta credentials are not set (META_WHATSAPP_ACCESS_TOKEN / META_PHONE_NUMBER_ID).'
+    };
+  }
+  try {
+    const url = `https://graph.facebook.com/v20.0/${metaPhoneId}?fields=display_phone_number,verified_name,quality_rating,status&access_token=${metaToken}`;
+    const res = await (global.fetch || require('node-fetch'))(url);
+    const data = await res.json();
+    if (res.ok && !data.error) {
+      return {
+        ok: true, configured: true, classification: 'healthy',
+        displayNumber: data.display_phone_number, verifiedName: data.verified_name,
+        qualityRating: data.quality_rating, numberStatus: data.status,
+        message: 'Meta WhatsApp token is valid and the number is reachable.'
+      };
+    }
+    const mErr = data.error || {};
+    const classification = classifyMetaError(mErr);
+    const hint = classification === 'token_expired_or_invalid'
+      ? 'Generate a fresh token (prefer a permanent System User token) and update META_WHATSAPP_ACCESS_TOKEN on the server.'
+      : classification === 'api_access_blocked'
+        ? 'Meta has blocked this app/token API access — check the app for restriction banners and Business verification, or create a new app + token.'
+        : 'See the Meta error message for details.';
+    return {
+      ok: false, configured: true, classification,
+      code: mErr.code, subcode: mErr.error_subcode,
+      message: mErr.message || 'Unknown Meta error', hint
+    };
+  } catch (err) {
+    return { ok: false, configured: true, classification: 'network_error', message: err.message };
+  }
+}
+
+/**
  * Sends a WhatsApp notification to a patient using Meta WhatsApp Cloud API v20.0.
  * Supports text messages and interactive quick reply buttons / list options.
  * Falls back cleanly to Auto-Gateway mode if Meta credentials are not configured.
@@ -234,9 +293,18 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
         }
         return { status: 'sent', provider: 'meta', messageId: msgId, record: dispatchRecord };
       } else {
-        const errDetail = (data && data.error && data.error.message) || JSON.stringify(data);
-        console.error('[META WHATSAPP FAILED] Error:', errDetail, '| Falling back...');
+        const mErr = (data && data.error) || {};
+        const errDetail = mErr.message || JSON.stringify(data);
+        // Classify the failure so the operator instantly knows the remedy:
+        //  - code 190              => access token EXPIRED/invalid  => generate a fresh token
+        //  - code 200 "API access blocked" => Meta BLOCKED the app's API access (account/app level)
+        //  - code 10 / 131030      => recipient not in the dev-mode allowed-numbers list
+        const classification = classifyMetaError(mErr);
+        console.error(`[META WHATSAPP FAILED] code=${mErr.code} subcode=${mErr.error_subcode || '-'} (${classification}): ${errDetail} | Falling back...`);
         dispatchRecord.metaError = errDetail;
+        dispatchRecord.metaErrorCode = mErr.code;
+        dispatchRecord.metaErrorSubcode = mErr.error_subcode;
+        dispatchRecord.metaErrorClass = classification;
       }
     } catch (err) {
       console.error('[META WHATSAPP FAILED] Exception:', err.message, '| Falling back...');
@@ -301,5 +369,7 @@ module.exports = {
   setWhatsAppConfig,
   getWhatsAppHistory,
   getPrimaryWhatsAppNumber,
+  checkMetaToken,
+  classifyMetaError,
   DEFAULT_WHATSAPP_NUMBER
 };
