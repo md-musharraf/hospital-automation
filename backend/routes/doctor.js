@@ -5,7 +5,7 @@ const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Reminder = require('../models/Reminder');
 const { authenticateToken } = require('../middleware/auth');
-const { recalculateQueueTimes } = require('../utils/queueHelper');
+const { recalculateQueueTimes, notifyUpcomingPatients } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 
 // Middleware to ensure the user is a doctor
@@ -91,6 +91,9 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
 
     // Recalculate wait times for remaining queue
     await recalculateQueueTimes(doctorId);
+
+    // Ping the patients who are now near the front so they head over (crowd control)
+    notifyUpcomingPatients(doctorId, req.io);
 
     // Send automated WhatsApp alert for Called Token
     if (token.patient && token.patient.phone) {
@@ -219,6 +222,9 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
     // Recalculate wait times
     await recalculateQueueTimes(doctorId);
 
+    // Ping the patients who are now near the front so they head over (crowd control)
+    notifyUpcomingPatients(doctorId, req.io);
+
     // Broadcast updates
     if (req.io) {
       req.io.to('queue:global').emit('queue-updated', { doctorId });
@@ -259,6 +265,9 @@ router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, r
 
     // Recalculate wait times
     await recalculateQueueTimes(doctorId);
+
+    // Ping the patients who are now near the front so they head over (crowd control)
+    notifyUpcomingPatients(doctorId, req.io);
 
     // Broadcast updates
     if (req.io) {

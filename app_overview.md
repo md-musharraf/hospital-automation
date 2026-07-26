@@ -31,6 +31,51 @@ stateDiagram-v2
     COMPLETED --> [*]
 ```
 
+### A2. Smart Triage & Auto-Routing (`utils/triageHelper.js`) — the load-reducer
+
+The single biggest lever for **less receptionist / doctor / patient load**, designed
+for high-volume Indian government hospitals where patients have no medical knowledge
+and there aren't enough staff to sort every walk-in by hand.
+
+* **Symptom → Department:** `classifySymptoms(text)` reads free-text symptoms in
+  **English or Hindi/Hinglish** and maps them to one of 12 canonical departments
+  (Cardiology, Pediatrics, Orthopedics, ENT, Gynecology, Gastroenterology, etc.)
+  via a bilingual keyword dictionary. Ties break toward the more specific specialty.
+* **Red-flag escalation:** emergency keywords (chest pain, severe bleeding, accident,
+  seizure, `सीने में दर्द`, `दुर्घटना`…) auto-upgrade the token to **Emergency
+  priority** so it jumps to the front of the queue — no human has to catch it.
+* **Load balancing:** `pickLeastBusyDoctor()` filters the facility's doctors to the
+  target department (falling back to General Medicine, then any doctor) and picks the
+  one with the **shortest estimated queue**, spreading walk-ins evenly instead of
+  piling everyone onto the first doctor listed. Strictly tenant-scoped — never looks
+  outside the facility's own doctors.
+* **Patient chat flow:** after symptoms, the bot shows a one-tap recommendation
+  ("the right department is *Cardiology* → Dr. X, ~10 min") with **Yes, Book** /
+  **Choose Another Doctor** buttons — the patient never has to know which specialist
+  to pick. Manual selection remains as a fallback.
+* **Reception walk-in:** `POST /staff/tokens/walk-in` now takes `doctorId` as
+  **optional**. Left blank (the default in StaffPortal → "🤖 Auto-assign"), the same
+  engine routes the walk-in automatically and returns `{ autoTriaged, triagedDepartment }`.
+  The counter just enters name/age/phone/symptoms and submits.
+
+### A3. Smart Arrival Alerts / Crowd Control (`utils/queueHelper.js`)
+
+Attacks the defining problem of Indian govt hospitals — everyone standing in one
+physical line from dawn — so the OPD hall stays empty and staff don't police a queue.
+
+* **"Wait at home" booking message:** every booking (chat + walk-in) now tells the
+  patient their **approx. clock turn time** (`formatApptTime()`, e.g. "~11:15 AM") and,
+  bilingually, that they do **not** need to stand in line — a WhatsApp ping will call
+  them when their turn is near.
+* **`notifyUpcomingPatients(doctorId, io)`:** fires after every queue advance
+  (`call-next`, `complete`, `mark-absent`). It WhatsApps the patients who have just
+  moved into the top `ARRIVAL_ALERT_THRESHOLD` (=2) waiting slots — "You are NEXT /
+  only 1 ahead, please reach Cabin X now" (English + Hindi).
+* **Pinged exactly once:** a `Token.arrivalAlerted` flag guarantees no patient is
+  spammed as the line shifts; a patient gets their single alert only when they first
+  enter the near-front. Fully best-effort — a notification failure never blocks the
+  doctor's queue action.
+
 ### B. Emergency Queue Prioritization (SOS)
 * **Logic:** Staff members can trigger an **Emergency Override** flag during registration, or change an existing ticket to SOS.
 * **Priority Routing:** Emergency tokens are pushed to **Index 0** of the doctor's `activeQueue` array, instantly routing them to the top of the waitlist.

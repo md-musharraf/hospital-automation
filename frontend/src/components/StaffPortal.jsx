@@ -191,9 +191,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         setQueues(dataQ);
         const fetchedDocs = dataQ.map(q => q.doctor).filter(Boolean);
         setDoctors(fetchedDocs);
-        if (fetchedDocs.length > 0 && !walkDoctorId) {
-          setWalkDoctorId(fetchedDocs[0]._id);
-        }
+        // Leave walkDoctorId empty by default → the walk-in form uses SMART
+        // AUTO-ASSIGN (symptom-based triage + least-busy doctor) unless reception
+        // deliberately overrides it. This is what cuts the counter's workload.
       } else {
         console.error('Invalid queues data format:', dataQ);
       }
@@ -260,27 +260,25 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     setWalkError('');
     setWalkSuccess('');
 
-    if (!walkDoctorId) {
-      setWalkError('Please select a doctor.');
-      return;
-    }
-
     try {
+      const payload = {
+        name: walkName,
+        age: parseInt(walkAge),
+        gender: walkGender,
+        phone: walkPhone,
+        symptoms: walkSymptoms,
+        tokenType: walkIsEmergency ? 'Emergency' : 'Regular'
+      };
+      // Only pin a doctor when reception explicitly overrode auto-assign.
+      if (walkDoctorId) payload.doctorId = walkDoctorId;
+
       const res = await fetch(`${BACKEND_URL}/api/v1/staff/tokens/walk-in`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${staffToken}`
         },
-        body: JSON.stringify({
-          name: walkName,
-          age: parseInt(walkAge),
-          gender: walkGender,
-          phone: walkPhone,
-          doctorId: walkDoctorId,
-          symptoms: walkSymptoms,
-          tokenType: walkIsEmergency ? 'Emergency' : 'Regular'
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
 
@@ -288,12 +286,19 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         throw new Error(data.message || 'Booking failed');
       }
 
-      setWalkSuccess(`Walk-in generated: Token ${data.token.tokenNumber}`);
+      const docName = data.token?.doctor?.name || 'the assigned doctor';
+      if (data.autoTriaged) {
+        const emTag = data.token?.tokenType === 'Emergency' ? ' 🚨 auto-flagged EMERGENCY' : '';
+        setWalkSuccess(`Token ${data.token.tokenNumber} → auto-routed to ${docName} (${data.triagedDepartment})${emTag}.`);
+      } else {
+        setWalkSuccess(`Walk-in generated: Token ${data.token.tokenNumber} for ${docName}.`);
+      }
       setWalkName('');
       setWalkAge('');
       setWalkPhone('');
       setWalkSymptoms('');
       setWalkIsEmergency(false);
+      setWalkDoctorId('');
       loadData();
     } catch (err) {
       setWalkError(err.message);
@@ -830,18 +835,25 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   </div>
 
                   <div>
-                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">Assign Doctor</label>
+                    <label className="block text-[var(--text-secondary)] font-semibold mb-1 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[15px] text-[var(--primary-color)]">auto_awesome</span>
+                      Assign Doctor
+                    </label>
                     <select
                       value={walkDoctorId}
                       onChange={(e) => setWalkDoctorId(e.target.value)}
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
                     >
+                      <option value="">🤖 Auto-assign (smart triage — recommended)</option>
                       {doctors.map(doc => (
                         <option key={doc._id} value={doc._id}>
                           {doc.name} ({doc.department})
                         </option>
                       ))}
                     </select>
+                    <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-1">
+                      Leave on Auto-assign — the system reads the symptoms, picks the right department & the least-busy doctor.
+                    </p>
                   </div>
 
                   <div>

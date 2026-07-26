@@ -6,10 +6,11 @@ const Doctor = require('../models/Doctor');
 const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Hospital = require('../models/Hospital');
-const { recalculateQueueTimes } = require('../utils/queueHelper');
+const { recalculateQueueTimes, formatApptTime } = require('../utils/queueHelper');
 const { sendWhatsAppNotification, getWhatsAppConfig, setWhatsAppConfig, getWhatsAppHistory, getPrimaryWhatsAppNumber, checkMetaToken } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { resolveLocation } = require('../utils/locationHelper');
+const { classifySymptoms, pickLeastBusyDoctor } = require('../utils/triageHelper');
 
 // Bilingual Translation Dictionary
 const dictionary = {
@@ -41,6 +42,10 @@ const dictionary = {
     noDoctors: 'No doctors are currently available. Type "Hi" to try again later.',
     selectDoctorPrompt: 'Select an available doctor to book your token:',
     invalidDoctor: 'Invalid doctor selection. Please choose from the list:',
+    emergencyDetected: '🚨 Your symptoms may need URGENT care. I have marked this token as EMERGENCY priority so you are seen first.',
+    triageRecommend: (dept, doctor, room, wait) => `✅ Based on your symptoms, the right department is *${dept}*.\n\n👨‍⚕️ Recommended: ${doctor}\n🚪 ${room}\n⏱️ Approx. wait: ${wait} min (least-busy doctor for you)`,
+    triageConfirmPrompt: 'Shall I book this token for you now?',
+    triageConfirmOptions: ['✅ Yes, Book My Token', '🔄 Choose Another Doctor'],
     bookingCompleteHeader: 'Booking Complete! 🎉',
     bookingCompleteBody: (tokenNumber, doctor, room, wait) => `• Token Number: ${tokenNumber}\n• Doctor: ${doctor}\n• Cabin: ${room}\n• Estimated Wait: ${wait} mins.`,
     defaultCatchAll: 'Your previous booking is complete. Type "Hi" to start a new inquiry!',
@@ -80,6 +85,10 @@ const dictionary = {
     noDoctors: 'वर्तमान में कोई डॉक्टर उपलब्ध नहीं हैं। बाद में पुनः प्रयास करने के लिए "Hi" टाइप करें।',
     selectDoctorPrompt: 'टोकन बुक करने के लिए उपलब्ध डॉक्टर का चयन करें:',
     invalidDoctor: 'गलत डॉक्टर का चयन। कृपया सूची में से चुनें:',
+    emergencyDetected: '🚨 आपके लक्षणों को तुरंत इलाज की ज़रूरत हो सकती है। मैंने इस टोकन को इमरजेंसी प्राथमिकता दे दी है ताकि आपको पहले देखा जाए।',
+    triageRecommend: (dept, doctor, room, wait) => `✅ आपके लक्षणों के आधार पर सही विभाग है *${dept}*।\n\n👨‍⚕️ सुझाव: ${doctor}\n🚪 ${room}\n⏱️ अनुमानित प्रतीक्षा: ${wait} मिनट (आपके लिए सबसे कम भीड़ वाले डॉक्टर)`,
+    triageConfirmPrompt: 'क्या मैं आपका टोकन अभी बुक कर दूँ?',
+    triageConfirmOptions: ['✅ हाँ, मेरा टोकन बुक करें', '🔄 दूसरा डॉक्टर चुनें'],
     bookingCompleteHeader: 'बुकिंग पूरी हो गई! 🎉',
     bookingCompleteBody: (tokenNumber, doctor, room, wait) => `• टोकन नंबर: ${tokenNumber}\n• डॉक्टर: ${doctor}\n• केबिन: ${room}\n• अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
     defaultCatchAll: 'आपकी पिछली बुकिंग पूरी हो चुकी है। नया टोकन बनाने के लिए "Hi" टाइप करें!',
@@ -93,6 +102,105 @@ const dictionary = {
   }
 };
 
+
+// Shared booking completion — used by BOTH the smart-triage auto-route path and
+// the manual "pick a doctor" fallback, so the token/queue/WhatsApp logic lives in
+// exactly one place. Creates/updates the patient, mints a token, pushes it into
+// the chosen doctor's queue (Emergency jumps to the front), recalculates waits,
+// notifies via WhatsApp, and returns the completed-booking chat payload.
+async function finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo }) {
+  const phone = (session.tempData && session.tempData.phone) || `+1 555-${session.sessionId.slice(-4)}`;
+  let patient = await Patient.findOne({ phone, hospital: currentHospId });
+  if (!patient) {
+    patient = new Patient({
+      name: (session.tempData && session.tempData.name) || 'Valued Patient',
+      age: (session.tempData && session.tempData.age) || 30,
+      gender: (session.tempData && session.tempData.gender) || 'Other',
+      phone,
+      hospital: currentHospId
+    });
+  } else {
+    patient.visitCount = (patient.visitCount || 1) + 1;
+    if (session.tempData && session.tempData.name) patient.name = session.tempData.name;
+    if (session.tempData && session.tempData.age) patient.age = session.tempData.age;
+    if (session.tempData && session.tempData.gender) patient.gender = session.tempData.gender;
+  }
+  await patient.save();
+
+  const tokenNumber = await generateUniqueTokenNumber(currentHospId);
+
+  const token = new Token({
+    tokenNumber,
+    hospital: currentHospId,
+    status: 'Waiting',
+    tokenType: session.tempData.tokenType || 'Regular',
+    patient: patient._id,
+    doctor: selectedDoc._id,
+    symptoms: session.tempData.symptoms || 'General Checkup'
+  });
+  await saveTokenWithRetry(token);
+
+  let queue = await Queue.findOne({ doctor: selectedDoc._id });
+  if (!queue) {
+    queue = new Queue({ doctor: selectedDoc._id, activeQueue: [] });
+  }
+
+  if (token.tokenType === 'Emergency') {
+    queue.activeQueue.unshift(token._id);
+  } else {
+    queue.activeQueue.push(token._id);
+  }
+  await queue.save();
+
+  try {
+    await recalculateQueueTimes(selectedDoc._id);
+  } catch (qErr) {
+    console.error('Error recalculating queue times:', qErr);
+  }
+
+  session.currentState = 'COMPLETED';
+  session.markModified && session.markModified('tempData');
+  await session.save();
+
+  const refreshedToken = (await Token.findById(token._id)) || token;
+  const trackerLink = `https://hospital-automation-wine.vercel.app/track/${refreshedToken._id}`;
+  const apptTime = formatApptTime(refreshedToken.estimatedWaitTime || 0);
+  // Crowd-control message: tell the patient roughly WHEN to come and that they do
+  // NOT need to stand in line — a WhatsApp ping will call them when their turn nears.
+  const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Your approx. turn: ${apptTime} (~${refreshedToken.estimatedWaitTime || 0} min).\n\n✅ No need to stand in line — wait at home/outside. We will WhatsApp you when your turn is near.\n🔔 घर पर आराम करें, लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम आपको WhatsApp कर देंगे।\n\nTrack live: ${trackerLink}`;
+
+  try {
+    await sendWhatsAppNotification(patient.phone, bookingMessage);
+  } catch (waErr) {
+    console.error('WhatsApp notification error:', waErr);
+  }
+
+  if (socketIo) {
+    try {
+      socketIo.to('queue:global').emit('queue-updated', { doctorId: selectedDoc._id });
+      socketIo.to(`doctor:${selectedDoc._id}`).emit('queue-updated');
+    } catch (sErr) {
+      console.error('Socket emit error:', sErr);
+    }
+  }
+
+  const waitMins = typeof refreshedToken.estimatedWaitTime === 'number' ? refreshedToken.estimatedWaitTime : 0;
+
+  return {
+    messages: [
+      { sender: 'bot', text: text.bookingCompleteHeader },
+      { sender: 'bot', text: text.bookingCompleteBody(refreshedToken.tokenNumber, selectedDoc.name, selectedDoc.currentRoom || 'Cabin A', waitMins) }
+    ],
+    options: text.options,
+    token: {
+      id: refreshedToken._id,
+      tokenNumber: refreshedToken.tokenNumber,
+      estimatedWaitTime: waitMins,
+      status: refreshedToken.status || 'Waiting',
+      department: selectedDoc.department || 'General Practice'
+    }
+  };
+}
 
 async function processChatMessage({ sessionId, message, hospitalId, socketIo }) {
   let session = await ChatSession.findOne({ sessionId });
@@ -446,8 +554,6 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   if (state === 'AWAITING_SYMPTOMS') {
     if (!session.tempData || !session.tempData.symptoms) {
       session.tempData = { ...session.tempData, symptoms: cleanMsg };
-      session.markModified && session.markModified('tempData');
-      await session.save();
 
       // TENANT ISOLATION: only ever offer doctors that belong to THIS facility.
       // Never fall back to Doctor.find({}) across all facilities — that would
@@ -461,18 +567,60 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         doctors = await Doctor.find({ hospital: currentHospId });
       }
       if (!doctors || doctors.length === 0) {
+        session.markModified && session.markModified('tempData');
+        await session.save();
         return {
           messages: [{ sender: 'bot', text: text.noDoctors }],
           options: []
         };
       }
 
+      // SMART TRIAGE — this is what removes the receptionist / patient-guesswork
+      // load: read the symptoms, pick the department, escalate red flags, and
+      // route to the LEAST-BUSY doctor. The patient just confirms with one tap.
+      const triage = classifySymptoms(session.tempData.symptoms);
+
+      // Red-flag symptoms auto-escalate to Emergency priority (unless the patient
+      // already chose Emergency via the menu).
+      const preMessages = [];
+      if (triage.urgency === 'Emergency' && session.tempData.tokenType !== 'Emergency') {
+        session.tempData.tokenType = 'Emergency';
+        preMessages.push({ sender: 'bot', text: text.emergencyDetected });
+      }
+
+      const { doctor: suggested, matchedDepartment } = await pickLeastBusyDoctor(doctors, triage.department);
+      if (suggested) {
+        // Estimated wait for the suggested doctor so the patient sees the payoff
+        // of load balancing before confirming.
+        const sQueue = await Queue.findOne({ doctor: suggested._id });
+        const sLen = (sQueue && sQueue.activeQueue && sQueue.activeQueue.length) || 0;
+        const sWait = sLen * (suggested.averageCheckupTime || 10) + ((sQueue && sQueue.bufferDelay) || 0);
+        const shownDept = matchedDepartment ? triage.department : (suggested.department || triage.department);
+
+        session.tempData.suggestedDoctorId = String(suggested._id);
+        session.currentState = 'AWAITING_TRIAGE_CONFIRM';
+        session.markModified && session.markModified('tempData');
+        await session.save();
+
+        return {
+          messages: [
+            ...preMessages,
+            { sender: 'bot', text: text.triageRecommend(shownDept, suggested.name, suggested.currentRoom || 'Cabin A', sWait) },
+            { sender: 'bot', text: text.triageConfirmPrompt }
+          ],
+          options: text.triageConfirmOptions
+        };
+      }
+
+      // Fallback: could not auto-route — offer the full manual list (old behavior).
+      session.markModified && session.markModified('tempData');
+      await session.save();
       const docNames = doctors.map(d => `${d.name} (${d.department})`);
       return {
-        messages: [{ sender: 'bot', text: text.selectDoctorPrompt }],
+        messages: [...preMessages, { sender: 'bot', text: text.selectDoctorPrompt }],
         options: docNames
       };
-    } 
+    }
     else {
       // TENANT ISOLATION: only ever offer doctors that belong to THIS facility.
       // Never fall back to Doctor.find({}) across all facilities — that would
@@ -516,97 +664,59 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         };
       }
 
-      // Complete booking!
-      const phone = (session.tempData && session.tempData.phone) || `+1 555-${session.sessionId.slice(-4)}`;
-      let patient = await Patient.findOne({ phone, hospital: currentHospId });
-      if (!patient) {
-        patient = new Patient({
-          name: (session.tempData && session.tempData.name) || 'Valued Patient',
-          age: (session.tempData && session.tempData.age) || 30,
-          gender: (session.tempData && session.tempData.gender) || 'Other',
-          phone,
-          hospital: currentHospId
-        });
-      } else {
-        patient.visitCount = (patient.visitCount || 1) + 1;
-        if (session.tempData && session.tempData.name) patient.name = session.tempData.name;
-        if (session.tempData && session.tempData.age) patient.age = session.tempData.age;
-        if (session.tempData && session.tempData.gender) patient.gender = session.tempData.gender;
-      }
-      await patient.save();
+      // Complete booking via the shared helper (same path as auto-triage).
+      return await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
+    }
+  }
 
-      // Unique token number generation (collision-free)
-      const tokenNumber = await generateUniqueTokenNumber(currentHospId);
+  // AWAITING_TRIAGE_CONFIRM state — patient responds to the smart recommendation.
+  // "Yes" books the suggested least-busy doctor in one tap; "Choose Another"
+  // falls back to the full manual doctor list.
+  if (state === 'AWAITING_TRIAGE_CONFIRM') {
+    const isConfirm = cleanMsg === '1'
+      || cleanMsg === text.triageConfirmOptions[0]
+      || /^(yes|y|ok|okay|confirm|book|haan|हाँ|हां| हा|ठीक)/i.test(cleanMsg);
+    const isChange = cleanMsg === '2'
+      || cleanMsg === text.triageConfirmOptions[1]
+      || /^(no|n|change|other|another|दूसरा|बदल)/i.test(cleanMsg);
 
-      const token = new Token({
-        tokenNumber,
-        hospital: currentHospId,
-        status: 'Waiting',
-        tokenType: session.tempData.tokenType || 'Regular',
-        patient: patient._id,
-        doctor: selectedDoc._id,
-        symptoms: session.tempData.symptoms || 'General Checkup'
-      });
-      await saveTokenWithRetry(token);
+    // Load doctors for this facility once (tenant-safe) — needed for both paths.
+    let doctors = await Doctor.find({
+      hospital: currentHospId,
+      availabilityStatus: { $ne: 'Unavailable' }
+    });
+    if (!doctors || doctors.length === 0) {
+      doctors = await Doctor.find({ hospital: currentHospId });
+    }
+    if (!doctors || doctors.length === 0) {
+      return { messages: [{ sender: 'bot', text: text.noDoctors }], options: [] };
+    }
 
-      let queue = await Queue.findOne({ doctor: selectedDoc._id });
-      if (!queue) {
-        queue = new Queue({ doctor: selectedDoc._id, activeQueue: [] });
-      }
+    if (isConfirm) {
+      const suggestedId = session.tempData && session.tempData.suggestedDoctorId;
+      const selectedDoc = doctors.find(d => String(d._id) === String(suggestedId)) || doctors[0];
+      return await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
+    }
 
-      if (token.tokenType === 'Emergency') {
-        queue.activeQueue.unshift(token._id);
-      } else {
-        queue.activeQueue.push(token._id);
-      }
-      await queue.save();
-
-      try {
-        await recalculateQueueTimes(selectedDoc._id);
-      } catch (qErr) {
-        console.error('Error recalculating queue times:', qErr);
-      }
-
-      session.currentState = 'COMPLETED';
+    if (isChange) {
+      // Hand off to the manual selection branch: symptoms are already stored, so
+      // the next message is treated as a doctor pick by the else-branch above.
+      session.currentState = 'AWAITING_SYMPTOMS';
+      if (session.tempData) delete session.tempData.suggestedDoctorId;
       session.markModified && session.markModified('tempData');
       await session.save();
-
-      const refreshedToken = (await Token.findById(token._id)) || token;
-      const trackerLink = `https://hospital-automation-wine.vercel.app/track/${refreshedToken._id}`;
-      const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked successfully for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Estimated wait time: ${refreshedToken.estimatedWaitTime || 0} mins. Track live: ${trackerLink}`;
-      
-      try {
-        await sendWhatsAppNotification(patient.phone, bookingMessage);
-      } catch (waErr) {
-        console.error('WhatsApp notification error:', waErr);
-      }
-
-      if (socketIo) {
-        try {
-          socketIo.to('queue:global').emit('queue-updated', { doctorId: selectedDoc._id });
-          socketIo.to(`doctor:${selectedDoc._id}`).emit('queue-updated');
-        } catch (sErr) {
-          console.error('Socket emit error:', sErr);
-        }
-      }
-
-      const waitMins = typeof refreshedToken.estimatedWaitTime === 'number' ? refreshedToken.estimatedWaitTime : 0;
-
+      const docNames = doctors.map(d => `${d.name} (${d.department})`);
       return {
-        messages: [
-          { sender: 'bot', text: text.bookingCompleteHeader },
-          { sender: 'bot', text: text.bookingCompleteBody(refreshedToken.tokenNumber, selectedDoc.name, selectedDoc.currentRoom || 'Cabin A', waitMins) }
-        ],
-        options: text.options,
-        token: {
-          id: refreshedToken._id,
-          tokenNumber: refreshedToken.tokenNumber,
-          estimatedWaitTime: waitMins,
-          status: refreshedToken.status || 'Waiting',
-          department: selectedDoc.department || 'General Practice'
-        }
+        messages: [{ sender: 'bot', text: text.selectDoctorPrompt }],
+        options: docNames
       };
     }
+
+    // Unrecognized reply — re-show the confirm prompt.
+    return {
+      messages: [{ sender: 'bot', text: text.triageConfirmPrompt }],
+      options: text.triageConfirmOptions
+    };
   }
 
   return {

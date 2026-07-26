@@ -42,6 +42,10 @@ const TokenSchema = new mongoose.Schema({
     dispensedBy: { type: String }
   },
   estimatedWaitTime: { type: Number, default: 0 }, // in minutes
+  // Set true once the "your turn is near, please reach the hospital" WhatsApp has
+  // been sent, so a patient is pinged exactly once as they approach the front of
+  // the queue (lets them wait at home instead of crowding the OPD hall).
+  arrivalAlerted: { type: Boolean, default: false },
   calledAt: { type: Date },
   completedAt: { type: Date }
 }, { timestamps: true });

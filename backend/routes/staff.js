@@ -7,9 +7,10 @@ const Queue = require('../models/Queue');
 const Reminder = require('../models/Reminder');
 const { processPendingReminders } = require('../utils/reminderHelper');
 const { authenticateToken } = require('../middleware/auth');
-const { recalculateQueueTimes } = require('../utils/queueHelper');
+const { recalculateQueueTimes, formatApptTime } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
+const { classifySymptoms, pickLeastBusyDoctor } = require('../utils/triageHelper');
 
 // Middleware to ensure the user is staff
 const ensureStaff = (req, res, next) => {
@@ -44,8 +45,10 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
   try {
     const { name, age, gender, phone, doctorId, symptoms, tokenType } = req.body;
 
-    if (!name || !age || !gender || !phone || !doctorId || !symptoms) {
-      return res.status(400).json({ message: 'All patient and doctor fields are required' });
+    // doctorId is OPTIONAL now — leave it blank and the system auto-triages the
+    // walk-in to the right department + least-busy doctor (see below).
+    if (!name || !age || !gender || !phone || !symptoms) {
+      return res.status(400).json({ message: 'Patient name, age, gender, phone and symptoms are required' });
     }
 
     if (typeof name !== 'string' || name.trim().length < 2 || name.length > 100) {
@@ -81,11 +84,41 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     }
     await patient.save();
 
-    // Check doctor availability and hospital tenant match
-    const doctor = await Doctor.findById(doctorId);
-    if (!doctor || doctor.hospital !== staffHosp) {
-      return res.status(404).json({ message: 'Doctor not found in this hospital tenant' });
+    // Resolve the doctor. If reception explicitly chose one, honor it (tenant-checked).
+    // Otherwise SMART AUTO-TRIAGE: read the symptoms, route to the right department,
+    // and pick the LEAST-BUSY doctor — so the counter never has to sort walk-ins by
+    // hand. Red-flag symptoms also auto-escalate the token to Emergency priority.
+    let doctor;
+    let effectiveTokenType = tokenType || 'Regular';
+    let autoTriaged = false;
+    let triagedDepartment = null;
+    if (doctorId) {
+      doctor = await Doctor.findById(doctorId);
+      if (!doctor || doctor.hospital !== staffHosp) {
+        return res.status(404).json({ message: 'Doctor not found in this hospital tenant' });
+      }
+    } else {
+      // TENANT ISOLATION: only ever consider THIS facility's own doctors.
+      let facilityDoctors = await Doctor.find({ hospital: staffHosp, availabilityStatus: { $ne: 'Unavailable' } });
+      if (!facilityDoctors || facilityDoctors.length === 0) {
+        facilityDoctors = await Doctor.find({ hospital: staffHosp });
+      }
+      if (!facilityDoctors || facilityDoctors.length === 0) {
+        return res.status(404).json({ message: 'No doctors are registered for this facility yet' });
+      }
+      const triage = classifySymptoms(symptoms);
+      if (triage.urgency === 'Emergency' && effectiveTokenType !== 'Emergency') {
+        effectiveTokenType = 'Emergency';
+      }
+      const picked = await pickLeastBusyDoctor(facilityDoctors, triage.department);
+      doctor = picked.doctor;
+      if (!doctor) {
+        return res.status(404).json({ message: 'Could not auto-assign a doctor for these symptoms' });
+      }
+      autoTriaged = true;
+      triagedDepartment = picked.matchedDepartment ? triage.department : (doctor.department || triage.department);
     }
+    const resolvedDoctorId = doctor._id;
 
     // Generate unique token number (collision-free)
     const tokenNumber = await generateUniqueTokenNumber(staffHosp);
@@ -94,17 +127,17 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       tokenNumber,
       hospital: staffHosp,
       status: 'Waiting',
-      tokenType: tokenType || 'Regular',
+      tokenType: effectiveTokenType,
       patient: patient._id,
-      doctor: doctorId,
+      doctor: resolvedDoctorId,
       symptoms
     });
     await saveTokenWithRetry(token);
 
     // Add token to Queue
-    let queue = await Queue.findOne({ doctor: doctorId });
+    let queue = await Queue.findOne({ doctor: resolvedDoctorId });
     if (!queue) {
-      queue = new Queue({ doctor: doctorId, activeQueue: [] });
+      queue = new Queue({ doctor: resolvedDoctorId, activeQueue: [] });
     }
 
     if (token.tokenType === 'Emergency') {
@@ -116,12 +149,12 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     await queue.save();
 
     // Recalculate wait times
-    await recalculateQueueTimes(doctorId);
+    await recalculateQueueTimes(resolvedDoctorId);
 
     // Trigger Web Push Notification to Doctor
     try {
       const pushHelper = require('../utils/pushHelper');
-      if (tokenType === 'Emergency') {
+      if (effectiveTokenType === 'Emergency') {
         await pushHelper.notifyByRole('Doctor', {
           title: '🚨 EMERGENCY SOS WALKIN',
           body: `Emergency Alert: Patient ${name} has been placed at the front of your queue!`,
@@ -142,8 +175,8 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
 
     // Broadcast update
     if (req.io) {
-      req.io.to('queue:global').emit('queue-updated', { doctorId });
-      req.io.to(`doctor:${doctorId}`).emit('queue-updated');
+      req.io.to('queue:global').emit('queue-updated', { doctorId: resolvedDoctorId });
+      req.io.to(`doctor:${resolvedDoctorId}`).emit('queue-updated');
     }
 
     const createdToken = await Token.findById(token._id).populate('patient').populate('doctor');
@@ -156,7 +189,8 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     if (createdToken.patient && createdToken.patient.phone) {
       const docName = createdToken.doctor ? createdToken.doctor.name : 'Doctor';
       const roomName = createdToken.doctor ? (createdToken.doctor.currentRoom || 'Cabin A') : 'Cabin A';
-      const walkInMsg = `Hello ${createdToken.patient.name}, your walk-in token ${createdToken.tokenNumber} has been successfully generated for ${docName} in ${roomName}. Estimated wait time is ${createdToken.estimatedWaitTime} mins.`;
+      const apptTime = formatApptTime(createdToken.estimatedWaitTime || 0);
+      const walkInMsg = `Hello ${createdToken.patient.name}, your token ${createdToken.tokenNumber} is generated for ${docName} in ${roomName}. Your approx. turn: ${apptTime} (~${createdToken.estimatedWaitTime || 0} min).\n\n✅ No need to wait in line — we will WhatsApp you when your turn is near.\n🔔 लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।`;
       try {
         whatsapp = await sendWhatsAppNotification(createdToken.patient.phone, walkInMsg);
       } catch (waErr) {
@@ -165,7 +199,7 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       }
     }
 
-    res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken, whatsapp });
+    res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken, whatsapp, autoTriaged, triagedDepartment });
   } catch (error) {
     console.error('Error booking walk-in:', error);
     res.status(500).json({ message: 'Server error' });
