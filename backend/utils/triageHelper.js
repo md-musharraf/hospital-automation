@@ -10,6 +10,13 @@
 // receptionist should have to sort every walk-in into a department by hand.
 
 const Queue = require('../models/Queue');
+const { isDoctorFull } = require('./queueHelper');
+
+// Pregnancy cues (English + Hindi) used to auto-flag a Pregnant priority token.
+const PREGNANCY_KEYWORDS = [
+  'pregnant', 'pregnancy', 'expecting', 'delivery', 'labour', 'labor pain',
+  'गर्भवती', 'गर्भावस्था', 'प्रसव', 'गर्भ'
+];
 
 // Canonical department => trigger keywords (English + common Hindi / Hinglish).
 // Order matters: the FIRST department with the most keyword hits wins, and the
@@ -147,18 +154,32 @@ function departmentMatches(canonical, actual) {
 }
 
 /**
+ * Auto-detect a vulnerable-group priority category from what we already know about
+ * the patient — no extra questions. Senior citizens (age >= 60) and pregnant
+ * patients get queue priority. Returns 'Senior' | 'Pregnant' | 'None'.
+ */
+function detectPriorityCategory({ age, symptoms } = {}) {
+  const text = (symptoms || '').toLowerCase();
+  if (PREGNANCY_KEYWORDS.some(k => text.includes(k))) return 'Pregnant';
+  const a = parseInt(age);
+  if (!isNaN(a) && a >= 60) return 'Senior';
+  return 'None';
+}
+
+/**
  * Given the facility's available doctors and a triage result, pick the single
- * best doctor to route to: prefer the target department, and within it choose the
- * LEAST-BUSY doctor (shortest estimated queue) so load spreads evenly instead of
- * every patient piling onto the first doctor in the list.
+ * best doctor to route to: prefer the target department, skip doctors whose daily
+ * OPD limit is already full, and within the remainder choose the LEAST-BUSY doctor
+ * (shortest estimated queue) so load spreads evenly instead of every patient
+ * piling onto the first doctor in the list.
  *
  * @param {Array} doctors doctors already scoped to THIS facility (tenant-safe)
  * @param {string} department canonical department from classifySymptoms
- * @returns {Promise<{ doctor: object|null, matchedDepartment: boolean }>}
+ * @returns {Promise<{ doctor: object|null, matchedDepartment: boolean, allFull: boolean }>}
  */
 async function pickLeastBusyDoctor(doctors, department) {
   if (!doctors || doctors.length === 0) {
-    return { doctor: null, matchedDepartment: false };
+    return { doctor: null, matchedDepartment: false, allFull: false };
   }
 
   // Candidates in the target department; if none, fall back to ALL doctors so the
@@ -170,6 +191,20 @@ async function pickLeastBusyDoctor(doctors, department) {
     const general = doctors.filter(d => departmentMatches('General Medicine', d.department));
     candidates = general.length > 0 ? general : doctors;
   }
+
+  // Capacity awareness: prefer doctors who still have OPD slots left today. If
+  // EVERY candidate is full, keep them all (caller decides whether to refuse a
+  // non-emergency booking) and report allFull so the patient can be told.
+  let allFull = false;
+  try {
+    const fullFlags = await Promise.all(candidates.map(d => isDoctorFull(d)));
+    const notFull = candidates.filter((_, i) => !fullFlags[i]);
+    if (notFull.length > 0) {
+      candidates = notFull;
+    } else {
+      allFull = true;
+    }
+  } catch (_) { /* capacity check is best-effort */ }
 
   // Compute current load (estimated wait) for each candidate from its queue.
   const ids = candidates.map(d => d._id);
@@ -197,13 +232,14 @@ async function pickLeastBusyDoctor(doctors, department) {
     }
   }
 
-  return { doctor: best, matchedDepartment };
+  return { doctor: best, matchedDepartment, allFull };
 }
 
 module.exports = {
   classifySymptoms,
   departmentMatches,
   pickLeastBusyDoctor,
+  detectPriorityCategory,
   DEPARTMENT_KEYWORDS,
   EMERGENCY_KEYWORDS
 };

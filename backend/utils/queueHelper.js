@@ -106,4 +106,78 @@ async function notifyUpcomingPatients(doctorId, io) {
   }
 }
 
-module.exports = { recalculateQueueTimes, notifyUpcomingPatients, formatApptTime, ARRIVAL_ALERT_THRESHOLD };
+// Priority tier of a token: lower = seen sooner. Emergency always first, then the
+// vulnerable-group priority tokens (senior/pregnant/disabled), then everyone else.
+function tokenTier(t) {
+  if (!t) return 2;
+  if (t.tokenType === 'Emergency') return 0;
+  if (t.priorityCategory && t.priorityCategory !== 'None') return 1;
+  return 2;
+}
+
+// Insert a freshly-created token into the doctor's activeQueue at the right spot by
+// priority tier, preserving FIFO order WITHIN each tier. A regular token just goes
+// to the back; a priority/emergency token slots in ahead of the first token of a
+// lower tier (so it never jumps an equal-or-higher-priority patient already waiting).
+async function insertTokenByPriority(queue, token) {
+  const tier = tokenTier(token);
+  if (tier === 2 || !queue.activeQueue || queue.activeQueue.length === 0) {
+    queue.activeQueue.push(token._id);
+    return;
+  }
+  let tierById = new Map();
+  try {
+    const existing = await Token.find({ _id: { $in: queue.activeQueue } });
+    tierById = new Map(existing.map(e => [String(e._id), tokenTier(e)]));
+  } catch (_) { /* fall back to append on any lookup issue */ }
+
+  let idx = queue.activeQueue.findIndex(id => {
+    const t = tierById.has(String(id)) ? tierById.get(String(id)) : 2;
+    return t > tier;
+  });
+  if (idx === -1) idx = queue.activeQueue.length;
+  queue.activeQueue.splice(idx, 0, token._id);
+}
+
+// Start-of-today boundary in server local time.
+function startOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+// How many OPD tokens this doctor has taken today (excluding no-shows, which free
+// their slot back up). Used for the daily capacity cutoff.
+async function getTodayTokenCount(doctorId) {
+  try {
+    // Fetch by doctor + status (safe on both real Mongo and the in-memory mock),
+    // then filter the date in JS. Doing the createdAt >= today comparison here —
+    // rather than inside the query — avoids the mock storing createdAt as an ISO
+    // string, which breaks a raw `{ createdAt: { $gte: Date } }` comparison.
+    const start = startOfToday().getTime();
+    const toks = await Token.find({ doctor: doctorId, status: { $ne: 'Absent' } });
+    return (toks || []).filter(t => t.createdAt && new Date(t.createdAt).getTime() >= start).length;
+  } catch (_) {
+    return 0;
+  }
+}
+
+// Is this doctor at/over their daily token limit? (0 limit = unlimited => never full.)
+async function isDoctorFull(doctor) {
+  if (!doctor) return false;
+  const limit = doctor.dailyTokenLimit || 0;
+  if (limit <= 0) return false;
+  const count = await getTodayTokenCount(doctor._id);
+  return count >= limit;
+}
+
+module.exports = {
+  recalculateQueueTimes,
+  notifyUpcomingPatients,
+  formatApptTime,
+  ARRIVAL_ALERT_THRESHOLD,
+  tokenTier,
+  insertTokenByPriority,
+  getTodayTokenCount,
+  isDoctorFull
+};

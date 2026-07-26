@@ -6,11 +6,11 @@ const Doctor = require('../models/Doctor');
 const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Hospital = require('../models/Hospital');
-const { recalculateQueueTimes, formatApptTime } = require('../utils/queueHelper');
+const { recalculateQueueTimes, formatApptTime, insertTokenByPriority, isDoctorFull } = require('../utils/queueHelper');
 const { sendWhatsAppNotification, getWhatsAppConfig, setWhatsAppConfig, getWhatsAppHistory, getPrimaryWhatsAppNumber, checkMetaToken } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { resolveLocation } = require('../utils/locationHelper');
-const { classifySymptoms, pickLeastBusyDoctor } = require('../utils/triageHelper');
+const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
 
 // Bilingual Translation Dictionary
 const dictionary = {
@@ -21,8 +21,12 @@ const dictionary = {
       'Book New Appointment / Generate Token',
       'Re-visit (Existing Patient)',
       'Emergency SOS Token',
-      'Check Live Queue Status'
+      'Check Live Queue Status',
+      'Medicine Refill (Repeat)'
     ],
+    refillPhone: "💊 Medicine Refill: please enter the patient's registered phone number to find the last prescription:",
+    refillNoRecord: "I couldn't find any past prescription for this number. Please book a normal appointment so a doctor can prescribe.",
+    refillRequested: (doctor, meds) => `✅ Refill request sent to ${doctor}. You'll get a WhatsApp once it's approved — no need to visit the OPD.\n💊 Requested: ${meds}\n\n✅ रिफिल अनुरोध ${doctor} को भेज दिया गया है। मंज़ूरी मिलते ही आपको WhatsApp मिलेगा — OPD आने की ज़रूरत नहीं।`,
     enterPhone: "To begin, please enter the Patient's Phone Number (e.g. +91 9876543210):",
     invalidPhone: 'Please enter a valid Phone Number (minimum 7 characters):',
     invalidName: 'Please enter a valid name (at least 2 characters):',
@@ -46,6 +50,12 @@ const dictionary = {
     triageRecommend: (dept, doctor, room, wait) => `✅ Based on your symptoms, the right department is *${dept}*.\n\n👨‍⚕️ Recommended: ${doctor}\n🚪 ${room}\n⏱️ Approx. wait: ${wait} min (least-busy doctor for you)`,
     triageConfirmPrompt: 'Shall I book this token for you now?',
     triageConfirmOptions: ['✅ Yes, Book My Token', '🔄 Choose Another Doctor'],
+    opdFull: "🛑 Sorry, today's OPD token limit for this department is full. Please come tomorrow morning, or choose another facility. No need to travel today — you would not get a token.\n🛑 क्षमा करें, आज के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं — आज आने की ज़रूरत नहीं।",
+    priorityNote: (cat) => cat === 'Senior'
+      ? '👵 Senior citizen — you have been given priority in the queue.'
+      : cat === 'Pregnant'
+        ? '🤰 Expecting mother — you have been given priority in the queue.'
+        : '♿ Priority patient — you have been moved ahead in the queue.',
     bookingCompleteHeader: 'Booking Complete! 🎉',
     bookingCompleteBody: (tokenNumber, doctor, room, wait) => `• Token Number: ${tokenNumber}\n• Doctor: ${doctor}\n• Cabin: ${room}\n• Estimated Wait: ${wait} mins.`,
     defaultCatchAll: 'Your previous booking is complete. Type "Hi" to start a new inquiry!',
@@ -64,8 +74,12 @@ const dictionary = {
       'नया अपॉइंटमेंट बुक करें / टोकन जेनरेट करें',
       'दोबारा विजिट (मौजूदा मरीज)',
       'इमरजेंसी एसओएस टोकन',
-      'लाइव क्यू स्टेटस जांचें'
+      'लाइव क्यू स्टेटस जांचें',
+      'दवा रिफिल (दोबारा)'
     ],
+    refillPhone: "💊 दवा रिफिल: पिछली पर्ची ढूँढने के लिए कृपया मरीज का पंजीकृत मोबाइल नंबर दर्ज करें:",
+    refillNoRecord: "इस नंबर के लिए कोई पुरानी पर्ची नहीं मिली। कृपया सामान्य अपॉइंटमेंट बुक करें ताकि डॉक्टर दवा लिख सकें।",
+    refillRequested: (doctor, meds) => `✅ रिफिल अनुरोध ${doctor} को भेज दिया गया है। मंज़ूरी मिलते ही आपको WhatsApp मिलेगा — OPD आने की ज़रूरत नहीं।\n💊 अनुरोधित: ${meds}`,
     enterPhone: "शुरू करने के लिए, कृपया मरीज का मोबाइल नंबर दर्ज करें (उदा. +91 9876543210):",
     invalidPhone: 'कृपया एक सही मोबाइल नंबर दर्ज करें (कम से कम 7 अंक):',
     invalidName: 'कृपया एक वैध नाम दर्ज करें (कम से कम 2 अक्षर):',
@@ -89,6 +103,12 @@ const dictionary = {
     triageRecommend: (dept, doctor, room, wait) => `✅ आपके लक्षणों के आधार पर सही विभाग है *${dept}*।\n\n👨‍⚕️ सुझाव: ${doctor}\n🚪 ${room}\n⏱️ अनुमानित प्रतीक्षा: ${wait} मिनट (आपके लिए सबसे कम भीड़ वाले डॉक्टर)`,
     triageConfirmPrompt: 'क्या मैं आपका टोकन अभी बुक कर दूँ?',
     triageConfirmOptions: ['✅ हाँ, मेरा टोकन बुक करें', '🔄 दूसरा डॉक्टर चुनें'],
+    opdFull: "🛑 क्षमा करें, आज इस विभाग के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं, या कोई दूसरी सुविधा चुनें। आज आने की ज़रूरत नहीं — टोकन नहीं मिलेगा।",
+    priorityNote: (cat) => cat === 'Senior'
+      ? '👵 वरिष्ठ नागरिक — आपको क़तार में प्राथमिकता दी गई है।'
+      : cat === 'Pregnant'
+        ? '🤰 गर्भवती महिला — आपको क़तार में प्राथमिकता दी गई है।'
+        : '♿ प्राथमिकता मरीज़ — आपको क़तार में आगे कर दिया गया है।',
     bookingCompleteHeader: 'बुकिंग पूरी हो गई! 🎉',
     bookingCompleteBody: (tokenNumber, doctor, room, wait) => `• टोकन नंबर: ${tokenNumber}\n• डॉक्टर: ${doctor}\n• केबिन: ${room}\n• अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
     defaultCatchAll: 'आपकी पिछली बुकिंग पूरी हो चुकी है। नया टोकन बनाने के लिए "Hi" टाइप करें!',
@@ -127,13 +147,31 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   }
   await patient.save();
 
+  const tokenType = session.tempData.tokenType || 'Regular';
+
+  // OPD capacity cutoff — never refuse an Emergency, but a Regular/Re-visit booking
+  // is blocked once the doctor hits the daily token limit, so the patient is told
+  // NOW (before travelling) instead of standing in a line for a token that won't come.
+  if (tokenType !== 'Emergency' && await isDoctorFull(selectedDoc)) {
+    return {
+      messages: [{ sender: 'bot', text: text.opdFull }],
+      options: text.options
+    };
+  }
+
+  // Vulnerable-group priority: auto Senior (age>=60) / Pregnant (symptoms), or an
+  // explicit category set by reception. Emergencies keep their own higher priority.
+  const priorityCategory = (session.tempData && session.tempData.priorityCategory)
+    || detectPriorityCategory({ age: session.tempData && session.tempData.age, symptoms: session.tempData && session.tempData.symptoms });
+
   const tokenNumber = await generateUniqueTokenNumber(currentHospId);
 
   const token = new Token({
     tokenNumber,
     hospital: currentHospId,
     status: 'Waiting',
-    tokenType: session.tempData.tokenType || 'Regular',
+    tokenType,
+    priorityCategory: priorityCategory || 'None',
     patient: patient._id,
     doctor: selectedDoc._id,
     symptoms: session.tempData.symptoms || 'General Checkup'
@@ -145,11 +183,7 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
     queue = new Queue({ doctor: selectedDoc._id, activeQueue: [] });
   }
 
-  if (token.tokenType === 'Emergency') {
-    queue.activeQueue.unshift(token._id);
-  } else {
-    queue.activeQueue.push(token._id);
-  }
+  await insertTokenByPriority(queue, token);
   await queue.save();
 
   try {
@@ -186,11 +220,16 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
 
   const waitMins = typeof refreshedToken.estimatedWaitTime === 'number' ? refreshedToken.estimatedWaitTime : 0;
 
+  const completeMessages = [
+    { sender: 'bot', text: text.bookingCompleteHeader },
+    { sender: 'bot', text: text.bookingCompleteBody(refreshedToken.tokenNumber, selectedDoc.name, selectedDoc.currentRoom || 'Cabin A', waitMins) }
+  ];
+  if (priorityCategory && priorityCategory !== 'None') {
+    completeMessages.push({ sender: 'bot', text: text.priorityNote(priorityCategory) });
+  }
+
   return {
-    messages: [
-      { sender: 'bot', text: text.bookingCompleteHeader },
-      { sender: 'bot', text: text.bookingCompleteBody(refreshedToken.tokenNumber, selectedDoc.name, selectedDoc.currentRoom || 'Cabin A', waitMins) }
-    ],
+    messages: completeMessages,
     options: text.options,
     token: {
       id: refreshedToken._id,
@@ -339,6 +378,18 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     const isRevisit = cleanMsg === '2' || cleanMsg === 'Re-visit (Existing Patient)' || cleanMsg === 'दोबारा विजिट (मौजूदा मरीज)';
     const isEmergency = cleanMsg === '3' || cleanMsg === 'Emergency SOS Token' || cleanMsg === 'इमरजेंसी एसओएस टोकन';
     const isCheckStatus = cleanMsg === '4' || cleanMsg === 'Check Live Queue Status' || cleanMsg === 'लाइव क्यू स्टेटस जांचें';
+    const isRefill = cleanMsg === '5' || cleanMsg === 'Medicine Refill (Repeat)' || cleanMsg === 'दवा रिफिल (दोबारा)';
+
+    if (isRefill) {
+      session.currentState = 'AWAITING_PHONE';
+      session.tempData = { ...session.tempData, refillMode: true };
+      session.markModified && session.markModified('tempData');
+      await session.save();
+      return {
+        messages: [{ sender: 'bot', text: text.refillPhone }],
+        options: []
+      };
+    }
 
     if (isRegular) {
       session.currentState = 'AWAITING_PHONE';
@@ -444,6 +495,82 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     }
 
     session.tempData = { ...session.tempData, phone: cleanMsg };
+
+    // MEDICINE REFILL: locate the patient's most recent prescription and raise a
+    // refill request for the prescribing doctor to approve — no OPD slot consumed.
+    if (session.tempData.refillMode) {
+      const patient = await Patient.findOne({
+        hospital: currentHospId,
+        $or: [{ phone: cleanMsg }, { phone: cleanMsg.replace(/\s+/g, '') }]
+      });
+
+      let lastRx = null;
+      if (patient) {
+        // Newest token of this patient that actually carries medicines. We match the
+        // patient in JS against both the id and a populated-object form of
+        // token.patient — the complete-checkup handler saves the token after a
+        // populate('patient'), which under the in-memory mock stores the populated
+        // object in place of the id, so a plain `patient: id` query would miss it.
+        const pid = String(patient._id);
+        const toks = await Token.find({ hospital: currentHospId })
+          .populate('doctor', '-passwordHash');
+        lastRx = (toks || [])
+          .filter(t => {
+            const tp = t.patient && (t.patient._id || t.patient);
+            return String(tp) === pid
+              && t.prescription && Array.isArray(t.prescription.medicines) && t.prescription.medicines.length > 0;
+          })
+          .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0] || null;
+      }
+
+      if (!patient || !lastRx || !lastRx.doctor) {
+        session.currentState = 'COMPLETED';
+        session.tempData = { language: lang, hospitalId: currentHospId };
+        session.markModified && session.markModified('tempData');
+        await session.save();
+        return {
+          messages: [{ sender: 'bot', text: text.refillNoRecord }],
+          options: text.options
+        };
+      }
+
+      const RefillRequest = require('../models/RefillRequest');
+      const medsSnapshot = lastRx.prescription.medicines.map(m => ({
+        name: m.name, dosage: m.dosage, duration: m.duration, instructions: m.instructions
+      }));
+      await new RefillRequest({
+        hospital: currentHospId,
+        patient: patient._id,
+        doctor: lastRx.doctor._id,
+        sourceToken: lastRx._id,
+        medicines: medsSnapshot,
+        status: 'Pending'
+      }).save();
+
+      // Notify the doctor (best-effort push) that a refill is waiting.
+      try {
+        const pushHelper = require('../utils/pushHelper');
+        await pushHelper.notifyByRole('Doctor', {
+          title: '💊 New Medicine Refill Request',
+          body: `${patient.name} has requested a repeat prescription. Tap to review.`,
+          icon: '/icon.svg', url: '/'
+        });
+      } catch (_) { /* best-effort */ }
+
+      if (socketIo) {
+        try { socketIo.to(`doctor:${lastRx.doctor._id}`).emit('refill-request'); } catch (_) {}
+      }
+
+      const medsList = medsSnapshot.map(m => m.name).filter(Boolean).join(', ') || 'previous medicines';
+      session.currentState = 'COMPLETED';
+      session.tempData = { language: lang, hospitalId: currentHospId };
+      session.markModified && session.markModified('tempData');
+      await session.save();
+      return {
+        messages: [{ sender: 'bot', text: text.refillRequested(lastRx.doctor.name, medsList) }],
+        options: text.options
+      };
+    }
 
     if (session.tempData.tokenType === 'Re-visit') {
       const patient = await Patient.findOne({ 
@@ -588,7 +715,20 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         preMessages.push({ sender: 'bot', text: text.emergencyDetected });
       }
 
-      const { doctor: suggested, matchedDepartment } = await pickLeastBusyDoctor(doctors, triage.department);
+      const { doctor: suggested, matchedDepartment, allFull } = await pickLeastBusyDoctor(doctors, triage.department);
+
+      // OPD capacity cutoff: if every candidate doctor is full and this is not an
+      // emergency, tell the patient now — don't recommend a doctor who can't take them.
+      if (allFull && session.tempData.tokenType !== 'Emergency') {
+        session.currentState = 'COMPLETED';
+        session.markModified && session.markModified('tempData');
+        await session.save();
+        return {
+          messages: [...preMessages, { sender: 'bot', text: text.opdFull }],
+          options: text.options
+        };
+      }
+
       if (suggested) {
         // Estimated wait for the suggested doctor so the patient sees the payoff
         // of load balancing before confirming.

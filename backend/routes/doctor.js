@@ -4,9 +4,12 @@ const Doctor = require('../models/Doctor');
 const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Reminder = require('../models/Reminder');
+const Patient = require('../models/Patient');
+const RefillRequest = require('../models/RefillRequest');
 const { authenticateToken } = require('../middleware/auth');
 const { recalculateQueueTimes, notifyUpcomingPatients } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 
 // Middleware to ensure the user is a doctor
 const ensureDoctor = (req, res, next) => {
@@ -252,16 +255,60 @@ router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, r
       return res.status(400).json({ message: 'No active patient is currently inside the cabin' });
     }
 
-    const token = await Token.findById(queue.currentToken);
-    if (token) {
+    // No-show AUTO-RECALL: the first time a patient misses their turn, don't send
+    // them back to reception — give them ONE automatic second chance a few slots
+    // down the queue and WhatsApp them to come now. Only a repeat no-show is finally
+    // marked Absent. This cuts re-registration load on staff and patient hardship.
+    const MAX_RECALL = 1;
+    const RECALL_OFFSET = 3; // slots back the recalled patient is placed
+
+    const absentTokenId = queue.currentToken;
+    const token = await Token.findById(queue.currentToken).populate('patient');
+    let recalled = false;
+    let recallPosition = null;
+
+    if (token && (token.recallCount || 0) < MAX_RECALL) {
+      // Give a second chance: back into the waiting line, reset alert state.
+      token.status = 'Waiting';
+      token.recallCount = (token.recallCount || 0) + 1;
+      token.arrivalAlerted = false;
+      token.calledAt = null;
+      await token.save();
+
+      queue.currentToken = null;
+      const insertIdx = Math.min(RECALL_OFFSET, queue.activeQueue.length);
+      queue.activeQueue.splice(insertIdx, 0, token._id);
+      await queue.save();
+
+      recalled = true;
+      recallPosition = insertIdx + 1;
+
+      if (token.patient && token.patient.phone) {
+        const room = req.user.currentRoom || 'the cabin';
+        const msg =
+          `🔁 Missed your turn? No problem — token ${token.tokenNumber} has been given ONE more chance. ` +
+          `You are now #${recallPosition} in line. Please reach ${room} right away.\n` +
+          `🔁 अपनी बारी चूक गए? कोई बात नहीं — टोकन ${token.tokenNumber} को एक और मौका दिया गया है। ` +
+          `अब आप क़तार में #${recallPosition} पर हैं। कृपया तुरंत ${room} पहुँचें।`;
+        try { await sendWhatsAppNotification(token.patient.phone, msg); } catch (e) { console.error('Recall WA error:', e); }
+      }
+    } else if (token) {
+      // Already recalled once — this is a final no-show.
       token.status = 'Absent';
       await token.save();
-    }
+      queue.currentToken = null;
+      await queue.save();
 
-    // Clear current token
-    const absentTokenId = queue.currentToken;
-    queue.currentToken = null;
-    await queue.save();
+      if (token.patient && token.patient.phone) {
+        const msg =
+          `❌ You missed your turn again (token ${token.tokenNumber}). Please get a new token from reception when you arrive.\n` +
+          `❌ आप दोबारा अपनी बारी चूक गए (टोकन ${token.tokenNumber})। कृपया आने पर रिसेप्शन से नया टोकन लें।`;
+        try { await sendWhatsAppNotification(token.patient.phone, msg); } catch (e) { console.error('Absent WA error:', e); }
+      }
+    } else {
+      queue.currentToken = null;
+      await queue.save();
+    }
 
     // Recalculate wait times
     await recalculateQueueTimes(doctorId);
@@ -273,10 +320,16 @@ router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, r
     if (req.io) {
       req.io.to('queue:global').emit('queue-updated', { doctorId });
       req.io.to(`doctor:${doctorId}`).emit('queue-updated');
-      req.io.to(`patient:${absentTokenId}`).emit('token-called', { status: 'Absent' });
+      req.io.to(`patient:${absentTokenId}`).emit('token-called', { status: recalled ? 'Recalled' : 'Absent', position: recallPosition });
     }
 
-    res.json({ message: 'Active patient successfully marked as Absent' });
+    res.json({
+      message: recalled
+        ? `Patient did not show — auto-recalled to position #${recallPosition} (one more chance).`
+        : 'Patient marked Absent (already recalled once).',
+      recalled,
+      recallPosition
+    });
   } catch (error) {
     console.error('Error marking absent:', error);
     res.status(500).json({ message: 'Server error' });
@@ -323,7 +376,7 @@ router.post('/queue/add-buffer', authenticateToken, ensureDoctor, async (req, re
 router.put('/availability', authenticateToken, ensureDoctor, async (req, res) => {
   try {
     const doctorId = req.user.id;
-    const { availabilityStatus, averageCheckupTime } = req.body;
+    const { availabilityStatus, averageCheckupTime, dailyTokenLimit } = req.body;
 
     const doctor = await Doctor.findById(doctorId);
     if (!doctor) {
@@ -343,6 +396,13 @@ router.put('/availability', authenticateToken, ensureDoctor, async (req, res) =>
         return res.status(400).json({ message: 'averageCheckupTime must be an integer between 1 and 120' });
       }
       doctor.averageCheckupTime = parsedTime;
+    }
+    if (dailyTokenLimit !== undefined && dailyTokenLimit !== null) {
+      const parsedLimit = parseInt(dailyTokenLimit);
+      if (isNaN(parsedLimit) || parsedLimit < 0 || parsedLimit > 1000) {
+        return res.status(400).json({ message: 'dailyTokenLimit must be an integer between 0 (unlimited) and 1000' });
+      }
+      doctor.dailyTokenLimit = parsedLimit;
     }
     await doctor.save();
 
@@ -423,6 +483,102 @@ router.get('/patients/:patientId/history', authenticateToken, ensureDoctor, asyn
     res.json(history);
   } catch (err) {
     console.error('Error fetching patient history:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET this doctor's pending medicine-refill requests (chronic patients repeating
+// their prescription without an OPD visit).
+router.get('/refills', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const requests = await RefillRequest.find({ doctor: req.user.id, status: 'Pending' })
+      .populate('patient');
+    // Newest first.
+    requests.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    res.json(requests);
+  } catch (err) {
+    console.error('Error fetching refill requests:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST approve/reject a refill. On approval we mint a COMPLETED prescription token
+// carrying the repeated medicines, so it flows straight into the pharmacy's normal
+// dispense list — reusing the existing pharmacy workflow, no OPD slot consumed.
+router.post('/refills/:id/decide', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const { approve, note } = req.body;
+    const request = await RefillRequest.findById(req.params.id).populate('patient');
+    if (!request) {
+      return res.status(404).json({ message: 'Refill request not found' });
+    }
+    if (String(request.doctor) !== String(req.user.id)) {
+      return res.status(403).json({ message: 'This refill request belongs to another doctor' });
+    }
+    if (request.status !== 'Pending') {
+      return res.status(400).json({ message: `Refill already ${request.status.toLowerCase()}` });
+    }
+
+    const doctor = await Doctor.findById(req.user.id);
+    const patient = request.patient;
+
+    if (approve) {
+      // Mint a completed prescription token for pharmacy pickup (not added to any queue).
+      const tokenNumber = await generateUniqueTokenNumber(request.hospital);
+      const rxToken = new Token({
+        tokenNumber,
+        hospital: request.hospital,
+        status: 'Completed',
+        tokenType: 'Re-visit',
+        patient: patient._id,
+        doctor: request.doctor,
+        symptoms: 'Medicine Refill (repeat prescription, approved without OPD visit)',
+        prescription: {
+          medicines: request.medicines,
+          advice: 'Repeat medication — refill approved without an OPD visit.',
+          dispensed: false
+        },
+        completedAt: new Date()
+      });
+      await saveTokenWithRetry(rxToken);
+
+      request.status = 'Approved';
+      request.decidedAt = new Date();
+      request.fulfilledToken = rxToken._id;
+      await request.save();
+
+      if (patient && patient.phone) {
+        const room = (doctor && doctor.currentRoom) || 'the pharmacy';
+        const msg =
+          `✅ Your medicine refill is APPROVED by ${doctor ? doctor.name : 'the doctor'}. ` +
+          `Please collect your medicines from the pharmacy/medical store (ref ${rxToken.tokenNumber}). No OPD visit needed.\n` +
+          `✅ आपकी दवा रिफिल ${doctor ? doctor.name : 'डॉक्टर'} द्वारा मंज़ूर हो गई है। कृपया फार्मेसी से दवा ले लें (रेफ ${rxToken.tokenNumber})। OPD आने की ज़रूरत नहीं।`;
+        try { await sendWhatsAppNotification(patient.phone, msg); } catch (e) { console.error('Refill approve WA error:', e); }
+      }
+
+      if (req.io) {
+        try { req.io.emit('pharmacy-updated'); } catch (_) {}
+      }
+
+      return res.json({ message: 'Refill approved and sent to pharmacy', refill: request, token: rxToken });
+    } else {
+      request.status = 'Rejected';
+      request.decidedAt = new Date();
+      request.note = note || '';
+      await request.save();
+
+      if (patient && patient.phone) {
+        const msg =
+          `❌ Your medicine refill could not be approved${note ? ` (${note})` : ''}. ` +
+          `Please book a normal OPD appointment so the doctor can review you.\n` +
+          `❌ आपकी दवा रिफिल मंज़ूर नहीं हो सकी${note ? ` (${note})` : ''}। कृपया सामान्य OPD अपॉइंटमेंट बुक करें।`;
+        try { await sendWhatsAppNotification(patient.phone, msg); } catch (e) { console.error('Refill reject WA error:', e); }
+      }
+
+      return res.json({ message: 'Refill rejected', refill: request });
+    }
+  } catch (err) {
+    console.error('Error deciding refill:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });

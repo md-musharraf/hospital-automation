@@ -7,10 +7,10 @@ const Queue = require('../models/Queue');
 const Reminder = require('../models/Reminder');
 const { processPendingReminders } = require('../utils/reminderHelper');
 const { authenticateToken } = require('../middleware/auth');
-const { recalculateQueueTimes, formatApptTime } = require('../utils/queueHelper');
+const { recalculateQueueTimes, formatApptTime, insertTokenByPriority, isDoctorFull } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
-const { classifySymptoms, pickLeastBusyDoctor } = require('../utils/triageHelper');
+const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
 
 // Middleware to ensure the user is staff
 const ensureStaff = (req, res, next) => {
@@ -43,7 +43,7 @@ router.get('/queues', authenticateToken, ensureStaff, async (req, res) => {
 // POST walk-in token generation
 router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) => {
   try {
-    const { name, age, gender, phone, doctorId, symptoms, tokenType } = req.body;
+    const { name, age, gender, phone, doctorId, symptoms, tokenType, priorityCategory } = req.body;
 
     // doctorId is OPTIONAL now — leave it blank and the system auto-triages the
     // walk-in to the right department + least-busy doctor (see below).
@@ -69,6 +69,9 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     }
     if (tokenType && !['Regular', 'Emergency', 'Re-visit'].includes(tokenType)) {
       return res.status(400).json({ message: 'Invalid tokenType' });
+    }
+    if (priorityCategory && !['None', 'Senior', 'Pregnant', 'Disabled'].includes(priorityCategory)) {
+      return res.status(400).json({ message: 'Invalid priorityCategory' });
     }
 
     // Find or create patient within staff's hospital tenant
@@ -120,6 +123,21 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     }
     const resolvedDoctorId = doctor._id;
 
+    // OPD capacity cutoff — block a Regular/Re-visit walk-in once the doctor hits the
+    // daily token limit (Emergencies always bypass). Reception is told immediately so
+    // the patient can be redirected instead of joining a line for a token that's gone.
+    if (effectiveTokenType !== 'Emergency' && await isDoctorFull(doctor)) {
+      return res.status(409).json({
+        message: `Today's OPD token limit is full for ${doctor.name}. Please book for tomorrow or route to another doctor/facility.`,
+        opdFull: true
+      });
+    }
+
+    // Vulnerable-group priority: explicit reception choice, else auto Senior/Pregnant.
+    const resolvedPriority = (priorityCategory && priorityCategory !== 'None')
+      ? priorityCategory
+      : detectPriorityCategory({ age: parsedAge, symptoms });
+
     // Generate unique token number (collision-free)
     const tokenNumber = await generateUniqueTokenNumber(staffHosp);
 
@@ -128,24 +146,20 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       hospital: staffHosp,
       status: 'Waiting',
       tokenType: effectiveTokenType,
+      priorityCategory: resolvedPriority || 'None',
       patient: patient._id,
       doctor: resolvedDoctorId,
       symptoms
     });
     await saveTokenWithRetry(token);
 
-    // Add token to Queue
+    // Add token to Queue at the correct priority position
     let queue = await Queue.findOne({ doctor: resolvedDoctorId });
     if (!queue) {
       queue = new Queue({ doctor: resolvedDoctorId, activeQueue: [] });
     }
 
-    if (token.tokenType === 'Emergency') {
-      // Emergency goes to front of activeQueue
-      queue.activeQueue.unshift(token._id);
-    } else {
-      queue.activeQueue.push(token._id);
-    }
+    await insertTokenByPriority(queue, token);
     await queue.save();
 
     // Recalculate wait times
@@ -199,7 +213,7 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       }
     }
 
-    res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken, whatsapp, autoTriaged, triagedDepartment });
+    res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken, whatsapp, autoTriaged, triagedDepartment, priorityCategory: resolvedPriority || 'None' });
   } catch (error) {
     console.error('Error booking walk-in:', error);
     res.status(500).json({ message: 'Server error' });

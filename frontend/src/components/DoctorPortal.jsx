@@ -138,6 +138,9 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
   const [queue, setQueue] = useState(null);
   const [loading, setLoading] = useState(true);
   const [availability, setAvailability] = useState(doctorUser?.availabilityStatus || 'Available');
+  const [dailyLimit, setDailyLimit] = useState(doctorUser?.dailyTokenLimit ?? 0);
+  const [limitSaved, setLimitSaved] = useState(false);
+  const [refills, setRefills] = useState([]);
 
   // Complete Checkup Modal states
   const [showCompleteModal, setShowCompleteModal] = useState(false);
@@ -197,6 +200,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
 
   useEffect(() => {
     loadQueue();
+    loadRefills();
 
     socket.emit('join-room', `doctor:${doctorUser?.id || doctorUser?._id}`);
     // Also join the hospital-wide room: internal chat messages (messages.js)
@@ -210,10 +214,12 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
 
     socket.on('queue-updated', handleQueueUpdated);
     socket.on('queue-reset', handleQueueUpdated);
+    socket.on('refill-request', loadRefills);
 
     return () => {
       socket.off('queue-updated', handleQueueUpdated);
       socket.off('queue-reset', handleQueueUpdated);
+      socket.off('refill-request', loadRefills);
     };
   }, [doctorToken]);
 
@@ -229,6 +235,55 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
       });
       if (res.ok) {
         setAvailability(status);
+        loadQueue();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const loadRefills = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/refills`, {
+        headers: { 'Authorization': `Bearer ${doctorToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setRefills(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDecideRefill = async (id, approve) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/refills/${id}/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${doctorToken}` },
+        body: JSON.stringify({ approve })
+      });
+      if (res.ok) {
+        setRefills(prev => prev.filter(r => r._id !== id));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveDailyLimit = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/availability`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${doctorToken}`
+        },
+        body: JSON.stringify({ dailyTokenLimit: parseInt(dailyLimit) || 0 })
+      });
+      if (res.ok) {
+        setLimitSaved(true);
+        setTimeout(() => setLimitSaved(false), 2000);
         loadQueue();
       }
     } catch (err) {
@@ -381,6 +436,62 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
             ))}
           </div>
         </div>
+
+        {/* Daily OPD token limit (0 = unlimited). Once reached, new non-emergency
+            bookings are refused so patients aren't sent on a wasted trip. */}
+        <div className="space-y-1">
+          <label className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wider">Daily OPD Token Limit (0 = unlimited)</label>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              min="0"
+              value={dailyLimit}
+              onChange={(e) => setDailyLimit(e.target.value)}
+              className="flex-1 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-lg px-3 py-1.5 text-xs font-bold text-[var(--text-color)] outline-none focus:border-[var(--primary-color)]"
+              placeholder="e.g. 50"
+            />
+            <button
+              onClick={handleSaveDailyLimit}
+              className="px-3 py-1.5 rounded-lg bg-[var(--primary-color)] text-[var(--primary-text)] text-xs font-bold hover:opacity-90 transition-all whitespace-nowrap"
+            >
+              {limitSaved ? '✓ Saved' : 'Set'}
+            </button>
+          </div>
+        </div>
+
+        {/* Medicine Refill Requests — approve a chronic patient's repeat prescription
+            in one tap; it goes straight to the pharmacy, no OPD slot used. */}
+        {refills.length > 0 && (
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wider flex items-center gap-1">
+              💊 Medicine Refill Requests ({refills.length})
+            </label>
+            <div className="space-y-2 max-h-52 overflow-y-auto">
+              {refills.map(r => (
+                <div key={r._id} className="bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5">
+                  <p className="text-xs font-bold text-[var(--text-color)]">{r.patient?.name || 'Patient'}</p>
+                  <p className="text-[10px] text-[var(--text-secondary)] mb-1">
+                    {(r.medicines || []).map(m => m.name).filter(Boolean).join(', ') || 'Previous medicines'}
+                  </p>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => handleDecideRefill(r._id, true)}
+                      className="flex-1 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-bold hover:bg-emerald-700 transition-all"
+                    >
+                      ✓ Approve
+                    </button>
+                    <button
+                      onClick={() => handleDecideRefill(r._id, false)}
+                      className="flex-1 py-1 rounded-lg bg-rose-600 text-white text-[11px] font-bold hover:bg-rose-700 transition-all"
+                    >
+                      ✕ Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Live waiting list */}
         <div className="flex-1 flex flex-col space-y-2">

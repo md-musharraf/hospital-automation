@@ -76,6 +76,41 @@ physical line from dawn — so the OPD hall stays empty and staff don't police a
   enter the near-front. Fully best-effort — a notification failure never blocks the
   doctor's queue action.
 
+### A4. Vulnerable-group Priority Queue (`Token.priorityCategory`)
+
+Senior citizens (age ≥ 60, auto), pregnant patients (auto from symptoms), and
+disabled/special-needs patients (set by reception) are placed **ahead of Regular
+tokens but never ahead of a true Emergency**. `insertTokenByPriority()` slots a new
+token by tier (Emergency → Priority → Regular), preserving FIFO within each tier.
+Govt-mandated and automatic — no staff decision needed.
+
+### A5. OPD Daily Capacity Cutoff (`Doctor.dailyTokenLimit`)
+
+Each doctor can set a daily OPD token limit (0 = unlimited, default). Once reached,
+new **non-emergency** bookings are refused at the door — the patient is told
+bilingually to come tomorrow instead of travelling for a token that won't come.
+`getTodayTokenCount()` / `isDoctorFull()` power it; smart triage also prefers
+not-yet-full doctors, and only reports "OPD full" when every candidate is full.
+Emergencies always bypass the cap. Configurable from the Doctor console.
+
+### A6. No-show Auto-recall (`Token.recallCount`)
+
+When a doctor marks the cabin patient Absent, the first miss doesn't send them back
+to reception — they're **auto-recalled** a few slots down the queue and WhatsApped
+("one more chance, you're now #N, come now"). Only a repeat no-show is finally marked
+Absent. Cuts re-registration load on staff and hardship for patients who briefly
+stepped away.
+
+### A7. WhatsApp Medicine Refill (`RefillRequest`)
+
+Chronic patients (BP / sugar / thyroid) repeat their prescription **without an OPD
+slot**: chat menu → phone → the system finds their last prescription and raises a
+`RefillRequest`. The prescribing doctor approves/rejects in one tap from the Doctor
+console. On approval a completed prescription token is minted so the medicines flow
+straight into the **existing pharmacy dispense list** — reusing that workflow — and
+the patient is WhatsApped to collect from the pharmacy. The biggest doctor-load
+reducer for routine follow-ups.
+
 ### B. Emergency Queue Prioritization (SOS)
 * **Logic:** Staff members can trigger an **Emergency Override** flag during registration, or change an existing ticket to SOS.
 * **Priority Routing:** Emergency tokens are pushed to **Index 0** of the doctor's `activeQueue` array, instantly routing them to the top of the waitlist.

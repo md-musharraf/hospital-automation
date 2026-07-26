@@ -169,6 +169,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const [walkDoctorId, setWalkDoctorId] = useState('');
   const [walkSymptoms, setWalkSymptoms] = useState('');
   const [walkIsEmergency, setWalkIsEmergency] = useState(false);
+  const [walkPriority, setWalkPriority] = useState('None');
   const [walkError, setWalkError] = useState('');
   const [walkSuccess, setWalkSuccess] = useState('');
 
@@ -271,6 +272,8 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       };
       // Only pin a doctor when reception explicitly overrode auto-assign.
       if (walkDoctorId) payload.doctorId = walkDoctorId;
+      // Only send a priority when reception picked one; else backend auto-detects.
+      if (walkPriority && walkPriority !== 'None') payload.priorityCategory = walkPriority;
 
       const res = await fetch(`${BACKEND_URL}/api/v1/staff/tokens/walk-in`, {
         method: 'POST',
@@ -298,6 +301,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       setWalkPhone('');
       setWalkSymptoms('');
       setWalkIsEmergency(false);
+      setWalkPriority('None');
       setWalkDoctorId('');
       loadData();
     } catch (err) {
@@ -865,6 +869,20 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold resize-none"
                       required
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">Priority Group (auto-detected if left as None)</label>
+                    <select
+                      value={walkPriority}
+                      onChange={(e) => setWalkPriority(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
+                    >
+                      <option value="None">None (auto-detect senior/pregnant)</option>
+                      <option value="Senior">👵 Senior Citizen</option>
+                      <option value="Pregnant">🤰 Pregnant</option>
+                      <option value="Disabled">♿ Disabled / Special needs</option>
+                    </select>
                   </div>
 
                   <div className="flex items-center justify-between p-3 bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-xl">

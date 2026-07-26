@@ -357,6 +357,7 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
         name: d.name || 'Doctor Consultant', email: d.email, passwordHash: await hash(d.password),
         department: d.department || 'General Practice', specialization: d.specialization || 'General Consultation',
         availabilityStatus: 'Available', averageCheckupTime: d.averageCheckupTime ? parseInt(d.averageCheckupTime) : 10,
+        dailyTokenLimit: d.dailyTokenLimit ? parseInt(d.dailyTokenLimit) : 0,
         currentRoom: d.currentRoom || 'Cabin 1', hospital: id
       });
       await doc.save();
@@ -437,7 +438,7 @@ router.post('/super-admin/register-staff', verifyAdminSecret, async (req, res) =
 // Register Additional Doctor
 router.post('/super-admin/register-doctor', verifyAdminSecret, async (req, res) => {
   try {
-    const { hospital, name, email, password, department, currentRoom, specialization, averageCheckupTime } = req.body;
+    const { hospital, name, email, password, department, currentRoom, specialization, averageCheckupTime, dailyTokenLimit } = req.body;
     if (!hospital || !email || !password) {
       return res.status(400).json({ message: 'Hospital selection, email, and password are required' });
     }
@@ -465,6 +466,7 @@ router.post('/super-admin/register-doctor', verifyAdminSecret, async (req, res) 
       specialization: specialization || 'General Consultation',
       availabilityStatus: 'Available',
       averageCheckupTime: averageCheckupTime ? parseInt(averageCheckupTime) : 10,
+      dailyTokenLimit: dailyTokenLimit ? parseInt(dailyTokenLimit) : 0,
       currentRoom: currentRoom || 'Cabin 1',
       hospital
     });

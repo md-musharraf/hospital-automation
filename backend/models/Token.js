@@ -9,10 +9,18 @@ const TokenSchema = new mongoose.Schema({
     default: 'Waiting',
     index: true 
   },
-  tokenType: { 
-    type: String, 
-    enum: ['Regular', 'Re-visit', 'Emergency'], 
-    default: 'Regular' 
+  tokenType: {
+    type: String,
+    enum: ['Regular', 'Re-visit', 'Emergency'],
+    default: 'Regular'
+  },
+  // Vulnerable-group priority (govt-mandated): these patients are placed ahead of
+  // Regular tokens but never ahead of a true Emergency. Auto-detected (Senior from
+  // age, Pregnant from symptoms) or set by reception.
+  priorityCategory: {
+    type: String,
+    enum: ['None', 'Senior', 'Pregnant', 'Disabled'],
+    default: 'None'
   },
   patient: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: true },
   doctor: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true },
@@ -46,6 +54,9 @@ const TokenSchema = new mongoose.Schema({
   // been sent, so a patient is pinged exactly once as they approach the front of
   // the queue (lets them wait at home instead of crowding the OPD hall).
   arrivalAlerted: { type: Boolean, default: false },
+  // How many times a no-show has been auto-recalled (given a second chance in the
+  // queue instead of being sent back to reception). Capped so it can't loop forever.
+  recallCount: { type: Number, default: 0 },
   calledAt: { type: Date },
   completedAt: { type: Date }
 }, { timestamps: true });
