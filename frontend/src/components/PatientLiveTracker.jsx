@@ -154,7 +154,7 @@ export default function PatientLiveTracker() {
         <div className="flex justify-between items-center pb-4 border-b border-[var(--border-color)]/30 mb-6">
           <div className="flex items-center space-x-2">
             <span className="material-symbols-outlined text-[var(--primary-color)] text-[22px]">health_and_safety</span>
-            <span className="font-extrabold text-sm tracking-tight text-left">CareSync Live Tracker</span>
+            <span className="font-extrabold text-sm tracking-tight text-left">CareeAi Live Tracker</span>
           </div>
           <span className="bg-[var(--tertiary-color)] text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">Live Connection</span>
         </div>

@@ -114,7 +114,7 @@ async function seedData() {
     // Create Lab Assistant
     const labData = [
       {
-        name: 'CareSync Lab Tech',
+        name: 'CareeAi Lab Tech',
         username: 'lab_assistant',
         passwordHash,
         hospital: 'general-hospital'

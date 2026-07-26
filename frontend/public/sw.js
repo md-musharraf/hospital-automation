@@ -1,4 +1,4 @@
-const CACHE_NAME = 'caresync-v1';
+const CACHE_NAME = 'careeai-v1';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -54,8 +54,8 @@ self.addEventListener('fetch', (e) => {
 // Push Event - Receive background notifications
 self.addEventListener('push', (e) => {
   let data = {
-    title: 'CareSync Notification',
-    body: 'You have a new update from CareSync.',
+    title: 'CareeAi Notification',
+    body: 'You have a new update from CareeAi.',
     icon: '/icon.svg',
     url: '/'
   };

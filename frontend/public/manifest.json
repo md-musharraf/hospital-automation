@@ -1,6 +1,6 @@
 {
-  "name": "CareSync Smart Queue",
-  "short_name": "CareSync",
+  "name": "CareeAi Smart Queue",
+  "short_name": "CareeAi",
   "description": "Real-time Patient Queue & Symptom Triage System",
   "start_url": "/",
   "display": "standalone",

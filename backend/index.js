@@ -310,7 +310,7 @@ const seedMockData = async () => {
       await Hospital.insertMany([
         {
           id: 'general-hospital',
-          name: 'CareSync General Hospital',
+          name: 'CareeAi General Hospital',
           slug: 'general-hospital',
           address: '123 Healthcare Blvd, Medical District',
           phone: '+1 (555) 123-4567',
@@ -354,7 +354,7 @@ const seedMockData = async () => {
         },
         {
           id: 'care-diagnostics',
-          name: 'CareSync Diagnostic Lab',
+          name: 'CareeAi Diagnostic Lab',
           slug: 'care-diagnostics',
           address: '789 Science Park East, Lab Block',
           phone: '+1 (555) 321-7654',
@@ -502,7 +502,7 @@ const seedMockData = async () => {
       const LabAssistant = require('./models/LabAssistant');
       await LabAssistant.insertMany([
         {
-          name: 'CareSync Lab Tech',
+          name: 'CareeAi Lab Tech',
           username: 'lab_assistant',
           passwordHash,
           hospital: 'general-hospital'

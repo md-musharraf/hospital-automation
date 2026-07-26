@@ -142,7 +142,7 @@ export default function PatientPortal() {
   const t = (key) => translations[currentLang]?.[key] || translations['en'][key] || key;
 
   const [messages, setMessages] = useState([
-    { sender: 'bot', text: 'Welcome to the CareSync AI Assistant! 🏥' },
+    { sender: 'bot', text: 'Welcome to the CareeAi AI Assistant! 🏥' },
     { sender: 'bot', text: "I can help you book an appointment, check live queues, or trigger emergency tokens. Send a message like 'Hi' or 'Hello' to begin!" }
   ]);
   const [options, setOptions] = useState([]);
@@ -525,7 +525,7 @@ export default function PatientPortal() {
               </div>
             )}
             <div>
-              <span className="font-extrabold text-base tracking-tight text-[var(--text-color)]">{hospitalInfo?.name || 'CareSync'}</span>
+              <span className="font-extrabold text-base tracking-tight text-[var(--text-color)]">{hospitalInfo?.name || 'CareeAi'}</span>
               <span className="ml-2 text-[9px] font-bold uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
                 {hospitalInfo?.type || 'Hospital'}
               </span>
@@ -960,7 +960,7 @@ export default function PatientPortal() {
 
         {/* FOOTER */}
         <footer className="border-t border-[var(--border-color)]/30 py-8 px-6 text-center text-[10px] text-[var(--text-secondary)] font-semibold uppercase tracking-wider bg-[var(--card-bg)]">
-          <p>© 2026 {hospitalInfo?.name || 'CareSync'} Care Portal. All Rights Reserved. Powered by CareSync SaaS Engine.</p>
+          <p>© 2026 {hospitalInfo?.name || 'CareeAi'} Care Portal. All Rights Reserved. Powered by CareeAi SaaS Engine.</p>
         </footer>
 
         {/* Floating WhatsApp Action Button */}
@@ -1194,7 +1194,7 @@ export default function PatientPortal() {
               <span className="absolute bottom-0 right-0 w-3 h-3 bg-[var(--tertiary-color)] rounded-full border-2 border-[var(--card-bg)] animate-pulse"></span>
             </div>
             <div>
-              <h2 className="font-extrabold text-sm md:text-base text-[var(--text-color)]">{hospitalInfo?.name || 'CareSync Assistant'}</h2>
+              <h2 className="font-extrabold text-sm md:text-base text-[var(--text-color)]">{hospitalInfo?.name || 'CareeAi Assistant'}</h2>
               <p className="text-[10px] text-[var(--text-secondary)] font-semibold flex items-center">
                 <span className="material-symbols-outlined text-[12px] text-[var(--primary-color)] mr-0.5">bolt</span>
                 {isLab 
@@ -1431,7 +1431,7 @@ export default function PatientPortal() {
           </div>
           <div className="text-center mt-2.5">
             <span className="text-[10px] text-[var(--text-secondary)]/60 font-semibold leading-none">
-              CareSync AI Triage helper. Verify critical diagnosis details.
+              CareeAi AI Triage helper. Verify critical diagnosis details.
             </span>
           </div>
         </div>

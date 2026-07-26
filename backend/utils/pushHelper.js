@@ -34,7 +34,7 @@ if (!vapidKeys.publicKey || !vapidKeys.privateKey) {
 // Configure Web Push with VAPID details
 if (vapidKeys.publicKey && vapidKeys.privateKey) {
   webPush.setVapidDetails(
-    'mailto:support@caresync.com',
+    'mailto:support@careeai.com',
     vapidKeys.publicKey,
     vapidKeys.privateKey
   );

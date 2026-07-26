@@ -6,7 +6,7 @@ export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
   const [email, setEmail] = useState('sarah.jenkins@hospital.com');
   const [password, setPassword] = useState('password123');
   const [hospitals, setHospitals] = useState([
-    { id: 'general-hospital', name: 'CareSync General Hospital' },
+    { id: 'general-hospital', name: 'CareeAi General Hospital' },
     { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
   ]);
   const [selectedHospital, setSelectedHospital] = useState('general-hospital');
@@ -553,7 +553,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                     <div className="bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/50 text-xs">
                       <span className="text-xs text-[var(--text-secondary)] font-bold">Patient Visit History ({history.length} past visits)</span>
                       {history.length === 0 ? (
-                        <p className="text-[10px] text-[var(--text-secondary)]/50 italic mt-1 font-medium">No past checkups registered in CareSync directory.</p>
+                        <p className="text-[10px] text-[var(--text-secondary)]/50 italic mt-1 font-medium">No past checkups registered in CareeAi directory.</p>
                       ) : (
                         <div className="mt-2 max-h-40 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
                           {history.map((h, idx) => (

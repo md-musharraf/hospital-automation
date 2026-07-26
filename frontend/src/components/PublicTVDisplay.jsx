@@ -77,7 +77,7 @@ export default function PublicTVDisplay() {
           <div className="flex items-center space-x-3.5">
             <span className="material-symbols-outlined text-[36px] text-[#0891b2] animate-pulse">volume_up</span>
             <div>
-              <h2 className="text-3xl font-black tracking-tight">CareSync Waiting Lounge</h2>
+              <h2 className="text-3xl font-black tracking-tight">CareeAi Waiting Lounge</h2>
               <p className="text-xs text-zinc-400 font-extrabold uppercase tracking-widest mt-0.5">Real-time Cabin Admissions</p>
             </div>
           </div>

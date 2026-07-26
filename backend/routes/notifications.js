@@ -45,7 +45,7 @@ router.post('/subscribe', async (req, res) => {
 
     // Send a welcome test push notification to verify it works
     await pushHelper.sendNotificationToUser(newSub, {
-      title: 'CareSync Connected',
+      title: 'CareeAi Connected',
       body: 'You will receive real-time updates directly on your device.',
       icon: '/icon.svg',
       url: tokenId ? `/live-tracker/${tokenId}` : '/'
@@ -65,7 +65,7 @@ router.post('/test-push', authenticateToken, async (req, res) => {
   try {
     const payload = {
       title: title || 'Test Alert',
-      body: body || 'This is a test notification from the CareSync console.',
+      body: body || 'This is a test notification from the CareeAi console.',
       icon: '/icon.svg',
       url: '/'
     };

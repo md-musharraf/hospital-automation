@@ -5,7 +5,7 @@ export function PharmacyLogin({ setPharmacyToken, setPharmacyUser, onSuccess }) 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [hospitals, setHospitals] = useState([
-    { id: 'general-hospital', name: 'CareSync General Hospital' }
+    { id: 'general-hospital', name: 'CareeAi General Hospital' }
   ]);
   const [selectedHospital, setSelectedHospital] = useState('general-hospital');
   const [error, setError] = useState('');

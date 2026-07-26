@@ -41,7 +41,7 @@ function HeroTelemetry() {
       <div className="flex justify-between items-center border-b border-white/10 pb-3 relative z-10">
         <div className="flex items-center space-x-2">
           <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping"></div>
-          <span className="font-extrabold tracking-wider uppercase text-[10px] text-zinc-400">CareSync Telemetry Dashboard</span>
+          <span className="font-extrabold tracking-wider uppercase text-[10px] text-zinc-400">CareeAi Telemetry Dashboard</span>
         </div>
         <span className="font-mono text-zinc-400 text-[10px] bg-white/5 px-2 py-0.5 rounded">{time}</span>
       </div>

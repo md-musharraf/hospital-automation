@@ -14,7 +14,7 @@ const { resolveLocation } = require('../utils/locationHelper');
 // Bilingual Translation Dictionary
 const dictionary = {
   en: {
-    welcome: 'Welcome to CareSync AI Assistant! 🏥 (You can also chat with us on WhatsApp at ' + getPrimaryWhatsAppNumber() + ')',
+    welcome: 'Welcome to CareeAi AI Assistant! 🏥 (You can also chat with us on WhatsApp at ' + getPrimaryWhatsAppNumber() + ')',
     selectOption: 'Please select an option below to proceed:',
     options: [
       'Book New Appointment / Generate Token',
@@ -167,7 +167,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
     const rawWhatsapp = (hospital && hospital.whatsappNumber) || getPrimaryWhatsAppNumber();
     const num = rawWhatsapp.replace(/^whatsapp:/i, '');
-    const facilityName = hospital ? hospital.name : 'CareSync';
+    const facilityName = hospital ? hospital.name : 'CareeAi';
 
     return {
       messages: [
@@ -1006,9 +1006,9 @@ router.post('/whatsapp/send-test', async (req, res) => {
       } else if (type === 'sos') {
         bodyText = `🚨 EMERGENCY SOS ALERT: Patient token T-999 upgraded to Emergency Priority!`;
       } else if (type === 'reminder') {
-        bodyText = `CareSync Reminder: You have a follow-up appointment scheduled with Dr. Sarah Jenkins tomorrow at 10:00 AM.`;
+        bodyText = `CareeAi Reminder: You have a follow-up appointment scheduled with Dr. Sarah Jenkins tomorrow at 10:00 AM.`;
       } else {
-        bodyText = `Test notification from CareSync WhatsApp API Engine (${getWhatsAppConfig().whatsappNumber}). System is working automatically!`;
+        bodyText = `Test notification from CareeAi WhatsApp API Engine (${getWhatsAppConfig().whatsappNumber}). System is working automatically!`;
       }
     }
 
@@ -1034,7 +1034,7 @@ router.get('/whatsapp/qr/:hospitalId', async (req, res) => {
     if (!hospital) {
       hospital = {
         id: hospitalId || 'general-hospital',
-        name: 'CareSync Healthcare Hospital',
+        name: 'CareeAi Healthcare Hospital',
         city: 'Main City',
         address: 'Main Hospital Road',
         phone: '+919876543210'
@@ -1185,7 +1185,7 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
 
                 console.log(`[META INCOMING WHATSAPP] From: ${formattedPhone} | To(phone_number_id): ${receivingPhoneNumberId} | RxNumber: ${receivingDisplayNumber || '-'} | Facility: ${seedHospitalId || (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) || 'default'} | Session: ${sessionId} | Text: "${textContent}"`);
 
-                // Feed input into CareSync patient appointment state engine
+                // Feed input into CareeAi patient appointment state engine
                 const botResponse = await processChatMessage({
                   sessionId,
                   message: textContent,

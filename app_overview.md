@@ -1,6 +1,6 @@
-# CareSync: Smart Hospital Queue & Management System Overview
+# CareeAi: Smart Hospital Queue & Management System Overview
 
-CareSync is a premium full-stack real-time hospital queue management system designed to eliminate physical waiting lines, automate walk-in and virtual token registration, and streamline doctor-staff cabin workflows.
+CareeAi is a premium full-stack real-time hospital queue management system designed to eliminate physical waiting lines, automate walk-in and virtual token registration, and streamline doctor-staff cabin workflows.
 
 ---
 

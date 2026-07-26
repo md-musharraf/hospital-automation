@@ -68,7 +68,7 @@ export default function DigitalPrescriptionViewer() {
             </div>
             <div>
               <h2 className="text-xl font-black tracking-tight">
-                {hospitalName || 'CareSync Hospital'}
+                {hospitalName || 'CareeAi Hospital'}
               </h2>
               <p className="text-[10px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">Clinical Care & Diagnostics</p>
             </div>

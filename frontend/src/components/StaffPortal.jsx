@@ -7,7 +7,7 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
   const [username, setUsername] = useState('alice_staff');
   const [password, setPassword] = useState('password123');
   const [hospitals, setHospitals] = useState([
-    { id: 'general-hospital', name: 'CareSync General Hospital' },
+    { id: 'general-hospital', name: 'CareeAi General Hospital' },
     { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
   ]);
   const [selectedHospital, setSelectedHospital] = useState('general-hospital');
@@ -476,11 +476,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       {/* 1. Left Sidebar Navigation Panel */}
       <div className="hidden md:flex w-64 bg-[var(--card-bg)] text-[var(--text-color)] flex-col justify-between shrink-0 shadow-lg border-r border-[var(--border-color)]/30">
         <div className="flex flex-col">
-          {/* CareSync Sidebar Logo header */}
+          {/* CareeAi Sidebar Logo header */}
           <div className="p-6 border-b border-[var(--border-color)]/30 flex items-center space-x-3">
             <span className="material-symbols-outlined text-[var(--primary-color)] text-[32px]">local_hospital</span>
             <div>
-              <h1 className="font-extrabold text-sm text-[var(--primary-color)] dark:text-zinc-300 leading-tight tracking-tight">CareSync Admin</h1>
+              <h1 className="font-extrabold text-sm text-[var(--primary-color)] dark:text-zinc-300 leading-tight tracking-tight">CareeAi Admin</h1>
               <p className="text-[10px] text-[var(--text-secondary)] font-semibold leading-none">General Hospital</p>
             </div>
           </div>

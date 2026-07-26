@@ -160,7 +160,7 @@ function AppContent() {
           <div className="bg-[var(--primary-color)] p-1.5 rounded-lg shadow-sm shadow-[var(--primary-color)]/20">
             <Activity className="h-5 w-5 text-white animate-pulse" />
           </div>
-          <span className="font-extrabold tracking-tight text-lg text-[var(--text-color)]">CareSync <span className="text-xs text-[var(--primary-color)] font-semibold">DEMO</span></span>
+          <span className="font-extrabold tracking-tight text-lg text-[var(--text-color)]">CareeAi <span className="text-xs text-[var(--primary-color)] font-semibold">DEMO</span></span>
         </div>
         
         <div className="flex items-center space-x-2 text-xs md:text-sm">

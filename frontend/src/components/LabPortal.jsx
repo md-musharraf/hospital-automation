@@ -5,7 +5,7 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
   const [username, setUsername] = useState('lab_assistant');
   const [password, setPassword] = useState('password123');
   const [hospitals, setHospitals] = useState([
-    { id: 'general-hospital', name: 'CareSync General Hospital' },
+    { id: 'general-hospital', name: 'CareeAi General Hospital' },
     { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
   ]);
   const [selectedHospital, setSelectedHospital] = useState('general-hospital');

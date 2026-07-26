@@ -148,7 +148,7 @@ export default function HospitalHub() {
             <div className="animate-fade-in-up inline-flex items-center space-x-2 bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 text-[var(--primary-color)] px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider">
               <span className="w-2 h-2 rounded-full bg-[var(--primary-color)] animate-ping"></span>
               <span className="material-symbols-outlined text-[15px]">clinical_notes</span>
-              <span>CareSync Multi-Facility Healthcare Engine</span>
+              <span>CareeAi Multi-Facility Healthcare Engine</span>
             </div>
 
             <h1 className="animate-fade-in-up delay-100 text-4xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none">
@@ -333,7 +333,7 @@ export default function HospitalHub() {
         <div className="max-w-[1280px] mx-auto text-left">
           <div className="reveal text-center mb-12 space-y-2">
             <h2 className="text-3xl font-black text-[var(--text-color)]">The Patient Journey</h2>
-            <p className="text-xs text-[var(--text-secondary)] font-semibold">How CareSync streamlines queue bookings in three fast steps.</p>
+            <p className="text-xs text-[var(--text-secondary)] font-semibold">How CareeAi streamlines queue bookings in three fast steps.</p>
           </div>
 
           <div className="reveal grid grid-cols-1 md:grid-cols-3 gap-8 relative">
@@ -561,10 +561,10 @@ export default function HospitalHub() {
             </div>
           </div>
           <p>
-            CareSync is a registered healthcare SaaS queue management provider. By joining any queue, you agree to our Terms of Service and Privacy Policy. Patient information is strictly handled in accordance with medical standards.
+            CareeAi is a registered healthcare SaaS queue management provider. By joining any queue, you agree to our Terms of Service and Privacy Policy. Patient information is strictly handled in accordance with medical standards.
           </p>
           <p className="text-[10px] text-zinc-400">
-            &copy; 2026 CareSync Technologies Inc. All rights reserved.
+            &copy; 2026 CareeAi Technologies Inc. All rights reserved.
           </p>
         </div>
       </div>
