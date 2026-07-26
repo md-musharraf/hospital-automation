@@ -143,7 +143,7 @@ export default function PatientPortal() {
 
   const [messages, setMessages] = useState([
     { sender: 'bot', text: 'Welcome to the CareeAi AI Assistant! 🏥' },
-    { sender: 'bot', text: "I can help you book an appointment, check live queues, or trigger emergency tokens. Send a message like 'Hi' or 'Hello' to begin!" }
+    { sender: 'bot', text: "Just tell me what's wrong — e.g. \"fever since 2 days\" — and I'll pick the right doctor for you. You can also tap an option below, or type your token number (e.g. T-101) to see your live queue position." }
   ]);
   const [options, setOptions] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -182,7 +182,7 @@ export default function PatientPortal() {
           setMessages([
             { sender: 'bot', text: `Welcome to ${data.name}! 🏥` },
             { sender: 'bot', text: data.welcomeMessage },
-            { sender: 'bot', text: "I can help you book an appointment, check live queues, or trigger emergency tokens. Send a message like 'Hi' or 'Hello' to begin!" }
+            { sender: 'bot', text: "Just tell me what's wrong — e.g. \"fever since 2 days\" — and I'll pick the right doctor for you. You can also tap an option below, or type your token number (e.g. T-101) to see your live queue position." }
           ]);
         }
       })
@@ -1262,7 +1262,13 @@ export default function PatientPortal() {
 
           {messages.map((msg, index) => {
             const isBot = msg.sender === 'bot';
-            const isSelectDoctorPrompt = msg.text.includes("Please select a Doctor") || msg.text.includes("Please select a Specialist");
+            // Match the prompts the backend actually sends (both languages) —
+            // the old strings never matched, so the doctor cards never rendered.
+            const isSelectDoctorPrompt = [
+              'Please select a Doctor', 'Please select a Specialist',
+              'Select an available doctor', 'Invalid doctor selection',
+              'उपलब्ध डॉक्टर', 'गलत डॉक्टर'
+            ].some(s => msg.text.includes(s));
             const isLastBotMessage = isBot && index === messages.findLastIndex(m => m.sender === 'bot');
 
             return (
@@ -1405,31 +1411,43 @@ export default function PatientPortal() {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && options.length === 0) {
+                if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   handleSendMessage();
                 }
               }}
               rows={1}
-              disabled={options.length > 0}
-              placeholder={options.length > 0 ? "Select an option from the list above..." : "Type a message..."}
-              className="flex-1 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[40px] py-2 font-medium text-sm text-[var(--text-color)] placeholder-[var(--text-secondary)]/50 outline-none disabled:opacity-60 disabled:cursor-not-allowed no-scrollbar"
+              /* The buttons above are SHORTCUTS, not a cage: typing must always
+                 stay possible so a patient can describe their problem, send a
+                 token number, or type MENU/HELP at any point in the flow. */
+              placeholder={options.length > 0 ? "Tap an option above, or just type…" : "Type your problem, e.g. \"fever since 2 days\""}
+              className="flex-1 bg-transparent border-none focus:ring-0 resize-none max-h-32 min-h-[40px] py-2 font-medium text-sm text-[var(--text-color)] placeholder-[var(--text-secondary)]/50 outline-none no-scrollbar"
             />
-            <button 
-              disabled={options.length > 0}
-              className="p-2 text-[var(--text-secondary)] hover:text-[var(--primary-color)] rounded-full transition-colors shrink-0 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+            <button
+              className="p-2 text-[var(--text-secondary)] hover:text-[var(--primary-color)] rounded-full transition-colors shrink-0 flex items-center justify-center"
             >
               <span className="material-symbols-outlined text-[20px]">mic</span>
             </button>
-            <button 
+            <button
               onClick={() => handleSendMessage()}
-              disabled={options.length > 0}
-              className="p-2 bg-[var(--primary-color)] text-[var(--primary-text)] hover:bg-[var(--primary-container)] rounded-xl transition-colors shrink-0 shadow-sm flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+              className="p-2 bg-[var(--primary-color)] text-[var(--primary-text)] hover:bg-[var(--primary-container)] rounded-xl transition-colors shrink-0 shadow-sm flex items-center justify-center"
             >
               <span className="material-symbols-outlined text-[20px]">send</span>
             </button>
           </div>
-          <div className="text-center mt-2.5">
+          <div className="flex flex-wrap items-center justify-center gap-1.5 mt-2.5">
+            <button
+              onClick={() => handleSendMessage('menu')}
+              className="text-[10px] font-bold px-2.5 py-1 rounded-full border border-[var(--border-color)]/50 text-[var(--text-secondary)] hover:text-[var(--primary-color)] hover:border-[var(--primary-color)] transition-colors"
+            >
+              ☰ Menu
+            </button>
+            <button
+              onClick={() => handleSendMessage('help')}
+              className="text-[10px] font-bold px-2.5 py-1 rounded-full border border-[var(--border-color)]/50 text-[var(--text-secondary)] hover:text-[var(--primary-color)] hover:border-[var(--primary-color)] transition-colors"
+            >
+              ? Help
+            </button>
             <span className="text-[10px] text-[var(--text-secondary)]/60 font-semibold leading-none">
               CareeAi AI Triage helper. Verify critical diagnosis details.
             </span>

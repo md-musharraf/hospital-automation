@@ -65,7 +65,15 @@ const dictionary = {
     statusWaiting: (position, wait) => `There are ${position - 1} patient(s) ahead of you. Estimated wait: ${wait} mins.`,
     statusCompleted: (status) => `Status: ${status}. Checkup complete or token cancelled.`,
     tokenDetailsHeader: (tokenNumber) => `Token Details for ${tokenNumber}:`,
-    tokenDetailsBody: (patient, doctor, dept, statusText) => `• Patient: ${patient}\n• Doctor: ${doctor} (${dept})\n• Live Status: ${statusText}`
+    tokenDetailsBody: (patient, doctor, dept, statusText) => `• Patient: ${patient}\n• Doctor: ${doctor} (${dept})\n• Live Status: ${statusText}`,
+    // --- Ease-of-use additions -------------------------------------------------
+    menuTitle: 'Main Menu — what would you like to do?',
+    notUnderstood: "Sorry, I didn't quite get that. Tap an option below, reply with its number, or just type your problem (e.g. \"fever since 2 days\").",
+    helpText: '🆘 *How to use this assistant*\n\n• Just type your problem — e.g. "fever and cough" — and I will pick the right department & doctor for you.\n• Reply with a number (1-5) or tap an option to use the menu.\n• Type your token number (e.g. T-101) anytime to see your live queue position.\n• Type *MENU* to go back • *HELP* for this help • *CHANGE* to use a different phone number.\n\n✅ You never need to stand in line — we WhatsApp you when your turn is near.',
+    usingWhatsAppNumber: (num) => `📱 Using your WhatsApp number ${num} — no need to type it. (Reply *CHANGE* to use a different number.)`,
+    changeNumberPrompt: 'Sure — please enter the phone number you would like to use:',
+    symptomsNoted: (s) => `Got it — "${s}". Let me find the right doctor for you.`,
+    tipTypeProblem: 'Tip: you can also just type your problem (e.g. "chest pain") and I will do the rest.'
   },
   hi: {
     welcome: 'केयरसिंक एआई असिस्टेंट में आपका स्वागत है! 🏥 (आप हमसे सीधे व्हाट्सएप पर ' + getPrimaryWhatsAppNumber() + ' पर भी चैट कर सकते हैं)',
@@ -118,10 +126,124 @@ const dictionary = {
     statusWaiting: (position, wait) => `आपसे आगे ${position - 1} मरीज हैं। अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
     statusCompleted: (status) => `स्थिति: ${status === 'Completed' ? 'पूर्ण' : status}. चेकअप पूरा हो चुका है या टोकन रद्द कर दिया गया है.`,
     tokenDetailsHeader: (tokenNumber) => `टोकन विवरण ${tokenNumber} के लिए:`,
-    tokenDetailsBody: (patient, doctor, dept, statusText) => `• मरीज: ${patient}\n• डॉक्टर: ${doctor} (${dept})\n• लाइव स्थिति: ${statusText}`
+    tokenDetailsBody: (patient, doctor, dept, statusText) => `• मरीज: ${patient}\n• डॉक्टर: ${doctor} (${dept})\n• लाइव स्थिति: ${statusText}`,
+    // --- Ease-of-use additions -------------------------------------------------
+    menuTitle: 'मुख्य मेनू — मैं आपकी क्या मदद करूँ?',
+    notUnderstood: 'माफ़ कीजिए, मैं समझ नहीं पाया। नीचे कोई विकल्प चुनें, उसका नंबर भेजें, या सीधे अपनी तकलीफ़ लिखें (जैसे "2 दिन से बुखार")।',
+    helpText: '🆘 *इस असिस्टेंट का उपयोग कैसे करें*\n\n• बस अपनी तकलीफ़ लिखें — जैसे "बुखार और खांसी" — मैं सही विभाग और डॉक्टर चुन दूँगा।\n• मेनू के लिए नंबर (1-5) भेजें या विकल्प पर टैप करें।\n• अपना टोकन नंबर (जैसे T-101) कभी भी भेजें और लाइव स्थिति देखें।\n• *MENU* लिखें — मेनू पर वापस • *HELP* — यह मदद • *CHANGE* — दूसरा मोबाइल नंबर।\n\n✅ लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।',
+    usingWhatsAppNumber: (num) => `📱 आपका WhatsApp नंबर ${num} इस्तेमाल कर रहे हैं — टाइप करने की ज़रूरत नहीं। (दूसरा नंबर देने के लिए *CHANGE* लिखें।)`,
+    changeNumberPrompt: 'ठीक है — कृपया वह मोबाइल नंबर दर्ज करें जिसे आप उपयोग करना चाहते हैं:',
+    symptomsNoted: (s) => `समझ गया — "${s}"। मैं आपके लिए सही डॉक्टर ढूँढता हूँ।`,
+    tipTypeProblem: 'सुझाव: आप सीधे अपनी तकलीफ़ भी लिख सकते हैं (जैसे "सीने में दर्द") — बाकी मैं संभाल लूँगा।'
   }
 };
 
+
+// ---------------------------------------------------------------------------
+// Input understanding helpers.
+// Real patients type "book appointment", "mujhe bukhar hai", "+91 98765 43210",
+// "T 101" — not the exact option strings. Everything below makes the bot accept
+// what a person would actually send, on the web widget AND on WhatsApp.
+// ---------------------------------------------------------------------------
+
+const norm = (s) => (s || '').toString().trim().toLowerCase();
+const digitsOnly = (s) => (s || '').toString().replace(/\D/g, '');
+
+// Global commands understood in EVERY state, on both channels.
+const MENU_TRIGGERS = ['menu', 'main menu', '0', 'back', 'cancel', 'exit', 'stop',
+  'मेनू', 'मुख्य मेनू', 'वापस', 'रद्द', 'बंद'];
+const HELP_TRIGGERS = ['help', '?', 'help me', 'commands', 'options', 'मदद', 'सहायता'];
+const CHANGE_PHONE_TRIGGERS = ['change', 'change number', 'other number', 'change phone',
+  'बदलें', 'नंबर बदलें', 'दूसरा नंबर'];
+const RESET_TRIGGERS = ['hi', 'hello', 'hey', 'start', 'reset', 'restart', 'नमस्ते', 'हैलो', 'शुरू'];
+// Only these wipe the chosen language too; a plain "hi" just returns to the menu.
+const HARD_RESET_TRIGGERS = ['reset', 'restart'];
+
+/** A phone number a human might type: 7-15 digits, spaces/dashes/+ allowed. */
+function isLikelyPhone(raw) {
+  const d = digitsOnly(raw);
+  return d.length >= 7 && d.length <= 15;
+}
+
+/**
+ * One canonical storage form for a phone number, so the SAME patient typing
+ * "98765 43210" today and "+91 9876543210" next month is one record, not two.
+ * A bare 10-digit number is assumed Indian (+91), matching the rest of the app.
+ */
+function normalizePhone(raw) {
+  const d = digitsOnly(raw);
+  if (!d) return (raw || '').toString().trim();
+  if (d.length === 10) return `+91${d}`;
+  if (d.length === 11 && d.startsWith('0')) return `+91${d.slice(1)}`;
+  return `+${d}`;
+}
+
+/**
+ * Every spelling of the same phone number a patient/registry might use, so
+ * "+91 98765 43210" still finds a patient stored as "9876543210".
+ */
+function phoneVariants(raw) {
+  const trimmed = (raw || '').toString().trim();
+  const d = digitsOnly(trimmed);
+  const last10 = d.slice(-10);
+  return [...new Set([
+    trimmed, trimmed.replace(/\s+/g, ''), normalizePhone(trimmed),
+    d, `+${d}`, last10, `+91${last10}`, `91${last10}`, `0${last10}`
+  ])].filter(Boolean);
+}
+
+/** Tenant-scoped patient lookup that tolerates phone-number formatting. */
+async function findPatientByPhone(hospitalId, raw) {
+  const variants = phoneVariants(raw);
+  if (variants.length === 0) return null;
+  return Patient.findOne({ hospital: hospitalId, $or: variants.map(p => ({ phone: p })) });
+}
+
+/** "T-101", "t101", "101" → the canonical token number, else null. */
+function parseTokenNumber(raw) {
+  const s = (raw || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (/^T-?\d{1,6}$/.test(s)) return s.startsWith('T-') ? s : `T-${s.slice(1)}`;
+  if (/^\d{2,6}$/.test(s)) return `T-${s}`; // bare number typed while checking status
+  return null;
+}
+
+/** WhatsApp sessions are `wa_<digits>` — we already know the patient's number. */
+function whatsappPhoneFromSession(sessionId) {
+  if (!sessionId || !sessionId.startsWith('wa_')) return null;
+  const d = digitsOnly(sessionId.slice(3));
+  return d ? `+${d}` : null;
+}
+
+/**
+ * Which menu action does this message mean? Accepts the option number, the exact
+ * option label in either language, and everyday free text ("book appointment",
+ * "dawa chahiye", "kitni der lagegi").
+ */
+function detectMenuIntent(raw) {
+  const m = norm(raw);
+  if (!m) return null;
+
+  // 1. Exact option number.
+  if (['1', '2', '3', '4', '5'].includes(m)) {
+    return ['book', 'revisit', 'emergency', 'status', 'refill'][Number(m) - 1];
+  }
+
+  // 2. Exact option label in either language.
+  for (const lang of ['en', 'hi']) {
+    const idx = dictionary[lang].options.findIndex(o => norm(o) === m);
+    if (idx >= 0) return ['book', 'revisit', 'emergency', 'status', 'refill'][idx];
+  }
+
+  // 3. Free-text keywords. Order matters: safety-critical intents first, and the
+  //    more specific intent before the generic "book" catch-all.
+  if (/(emerg|sos|urgent|serious|critical|ambulance|इमरजेंसी|आपात|तुरंत|गंभीर)/.test(m)) return 'emergency';
+  if (/(refill|repeat|same medicine|medicine|tablet|dawa|davai|रिफिल|दवा|दवाई|गोली)/.test(m)) return 'refill';
+  if (/(status|queue|position|how long|kitna|kitni|kab tak|number kaha|स्थिति|कतार|क़तार|कितनी देर|मेरा नंबर)/.test(m)) return 'status';
+  if (/(re-?visit|revisit|follow ?up|again|existing|purana|दोबारा|पुराना|फिर से)/.test(m)) return 'revisit';
+  if (/(book|appoint|token|slot|consult|doctor|new patient|बुक|अपॉइंटमेंट|टोकन|नया|डॉक्टर|दिखाना)/.test(m)) return 'book';
+
+  return null;
+}
 
 // Shared booking completion — used by BOTH the smart-triage auto-route path and
 // the manual "pick a doctor" fallback, so the token/queue/WhatsApp logic lives in
@@ -130,7 +252,10 @@ const dictionary = {
 // notifies via WhatsApp, and returns the completed-booking chat payload.
 async function finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo }) {
   const phone = (session.tempData && session.tempData.phone) || `+1 555-${session.sessionId.slice(-4)}`;
-  let patient = await Patient.findOne({ phone, hospital: currentHospId });
+  // Match on every spelling of the number, not just an exact string compare —
+  // otherwise a patient who registered as "+91 98765 43210" and comes back as
+  // "9876543210" gets a duplicate record (and loses their visit history).
+  let patient = await findPatientByPhone(currentHospId, phone);
   if (!patient) {
     patient = new Patient({
       name: (session.tempData && session.tempData.name) || 'Valued Patient',
@@ -241,6 +366,327 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   };
 }
 
+/**
+ * TENANT ISOLATION: only ever return doctors that belong to THIS facility.
+ * Never fall back to Doctor.find({}) across all facilities — that would book
+ * facility A's patient onto facility B's doctor and cross-contaminate tenant data.
+ */
+async function loadFacilityDoctors(currentHospId) {
+  let doctors = await Doctor.find({
+    hospital: currentHospId,
+    availabilityStatus: { $ne: 'Unavailable' }
+  });
+  if (!doctors || doctors.length === 0) {
+    doctors = await Doctor.find({ hospital: currentHospId });
+  }
+  return doctors || [];
+}
+
+/**
+ * SMART TRIAGE — the single place symptoms turn into a doctor recommendation.
+ * Shared by the "describe your symptoms" step AND the shortcut where a patient
+ * just types their problem straight into the menu, so both behave identically:
+ * read the symptoms, pick the department, escalate red flags, route to the
+ * LEAST-BUSY doctor, and let the patient confirm with one tap.
+ */
+async function routeSymptoms({ session, symptoms, currentHospId, text, preMessages = [] }) {
+  session.tempData = { ...session.tempData, symptoms };
+  if (session.tempData.pendingSymptoms) delete session.tempData.pendingSymptoms;
+
+  const doctors = await loadFacilityDoctors(currentHospId);
+  if (doctors.length === 0) {
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return { messages: [...preMessages, { sender: 'bot', text: text.noDoctors }], options: [] };
+  }
+
+  const triage = classifySymptoms(symptoms);
+
+  // Red-flag symptoms auto-escalate to Emergency priority (unless the patient
+  // already chose Emergency via the menu).
+  const msgs = [...preMessages];
+  if (triage.urgency === 'Emergency' && session.tempData.tokenType !== 'Emergency') {
+    session.tempData.tokenType = 'Emergency';
+    msgs.push({ sender: 'bot', text: text.emergencyDetected });
+  }
+
+  const { doctor: suggested, matchedDepartment, allFull } = await pickLeastBusyDoctor(doctors, triage.department);
+
+  // OPD capacity cutoff: if every candidate doctor is full and this is not an
+  // emergency, tell the patient now — don't recommend a doctor who can't take them.
+  if (allFull && session.tempData.tokenType !== 'Emergency') {
+    session.currentState = 'COMPLETED';
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return { messages: [...msgs, { sender: 'bot', text: text.opdFull }], options: text.options };
+  }
+
+  if (suggested) {
+    // Estimated wait for the suggested doctor so the patient sees the payoff of
+    // load balancing before confirming.
+    const sQueue = await Queue.findOne({ doctor: suggested._id });
+    const sLen = (sQueue && sQueue.activeQueue && sQueue.activeQueue.length) || 0;
+    const sWait = sLen * (suggested.averageCheckupTime || 10) + ((sQueue && sQueue.bufferDelay) || 0);
+    const shownDept = matchedDepartment ? triage.department : (suggested.department || triage.department);
+
+    session.tempData.suggestedDoctorId = String(suggested._id);
+    session.currentState = 'AWAITING_TRIAGE_CONFIRM';
+    session.markModified && session.markModified('tempData');
+    await session.save();
+
+    return {
+      messages: [
+        ...msgs,
+        { sender: 'bot', text: text.triageRecommend(shownDept, suggested.name, suggested.currentRoom || 'Cabin A', sWait) },
+        { sender: 'bot', text: text.triageConfirmPrompt }
+      ],
+      options: text.triageConfirmOptions
+    };
+  }
+
+  // Fallback: could not auto-route — offer the full manual list.
+  session.currentState = 'AWAITING_DOCTOR_CHOICE';
+  session.markModified && session.markModified('tempData');
+  await session.save();
+  return {
+    messages: [...msgs, { sender: 'bot', text: text.selectDoctorPrompt }],
+    options: doctors.map(d => `${d.name} (${d.department})`)
+  };
+}
+
+/**
+ * Live status of one token. Returns null when the token does not exist so the
+ * caller can decide what to say.
+ */
+async function lookupTokenStatus(tokenNumber, text) {
+  const token = await Token.findOne({ tokenNumber })
+    .populate('patient')
+    .populate('doctor');
+
+  // token.doctor/token.patient can be null if the referenced Doctor or Patient
+  // document was deleted after the token was created — treat that the same as
+  // "not found" instead of crashing on `._id`/`.name`.
+  if (!token || !token.doctor || !token.patient) return null;
+
+  const queue = await Queue.findOne({ doctor: token.doctor._id });
+  let position = -1;
+  if (queue) {
+    if (queue.currentToken && queue.currentToken.toString() === token._id.toString()) {
+      position = 0; // In cabin
+    } else {
+      position = queue.activeQueue.findIndex(id => id.toString() === token._id.toString()) + 1;
+    }
+  }
+
+  const statusText = position === 0
+    ? text.statusInCabin
+    : position > 0
+      ? text.statusWaiting(position, token.estimatedWaitTime)
+      : text.statusCompleted(token.status);
+
+  return [
+    { sender: 'bot', text: text.tokenDetailsHeader(token.tokenNumber) },
+    { sender: 'bot', text: text.tokenDetailsBody(token.patient.name, token.doctor.name, token.doctor.department, statusText) }
+  ];
+}
+
+/**
+ * The choices the CURRENT step offers. Used by HELP so showing help never wipes
+ * the quick-reply buttons (and therefore the patient's place in the flow).
+ */
+async function optionsForState(session, text, currentHospId) {
+  switch (session.currentState) {
+    case 'LANGUAGE': return ['English', 'हिन्दी', 'Facility Info'];
+    case 'AWAITING_GENDER': return text.genderOptions;
+    case 'AWAITING_TRIAGE_CONFIRM': return text.triageConfirmOptions;
+    case 'AWAITING_DOCTOR_CHOICE': {
+      const doctors = await loadFacilityDoctors(currentHospId);
+      return doctors.map(d => `${d.name} (${d.department})`);
+    }
+    case 'WELCOME':
+    case 'COMPLETED': return text.options;
+    default: return [];
+  }
+}
+
+/** Reset the conversation back to a clean main menu, keeping language + facility. */
+async function backToMenu(session, text, lang, currentHospId, leadMessages = []) {
+  session.currentState = 'WELCOME';
+  session.tempData = { language: lang, hospitalId: currentHospId };
+  session.markModified && session.markModified('tempData');
+  await session.save();
+  return {
+    messages: [...leadMessages, { sender: 'bot', text: text.menuTitle }],
+    options: text.options
+  };
+}
+
+/**
+ * MEDICINE REFILL: locate the patient's most recent prescription and raise a
+ * refill request for the prescribing doctor to approve — no OPD slot consumed,
+ * no trip to the hospital.
+ */
+async function handleRefill({ session, phone, currentHospId, text, lang, socketIo, leadMessages = [] }) {
+  const patient = await findPatientByPhone(currentHospId, phone);
+
+  let lastRx = null;
+  if (patient) {
+    // Newest token of this patient that actually carries medicines. We match the
+    // patient in JS against both the id and a populated-object form of
+    // token.patient — the complete-checkup handler saves the token after a
+    // populate('patient'), which stores the populated object in place of the id,
+    // so a plain `patient: id` query would miss it.
+    const pid = String(patient._id);
+    const toks = await Token.find({ hospital: currentHospId }).populate('doctor', '-passwordHash');
+    lastRx = (toks || [])
+      .filter(t => {
+        const tp = t.patient && (t.patient._id || t.patient);
+        return String(tp) === pid
+          && t.prescription && Array.isArray(t.prescription.medicines) && t.prescription.medicines.length > 0;
+      })
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0] || null;
+  }
+
+  if (!patient || !lastRx || !lastRx.doctor) {
+    session.currentState = 'COMPLETED';
+    session.tempData = { language: lang, hospitalId: currentHospId };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return {
+      messages: [...leadMessages, { sender: 'bot', text: text.refillNoRecord }],
+      options: text.options
+    };
+  }
+
+  const RefillRequest = require('../models/RefillRequest');
+  const medsSnapshot = lastRx.prescription.medicines.map(m => ({
+    name: m.name, dosage: m.dosage, duration: m.duration, instructions: m.instructions
+  }));
+  await new RefillRequest({
+    hospital: currentHospId,
+    patient: patient._id,
+    doctor: lastRx.doctor._id,
+    sourceToken: lastRx._id,
+    medicines: medsSnapshot,
+    status: 'Pending'
+  }).save();
+
+  // Notify the doctor (best-effort push) that a refill is waiting.
+  try {
+    const pushHelper = require('../utils/pushHelper');
+    await pushHelper.notifyByRole('Doctor', {
+      title: '💊 New Medicine Refill Request',
+      body: `${patient.name} has requested a repeat prescription. Tap to review.`,
+      icon: '/icon.svg', url: '/'
+    });
+  } catch (_) { /* best-effort */ }
+
+  if (socketIo) {
+    try { socketIo.to(`doctor:${lastRx.doctor._id}`).emit('refill-request'); } catch (_) {}
+  }
+
+  const medsList = medsSnapshot.map(m => m.name).filter(Boolean).join(', ') || 'previous medicines';
+  session.currentState = 'COMPLETED';
+  session.tempData = { language: lang, hospitalId: currentHospId };
+  session.markModified && session.markModified('tempData');
+  await session.save();
+  return {
+    messages: [...leadMessages, { sender: 'bot', text: text.refillRequested(lastRx.doctor.name, medsList) }],
+    options: text.options
+  };
+}
+
+/**
+ * Everything that happens once we know the patient's phone number — whether they
+ * typed it or it came free with the WhatsApp session. A phone that is already
+ * registered at this facility skips the name/age/gender interrogation entirely
+ * (it used to be re-asked on every "Book New Appointment"), and if the patient
+ * already told us their problem we go straight to the doctor recommendation.
+ */
+async function afterPhoneKnown({ session, phone, currentHospId, text, lang, socketIo, leadMessages = [] }) {
+  // Look up with the raw input (tolerant), but STORE the canonical form.
+  const patient = session.tempData && session.tempData.refillMode
+    ? null
+    : await findPatientByPhone(currentHospId, phone);
+
+  session.tempData = { ...session.tempData, phone: patient ? patient.phone : normalizePhone(phone) };
+
+  if (session.tempData.refillMode) {
+    return await handleRefill({ session, phone, currentHospId, text, lang, socketIo, leadMessages });
+  }
+
+  if (patient) {
+    session.tempData = {
+      ...session.tempData,
+      name: patient.name,
+      age: patient.age,
+      gender: patient.gender
+    };
+    const lead = [
+      ...leadMessages,
+      { sender: 'bot', text: text.welcomeBackText(patient.name, patient.age, patient.gender) }
+    ];
+
+    if (session.tempData.pendingSymptoms) {
+      return await routeSymptoms({
+        session, symptoms: session.tempData.pendingSymptoms, currentHospId, text, preMessages: lead
+      });
+    }
+
+    session.currentState = 'AWAITING_SYMPTOMS';
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return {
+      messages: [...lead, { sender: 'bot', text: text.describeSymptoms }],
+      options: []
+    };
+  }
+
+  // Unknown number — register the patient first.
+  session.currentState = 'AWAITING_NAME';
+  session.markModified && session.markModified('tempData');
+  await session.save();
+  const lead = [...leadMessages];
+  if (session.tempData.tokenType === 'Re-visit') {
+    lead.push({ sender: 'bot', text: text.phoneNotFound });
+  }
+  return {
+    messages: [...lead, { sender: 'bot', text: text.enterFullNameGeneric }],
+    options: []
+  };
+}
+
+/**
+ * Start one of the menu flows. On WhatsApp the phone number is already known, so
+ * the "enter your phone number" step is skipped completely — one less thing for
+ * a patient to type on a small keypad.
+ */
+async function beginFlow({ session, intent, text, currentHospId, lang, waPhone, socketIo, pendingSymptoms }) {
+  const tokenType = intent === 'emergency' ? 'Emergency' : intent === 'revisit' ? 'Re-visit' : 'Regular';
+
+  session.tempData = { ...session.tempData, refillMode: intent === 'refill' };
+  if (intent !== 'refill') session.tempData.tokenType = tokenType;
+  if (pendingSymptoms) session.tempData.pendingSymptoms = pendingSymptoms;
+
+  if (waPhone) {
+    return await afterPhoneKnown({
+      session, phone: waPhone, currentHospId, text, lang, socketIo,
+      leadMessages: [{ sender: 'bot', text: text.usingWhatsAppNumber(waPhone) }]
+    });
+  }
+
+  session.currentState = 'AWAITING_PHONE';
+  session.markModified && session.markModified('tempData');
+  await session.save();
+
+  const prompt = intent === 'refill' ? text.refillPhone
+    : intent === 'emergency' ? text.emergencyPhone
+      : intent === 'revisit' ? text.welcomeBackPhone
+        : text.enterPhone;
+
+  return { messages: [{ sender: 'bot', text: prompt }], options: [] };
+}
+
 async function processChatMessage({ sessionId, message, hospitalId, socketIo }) {
   let session = await ChatSession.findOne({ sessionId });
   if (!session) {
@@ -304,24 +750,70 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   const currentHospId = (session.tempData && session.tempData.hospitalId) || hospitalId || 'general-hospital';
   const hospital = await Hospital.findOne({ id: currentHospId }) || await Hospital.findOne({});
 
-  // Reset triggers
-  const resetTriggers = ['hi', 'hello', 'hey', 'start', 'reset', 'restart', 'नमस्ते'];
-  if (resetTriggers.includes(cleanMsg.toLowerCase())) {
-    session.currentState = 'LANGUAGE';
-    session.tempData = { hospitalId: currentHospId };
-    session.markModified && session.markModified('tempData');
-    await session.save();
+  const lowerMsg = norm(cleanMsg);
+  // WhatsApp sessions carry the patient's own number in the session id, so on
+  // that channel we never have to ask "please enter your phone number".
+  const waPhone = whatsappPhoneFromSession(sessionId);
+  const knownLang = (session.tempData && session.tempData.language) || null;
 
+  const languagePrompt = () => {
     const rawWhatsapp = (hospital && hospital.whatsappNumber) || getPrimaryWhatsAppNumber();
     const num = rawWhatsapp.replace(/^whatsapp:/i, '');
     const facilityName = hospital ? hospital.name : 'CareeAi';
-
     return {
       messages: [
         { sender: 'bot', text: `Welcome to ${facilityName} AI Assistant! 🏥\n(WhatsApp: ${num})\n\nPlease select your preferred language / अपनी पसंदीदा भाषा चुनें:\n• English\n• हिन्दी\n\n(Tip: Reply "Info" for facility images, doctors count & services)` }
       ],
       options: ['English', 'हिन्दी', 'Facility Info']
     };
+  };
+
+  // Greeting / reset triggers. A patient who already picked a language should not
+  // be asked for it again on every "hi" — send them straight to the menu. Only an
+  // explicit "reset"/"restart" wipes the language choice.
+  if (RESET_TRIGGERS.includes(lowerMsg)) {
+    if (knownLang && !HARD_RESET_TRIGGERS.includes(lowerMsg)) {
+      const t0 = dictionary[knownLang];
+      return await backToMenu(session, t0, knownLang, currentHospId, [
+        { sender: 'bot', text: t0.welcome }
+      ]);
+    }
+    session.currentState = 'LANGUAGE';
+    session.tempData = { hospitalId: currentHospId };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return languagePrompt();
+  }
+
+  // --- Global commands, understood in EVERY state ---------------------------
+  if (MENU_TRIGGERS.includes(lowerMsg)) {
+    const t0 = dictionary[knownLang || 'en'];
+    if (!knownLang) {
+      session.currentState = 'LANGUAGE';
+      session.markModified && session.markModified('tempData');
+      await session.save();
+      return languagePrompt();
+    }
+    return await backToMenu(session, t0, knownLang, currentHospId);
+  }
+
+  if (HELP_TRIGGERS.includes(lowerMsg)) {
+    const t0 = dictionary[knownLang || 'en'];
+    // Keep the patient exactly where they are — help must not throw away a
+    // half-finished booking. Re-show whatever choices the current step offers.
+    return {
+      messages: [{ sender: 'bot', text: t0.helpText }],
+      options: await optionsForState(session, t0, currentHospId)
+    };
+  }
+
+  if (CHANGE_PHONE_TRIGGERS.includes(lowerMsg) && session.tempData && session.tempData.phone) {
+    const t0 = dictionary[knownLang || 'en'];
+    session.currentState = 'AWAITING_PHONE';
+    session.tempData = { ...session.tempData, phone: undefined };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return { messages: [{ sender: 'bot', text: t0.changeNumberPrompt }], options: [] };
   }
 
   // Facility Info inquiry trigger
@@ -346,9 +838,20 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     }
   }
 
-  // Handshake for language choice at the start
+  // Handshake for language choice at the start. Accepts the button label, the
+  // option number, and what people actually type ("hindi", "हिंदी", "eng").
   if (session.currentState === 'LANGUAGE') {
-    const selectedLanguage = (cleanMsg === 'हिन्दी' || cleanMsg === '2') ? 'hi' : 'en';
+    // "3" is the third button (Facility Info) — a WhatsApp interactive reply
+    // sends the number, not the label, so map it here instead of treating it
+    // as an unrecognised language and silently defaulting to English.
+    if (lowerMsg === '3') {
+      return {
+        messages: [{ sender: 'bot', text: 'Please type *Info* to see facility photos, doctors and services — or pick a language above.' }],
+        options: ['English', 'हिन्दी', 'Facility Info']
+      };
+    }
+
+    const selectedLanguage = (lowerMsg === '2' || /हिन|hindi|hin$|^h$/.test(lowerMsg)) ? 'hi' : 'en';
     session.tempData = { ...session.tempData, language: selectedLanguage };
     session.currentState = 'WELCOME';
     session.markModified && session.markModified('tempData');
@@ -358,7 +861,8 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     return {
       messages: [
         { sender: 'bot', text: langText.welcome },
-        { sender: 'bot', text: langText.selectOption }
+        { sender: 'bot', text: langText.selectOption },
+        { sender: 'bot', text: langText.tipTypeProblem }
       ],
       options: langText.options
     };
@@ -374,253 +878,82 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   // are shown again, so selecting one (e.g. "Book New Appointment") must start
   // a fresh booking instead of endlessly repeating "previous booking complete".
   if (state === 'WELCOME' || state === 'COMPLETED') {
-    const isRegular = cleanMsg === '1' || cleanMsg === 'Book New Appointment / Generate Token' || cleanMsg === 'नया अपॉइंटमेंट बुक करें / टोकन जेनरेट करें';
-    const isRevisit = cleanMsg === '2' || cleanMsg === 'Re-visit (Existing Patient)' || cleanMsg === 'दोबारा विजिट (मौजूदा मरीज)';
-    const isEmergency = cleanMsg === '3' || cleanMsg === 'Emergency SOS Token' || cleanMsg === 'इमरजेंसी एसओएस टोकन';
-    const isCheckStatus = cleanMsg === '4' || cleanMsg === 'Check Live Queue Status' || cleanMsg === 'लाइव क्यू स्टेटस जांचें';
-    const isRefill = cleanMsg === '5' || cleanMsg === 'Medicine Refill (Repeat)' || cleanMsg === 'दवा रिफिल (दोबारा)';
-
-    if (isRefill) {
-      session.currentState = 'AWAITING_PHONE';
-      session.tempData = { ...session.tempData, refillMode: true };
-      session.markModified && session.markModified('tempData');
-      await session.save();
-      return {
-        messages: [{ sender: 'bot', text: text.refillPhone }],
-        options: []
-      };
+    // 1. A token number typed straight into the menu ("T-101", "101") is an
+    //    obvious status request — answer it without making the patient first
+    //    navigate to option 4.
+    const menuToken = parseTokenNumber(cleanMsg);
+    if (menuToken && !['1', '2', '3', '4', '5'].includes(lowerMsg)) {
+      const statusMsgs = await lookupTokenStatus(menuToken, text);
+      if (statusMsgs) {
+        session.currentState = 'WELCOME';
+        session.markModified && session.markModified('tempData');
+        await session.save();
+        return { messages: statusMsgs, options: text.options };
+      }
     }
 
-    if (isRegular) {
-      session.currentState = 'AWAITING_PHONE';
-      session.tempData = { ...session.tempData, tokenType: 'Regular' };
+    // 2. Menu intent: option number, exact label, or plain language.
+    const intent = detectMenuIntent(cleanMsg);
+
+    if (intent === 'status') {
+      session.currentState = 'AWAITING_TOKEN';
       session.markModified && session.markModified('tempData');
       await session.save();
-      return {
-        messages: [{ sender: 'bot', text: text.enterPhone }],
-        options: []
-      };
-    } 
-    else if (isRevisit) {
-      session.currentState = 'AWAITING_PHONE';
-      session.tempData = { ...session.tempData, tokenType: 'Re-visit' };
-      session.markModified && session.markModified('tempData');
-      await session.save();
-      return {
-        messages: [{ sender: 'bot', text: text.welcomeBackPhone }],
-        options: []
-      };
-    } 
-    else if (isEmergency) {
-      session.currentState = 'AWAITING_PHONE';
-      session.tempData = { ...session.tempData, tokenType: 'Emergency' };
-      session.markModified && session.markModified('tempData');
-      await session.save();
-      return {
-        messages: [{ sender: 'bot', text: text.emergencyPhone }],
-        options: []
-      };
-    } 
-    else if (isCheckStatus) {
-      session.tempData = { ...session.tempData, checkingStatus: true };
-      session.markModified && session.markModified('tempData');
-      await session.save();
-      return {
-        messages: [{ sender: 'bot', text: text.enterTokenToCheck }],
-        options: []
-      };
-    } 
-    else if (session.tempData && session.tempData.checkingStatus) {
-      const token = await Token.findOne({ tokenNumber: cleanMsg.toUpperCase() })
-        .populate('patient')
-        .populate('doctor');
-
-      if (!token || !token.doctor || !token.patient) {
-        // token.doctor/token.patient can be null if the referenced Doctor or
-        // Patient document was deleted after the token was created — treat
-        // that the same as "not found" instead of crashing on `._id`/`.name`.
-        return {
-          messages: [{ sender: 'bot', text: text.tokenNotFound }],
-          options: []
-        };
-      }
-
-      const queue = await Queue.findOne({ doctor: token.doctor._id });
-      let position = -1;
-      if (queue) {
-        if (queue.currentToken && queue.currentToken.toString() === token._id.toString()) {
-          position = 0; // In cabin
-        } else {
-          position = queue.activeQueue.findIndex(id => id.toString() === token._id.toString()) + 1;
-        }
-      }
-
-      let statusText = '';
-      if (position === 0) {
-        statusText = text.statusInCabin;
-      } else if (position > 0) {
-        statusText = text.statusWaiting(position, token.estimatedWaitTime);
-      } else {
-        statusText = text.statusCompleted(token.status);
-      }
-
-      session.tempData = { language: lang, hospitalId: currentHospId };
-      session.currentState = 'WELCOME';
-      session.markModified && session.markModified('tempData');
-      await session.save();
-
-      return {
-        messages: [
-          { sender: 'bot', text: text.tokenDetailsHeader(token.tokenNumber) },
-          { sender: 'bot', text: text.tokenDetailsBody(token.patient.name, token.doctor.name, token.doctor.department, statusText) }
-        ],
-        options: text.options
-      };
-    } 
-    else {
-      return {
-        messages: [{ sender: 'bot', text: text.defaultCatchAll }],
-        options: text.options
-      };
+      return { messages: [{ sender: 'bot', text: text.enterTokenToCheck }], options: [] };
     }
+
+    if (intent) {
+      return await beginFlow({ session, intent, text, currentHospId, lang, waPhone, socketIo });
+    }
+
+    // 3. No menu intent — but if the patient simply described their problem
+    //    ("fever since 2 days", "seene me dard"), that IS the booking request.
+    //    Remember the symptoms and jump straight into the flow.
+    const triageGuess = classifySymptoms(cleanMsg);
+    if (cleanMsg.length >= 3 && triageGuess.confident) {
+      return await beginFlow({
+        session,
+        intent: triageGuess.urgency === 'Emergency' ? 'emergency' : 'book',
+        text, currentHospId, lang, waPhone, socketIo,
+        pendingSymptoms: cleanMsg
+      });
+    }
+
+    return {
+      messages: [{ sender: 'bot', text: text.notUnderstood }],
+      options: text.options
+    };
+  }
+
+  // AWAITING_TOKEN state — patient is typing a token number to check its status.
+  if (state === 'AWAITING_TOKEN') {
+    const tokenNumber = parseTokenNumber(cleanMsg);
+    const statusMsgs = tokenNumber ? await lookupTokenStatus(tokenNumber, text) : null;
+    if (!statusMsgs) {
+      return { messages: [{ sender: 'bot', text: text.tokenNotFound }], options: [] };
+    }
+    session.currentState = 'WELCOME';
+    session.tempData = { language: lang, hospitalId: currentHospId };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return { messages: statusMsgs, options: text.options };
   }
 
   // AWAITING_PHONE state
   if (state === 'AWAITING_PHONE') {
-    if (!cleanMsg || cleanMsg.length < 7) {
+    if (!isLikelyPhone(cleanMsg)) {
       return {
         messages: [{ sender: 'bot', text: text.invalidPhone }],
         options: []
       };
     }
 
-    session.tempData = { ...session.tempData, phone: cleanMsg };
-
-    // MEDICINE REFILL: locate the patient's most recent prescription and raise a
-    // refill request for the prescribing doctor to approve — no OPD slot consumed.
-    if (session.tempData.refillMode) {
-      const patient = await Patient.findOne({
-        hospital: currentHospId,
-        $or: [{ phone: cleanMsg }, { phone: cleanMsg.replace(/\s+/g, '') }]
-      });
-
-      let lastRx = null;
-      if (patient) {
-        // Newest token of this patient that actually carries medicines. We match the
-        // patient in JS against both the id and a populated-object form of
-        // token.patient — the complete-checkup handler saves the token after a
-        // populate('patient'), which under the in-memory mock stores the populated
-        // object in place of the id, so a plain `patient: id` query would miss it.
-        const pid = String(patient._id);
-        const toks = await Token.find({ hospital: currentHospId })
-          .populate('doctor', '-passwordHash');
-        lastRx = (toks || [])
-          .filter(t => {
-            const tp = t.patient && (t.patient._id || t.patient);
-            return String(tp) === pid
-              && t.prescription && Array.isArray(t.prescription.medicines) && t.prescription.medicines.length > 0;
-          })
-          .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0] || null;
-      }
-
-      if (!patient || !lastRx || !lastRx.doctor) {
-        session.currentState = 'COMPLETED';
-        session.tempData = { language: lang, hospitalId: currentHospId };
-        session.markModified && session.markModified('tempData');
-        await session.save();
-        return {
-          messages: [{ sender: 'bot', text: text.refillNoRecord }],
-          options: text.options
-        };
-      }
-
-      const RefillRequest = require('../models/RefillRequest');
-      const medsSnapshot = lastRx.prescription.medicines.map(m => ({
-        name: m.name, dosage: m.dosage, duration: m.duration, instructions: m.instructions
-      }));
-      await new RefillRequest({
-        hospital: currentHospId,
-        patient: patient._id,
-        doctor: lastRx.doctor._id,
-        sourceToken: lastRx._id,
-        medicines: medsSnapshot,
-        status: 'Pending'
-      }).save();
-
-      // Notify the doctor (best-effort push) that a refill is waiting.
-      try {
-        const pushHelper = require('../utils/pushHelper');
-        await pushHelper.notifyByRole('Doctor', {
-          title: '💊 New Medicine Refill Request',
-          body: `${patient.name} has requested a repeat prescription. Tap to review.`,
-          icon: '/icon.svg', url: '/'
-        });
-      } catch (_) { /* best-effort */ }
-
-      if (socketIo) {
-        try { socketIo.to(`doctor:${lastRx.doctor._id}`).emit('refill-request'); } catch (_) {}
-      }
-
-      const medsList = medsSnapshot.map(m => m.name).filter(Boolean).join(', ') || 'previous medicines';
-      session.currentState = 'COMPLETED';
-      session.tempData = { language: lang, hospitalId: currentHospId };
-      session.markModified && session.markModified('tempData');
-      await session.save();
-      return {
-        messages: [{ sender: 'bot', text: text.refillRequested(lastRx.doctor.name, medsList) }],
-        options: text.options
-      };
-    }
-
-    if (session.tempData.tokenType === 'Re-visit') {
-      const patient = await Patient.findOne({ 
-        hospital: currentHospId, 
-        $or: [{ phone: cleanMsg }, { phone: cleanMsg.replace(/\s+/g, '') }] 
-      });
-      if (patient) {
-        session.tempData = {
-          ...session.tempData,
-          name: patient.name,
-          age: patient.age,
-          gender: patient.gender
-        };
-        session.currentState = 'AWAITING_SYMPTOMS';
-        session.markModified && session.markModified('tempData');
-        await session.save();
-
-        return {
-          messages: [
-            { sender: 'bot', text: text.welcomeBackText(patient.name, patient.age, patient.gender) },
-            { sender: 'bot', text: text.describeSymptoms }
-          ],
-          options: []
-        };
-      } else {
-        session.currentState = 'AWAITING_NAME';
-        session.markModified && session.markModified('tempData');
-        await session.save();
-        return {
-          messages: [
-            { sender: 'bot', text: text.phoneNotFound },
-            { sender: 'bot', text: text.enterFullName }
-          ],
-          options: []
-        };
-      }
-    }
-
-    session.currentState = 'AWAITING_NAME';
-    session.markModified && session.markModified('tempData');
-    await session.save();
-    return {
-      messages: [{ sender: 'bot', text: text.enterFullNameGeneric }],
-      options: []
-    };
+    return await afterPhoneKnown({ session, phone: cleanMsg, currentHospId, text, lang, socketIo });
   }
 
   // AWAITING_NAME state
   if (state === 'AWAITING_NAME') {
-    if (!cleanMsg) {
+    if (cleanMsg.length < 2) {
       return {
         messages: [{ sender: 'bot', text: text.invalidName }],
         options: []
@@ -636,9 +969,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     };
   }
 
-  // AWAITING_AGE state
+  // AWAITING_AGE state. Accepts "45", "45 years", "45 saal", "उम्र 45".
   if (state === 'AWAITING_AGE') {
-    const age = parseInt(cleanMsg);
+    const ageMatch = cleanMsg.match(/\d{1,3}/);
+    const age = ageMatch ? parseInt(ageMatch[0], 10) : NaN;
     if (isNaN(age) || age <= 0 || age > 130) {
       return {
         messages: [{ sender: 'bot', text: text.invalidAge }],
@@ -655,11 +989,13 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     };
   }
 
-  // AWAITING_GENDER state
+  // AWAITING_GENDER state. Accepts the button, the number, and the short forms
+  // people actually type ("m", "f", "male", "पुरुष", "mahila").
   if (state === 'AWAITING_GENDER') {
-    const isMale = cleanMsg === '1' || cleanMsg === 'Male' || cleanMsg === 'पुरुष';
-    const isFemale = cleanMsg === '2' || cleanMsg === 'Female' || cleanMsg === 'महिला';
-    const isOther = cleanMsg === '3' || cleanMsg === 'Other' || cleanMsg === 'अन्य';
+    const g = lowerMsg;
+    const isMale = g === '1' || /^(m|male|man|boy|पुरुष|पुरुष|मर्द|आदमी|purush)$/.test(g);
+    const isFemale = g === '2' || /^(f|female|woman|girl|महिला|स्त्री|औरत|mahila)$/.test(g);
+    const isOther = g === '3' || /^(o|other|others|अन्य|dusra)$/.test(g);
 
     if (!isMale && !isFemale && !isOther) {
       return {
@@ -668,6 +1004,16 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       };
     }
     session.tempData = { ...session.tempData, gender: isMale ? 'Male' : isFemale ? 'Female' : 'Other' };
+
+    // If the patient already described their problem before we asked for their
+    // details, don't ask for it a second time — go straight to the doctor.
+    if (session.tempData.pendingSymptoms) {
+      return await routeSymptoms({
+        session, symptoms: session.tempData.pendingSymptoms, currentHospId, text,
+        preMessages: [{ sender: 'bot', text: text.symptomsNoted(session.tempData.pendingSymptoms) }]
+      });
+    }
+
     session.currentState = 'AWAITING_SYMPTOMS';
     session.markModified && session.markModified('tempData');
     await session.save();
@@ -677,136 +1023,61 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     };
   }
 
-  // AWAITING_SYMPTOMS state
+  // AWAITING_SYMPTOMS state — the patient describes the problem in their own
+  // words and the smart-triage engine takes it from there.
   if (state === 'AWAITING_SYMPTOMS') {
-    if (!session.tempData || !session.tempData.symptoms) {
-      session.tempData = { ...session.tempData, symptoms: cleanMsg };
+    // Older sessions (started before AWAITING_DOCTOR_CHOICE existed) used this
+    // state for the manual doctor list too, flagged by symptoms already being
+    // set. Keep honouring that so an in-flight conversation doesn't dead-end.
+    if (session.tempData && session.tempData.symptoms) {
+      session.currentState = 'AWAITING_DOCTOR_CHOICE';
+    } else {
+      if (!cleanMsg) {
+        return { messages: [{ sender: 'bot', text: text.describeSymptomsLong }], options: [] };
+      }
+      return await routeSymptoms({ session, symptoms: cleanMsg, currentHospId, text });
+    }
+  }
 
-      // TENANT ISOLATION: only ever offer doctors that belong to THIS facility.
-      // Never fall back to Doctor.find({}) across all facilities — that would
-      // book facility A's patient onto facility B's doctor and cross-contaminate
-      // tenant data. If this facility has no doctor, say so instead of leaking.
-      let doctors = await Doctor.find({
-        hospital: currentHospId,
-        availabilityStatus: { $ne: 'Unavailable' }
+  // AWAITING_DOCTOR_CHOICE state — patient picks a doctor from the manual list.
+  if (session.currentState === 'AWAITING_DOCTOR_CHOICE') {
+    const doctors = await loadFacilityDoctors(currentHospId);
+    if (doctors.length === 0) {
+      return { messages: [{ sender: 'bot', text: text.noDoctors }], options: [] };
+    }
+
+    const docNames = doctors.map(d => `${d.name} (${d.department})`);
+
+    // Exact label, then option number, then a loose name match ("dr sarah").
+    let selectedDoc = doctors.find(d => `${d.name} (${d.department})` === cleanMsg);
+
+    const docIdx = parseInt(cleanMsg, 10) - 1;
+    if (!selectedDoc && !isNaN(docIdx) && doctors[docIdx]) {
+      selectedDoc = doctors[docIdx];
+    }
+
+    if (!selectedDoc && cleanMsg.length >= 3) {
+      const needle = lowerMsg.replace(/^dr\.?\s*/, '');
+      selectedDoc = doctors.find(d => {
+        const dn = d.name.toLowerCase().replace(/^dr\.?\s*/, '');
+        return dn.includes(needle) || needle.includes(dn);
       });
-      if (!doctors || doctors.length === 0) {
-        doctors = await Doctor.find({ hospital: currentHospId });
-      }
-      if (!doctors || doctors.length === 0) {
-        session.markModified && session.markModified('tempData');
-        await session.save();
-        return {
-          messages: [{ sender: 'bot', text: text.noDoctors }],
-          options: []
-        };
-      }
+    }
 
-      // SMART TRIAGE — this is what removes the receptionist / patient-guesswork
-      // load: read the symptoms, pick the department, escalate red flags, and
-      // route to the LEAST-BUSY doctor. The patient just confirms with one tap.
-      const triage = classifySymptoms(session.tempData.symptoms);
+    // Still nothing? Maybe they named a DEPARTMENT instead ("skin doctor").
+    if (!selectedDoc && cleanMsg.length >= 3) {
+      selectedDoc = doctors.find(d => d.department && lowerMsg.includes(d.department.toLowerCase()));
+    }
 
-      // Red-flag symptoms auto-escalate to Emergency priority (unless the patient
-      // already chose Emergency via the menu).
-      const preMessages = [];
-      if (triage.urgency === 'Emergency' && session.tempData.tokenType !== 'Emergency') {
-        session.tempData.tokenType = 'Emergency';
-        preMessages.push({ sender: 'bot', text: text.emergencyDetected });
-      }
-
-      const { doctor: suggested, matchedDepartment, allFull } = await pickLeastBusyDoctor(doctors, triage.department);
-
-      // OPD capacity cutoff: if every candidate doctor is full and this is not an
-      // emergency, tell the patient now — don't recommend a doctor who can't take them.
-      if (allFull && session.tempData.tokenType !== 'Emergency') {
-        session.currentState = 'COMPLETED';
-        session.markModified && session.markModified('tempData');
-        await session.save();
-        return {
-          messages: [...preMessages, { sender: 'bot', text: text.opdFull }],
-          options: text.options
-        };
-      }
-
-      if (suggested) {
-        // Estimated wait for the suggested doctor so the patient sees the payoff
-        // of load balancing before confirming.
-        const sQueue = await Queue.findOne({ doctor: suggested._id });
-        const sLen = (sQueue && sQueue.activeQueue && sQueue.activeQueue.length) || 0;
-        const sWait = sLen * (suggested.averageCheckupTime || 10) + ((sQueue && sQueue.bufferDelay) || 0);
-        const shownDept = matchedDepartment ? triage.department : (suggested.department || triage.department);
-
-        session.tempData.suggestedDoctorId = String(suggested._id);
-        session.currentState = 'AWAITING_TRIAGE_CONFIRM';
-        session.markModified && session.markModified('tempData');
-        await session.save();
-
-        return {
-          messages: [
-            ...preMessages,
-            { sender: 'bot', text: text.triageRecommend(shownDept, suggested.name, suggested.currentRoom || 'Cabin A', sWait) },
-            { sender: 'bot', text: text.triageConfirmPrompt }
-          ],
-          options: text.triageConfirmOptions
-        };
-      }
-
-      // Fallback: could not auto-route — offer the full manual list (old behavior).
-      session.markModified && session.markModified('tempData');
-      await session.save();
-      const docNames = doctors.map(d => `${d.name} (${d.department})`);
+    if (!selectedDoc) {
       return {
-        messages: [...preMessages, { sender: 'bot', text: text.selectDoctorPrompt }],
+        messages: [{ sender: 'bot', text: text.invalidDoctor }],
         options: docNames
       };
     }
-    else {
-      // TENANT ISOLATION: only ever offer doctors that belong to THIS facility.
-      // Never fall back to Doctor.find({}) across all facilities — that would
-      // book facility A's patient onto facility B's doctor and cross-contaminate
-      // tenant data. If this facility has no doctor, say so instead of leaking.
-      let doctors = await Doctor.find({
-        hospital: currentHospId,
-        availabilityStatus: { $ne: 'Unavailable' }
-      });
-      if (!doctors || doctors.length === 0) {
-        doctors = await Doctor.find({ hospital: currentHospId });
-      }
-      if (!doctors || doctors.length === 0) {
-        return {
-          messages: [{ sender: 'bot', text: text.noDoctors }],
-          options: []
-        };
-      }
 
-      let selectedDoc = doctors.find(d => `${d.name} (${d.department})` === cleanMsg);
-      
-      // Numeric option selection fallback
-      const docIdx = parseInt(cleanMsg) - 1;
-      if (!selectedDoc && !isNaN(docIdx) && doctors[docIdx]) {
-        selectedDoc = doctors[docIdx];
-      }
-
-      // Name-based loose matching fallback
-      if (!selectedDoc) {
-        selectedDoc = doctors.find(d => 
-          cleanMsg.toLowerCase().includes(d.name.toLowerCase()) || 
-          d.name.toLowerCase().includes(cleanMsg.toLowerCase())
-        );
-      }
-
-      if (!selectedDoc) {
-        const docNames = doctors.map(d => `${d.name} (${d.department})`);
-        return {
-          messages: [{ sender: 'bot', text: text.invalidDoctor }],
-          options: docNames
-        };
-      }
-
-      // Complete booking via the shared helper (same path as auto-triage).
-      return await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
-    }
+    // Complete booking via the shared helper (same path as auto-triage).
+    return await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
   }
 
   // AWAITING_TRIAGE_CONFIRM state — patient responds to the smart recommendation.
@@ -821,14 +1092,8 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       || /^(no|n|change|other|another|दूसरा|बदल)/i.test(cleanMsg);
 
     // Load doctors for this facility once (tenant-safe) — needed for both paths.
-    let doctors = await Doctor.find({
-      hospital: currentHospId,
-      availabilityStatus: { $ne: 'Unavailable' }
-    });
-    if (!doctors || doctors.length === 0) {
-      doctors = await Doctor.find({ hospital: currentHospId });
-    }
-    if (!doctors || doctors.length === 0) {
+    const doctors = await loadFacilityDoctors(currentHospId);
+    if (doctors.length === 0) {
       return { messages: [{ sender: 'bot', text: text.noDoctors }], options: [] };
     }
 
@@ -839,9 +1104,8 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     }
 
     if (isChange) {
-      // Hand off to the manual selection branch: symptoms are already stored, so
-      // the next message is treated as a doctor pick by the else-branch above.
-      session.currentState = 'AWAITING_SYMPTOMS';
+      // Hand off to the manual doctor list.
+      session.currentState = 'AWAITING_DOCTOR_CHOICE';
       if (session.tempData) delete session.tempData.suggestedDoctorId;
       session.markModified && session.markModified('tempData');
       await session.save();
@@ -859,10 +1123,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     };
   }
 
-  return {
-    messages: [{ sender: 'bot', text: text.defaultCatchAll }],
-    options: text.options
-  };
+  // Unknown / stale state — never dead-end the patient, put them back on the menu.
+  return await backToMenu(session, text, lang, currentHospId, [
+    { sender: 'bot', text: text.notUnderstood }
+  ]);
 }
 
 router.post('/message', async (req, res) => {
@@ -933,7 +1197,10 @@ router.post('/whatsapp', async (req, res) => {
     // locked onto (e.g. via a scanned facility QR) must win on every later turn —
     // only SEED from the receiving number for a brand-new conversation, so we
     // never overwrite the patient's chosen facility mid-booking.
-    const waSessionId = `wa_${cleanFrom}`;
+    // Digits-only session id — the Meta webhook builds it the same way, so the
+    // SAME patient number is one conversation no matter which provider delivered
+    // the message (and `whatsappPhoneFromSession` can read the number back out).
+    const waSessionId = `wa_${cleanFrom.replace(/\D/g, '')}`;
     const priorSession = await ChatSession.findOne({ sessionId: waSessionId });
     let seedHospitalId;
     if (priorSession && priorSession.tempData && priorSession.tempData.hospitalId) {
@@ -1443,15 +1710,27 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                   socketIo: req.io || global.io
                 });
 
-                // Dispatch state machine response back to user via Meta Cloud API
-                if (botResponse && botResponse.messages) {
-                  for (let i = 0; i < botResponse.messages.length; i++) {
-                    const m = botResponse.messages[i];
-                    const opts = (i === botResponse.messages.length - 1 && botResponse.options && botResponse.options.length > 0)
-                      ? botResponse.options
-                      : [];
+                // Dispatch the state-machine response back via Meta Cloud API.
+                // ONE reply per patient message: a 3-line bot answer used to
+                // arrive as 3 separate WhatsApp notifications, which reads as
+                // spam and pushes the option buttons off screen. Merge the lines
+                // into a single bubble and attach the choices to it.
+                if (botResponse && botResponse.messages && botResponse.messages.length > 0) {
+                  const opts = (botResponse.options && botResponse.options.length > 0) ? botResponse.options : [];
+                  const lines = botResponse.messages.map(m => m.text).filter(Boolean);
+                  const combined = lines.join('\n\n');
 
-                    await sendWhatsAppNotification(formattedPhone, m.text, opts, req.io || global.io, receivingPhoneNumberId);
+                  // Meta caps an interactive message body at 1024 chars. If the
+                  // reply is longer, send the detail as plain text first and keep
+                  // the (short) last line as the interactive prompt.
+                  const INTERACTIVE_BODY_LIMIT = 1000;
+                  if (opts.length > 0 && combined.length > INTERACTIVE_BODY_LIMIT && lines.length > 1) {
+                    const head = lines.slice(0, -1).join('\n\n');
+                    const tail = lines[lines.length - 1];
+                    await sendWhatsAppNotification(formattedPhone, head, [], req.io || global.io, receivingPhoneNumberId);
+                    await sendWhatsAppNotification(formattedPhone, tail, opts, req.io || global.io, receivingPhoneNumberId);
+                  } else {
+                    await sendWhatsAppNotification(formattedPhone, combined, opts, req.io || global.io, receivingPhoneNumberId);
                   }
                 }
               }
@@ -1466,3 +1745,7 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
 });
 
 module.exports = router;
+// Exposed for offline testing of the conversation engine (no HTTP/DB round-trip).
+module.exports._internals = {
+  processChatMessage, detectMenuIntent, parseTokenNumber, normalizePhone, phoneVariants, isLikelyPhone
+};

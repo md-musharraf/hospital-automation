@@ -110,7 +110,10 @@ class Schema {
 
 // Types definition
 Schema.Types = {
-  ObjectId: 'ObjectId'
+  ObjectId: 'ObjectId',
+  // Mixed = free-form sub-document (ChatSession.tempData). The mock stores whole
+  // objects as-is, so this only needs to exist as a valid type marker.
+  Mixed: 'Mixed'
 };
 
 // Query Builder that supports populate, select, then

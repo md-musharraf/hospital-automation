@@ -12,72 +12,107 @@
 const Queue = require('../models/Queue');
 const { isDoctorFull } = require('./queueHelper');
 
-// Pregnancy cues (English + Hindi) used to auto-flag a Pregnant priority token.
+// Pregnancy cues (English + Hindi + Hinglish) used to auto-flag a Pregnant token.
 const PREGNANCY_KEYWORDS = [
   'pregnant', 'pregnancy', 'expecting', 'delivery', 'labour', 'labor pain',
+  'garbhvati', 'garbhwati', 'pregnency',
   'गर्भवती', 'गर्भावस्था', 'प्रसव', 'गर्भ'
 ];
+
+/**
+ * Whole-word keyword match for Latin-script keywords, plain substring for
+ * Devanagari (which has no \b word boundaries in JS regex).
+ *
+ * Substring matching alone is actively wrong here: "ear" matched "34 y-ear-s"
+ * and sent a patient to ENT, "kid" matched "kidney", "sad" matched "salad".
+ * Triage decides which doctor someone sees — it has to match words, not letters.
+ */
+function hasKeyword(text, keyword) {
+  const kw = keyword.trim();
+  if (!kw) return false;
+  if (!/^[\x20-\x7E]+$/.test(kw)) return text.includes(kw); // Devanagari etc.
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z])${escaped}(?![a-z])`, 'i').test(text);
+}
 
 // Canonical department => trigger keywords (English + common Hindi / Hinglish).
 // Order matters: the FIRST department with the most keyword hits wins, and the
 // list is roughly ordered specific-specialty-first so a specific complaint
 // ("chest pain") beats a generic one ("pain"). Keep keywords lowercase.
+// Hinglish (Hindi typed in Latin script) is how most patients actually type on
+// WhatsApp — "mujhe bukhar hai", "ghutne me dard". Without these the triage
+// engine only understood English or pure Devanagari and fell back to the
+// generic department, which defeats the whole point of auto-routing.
 const DEPARTMENT_KEYWORDS = {
   Cardiology: [
     'chest pain', 'chest tightness', 'heart', 'palpitation', 'palpitations',
-    'high bp', 'blood pressure', 'bp high', 'cardiac',
-    'सीने में दर्द', 'दिल', 'धड़कन', 'बीपी', 'रक्तचाप', 'हृदय'
+    'high bp', 'blood pressure', 'bp high', 'bp', 'cardiac',
+    'seene', 'sine', 'chhati', 'chati', 'dil', 'dhadkan',
+    'सीने में दर्द', 'सीने', 'दिल', 'धड़कन', 'बीपी', 'रक्तचाप', 'हृदय'
   ],
   Pediatrics: [
     'child', 'baby', 'infant', 'newborn', 'kid', 'toddler', 'my son', 'my daughter',
+    'bacha', 'baccha', 'bachcha', 'bachche', 'bacche', 'beta', 'beti',
     'बच्चा', 'बच्ची', 'शिशु', 'बच्चे', 'नवजात'
   ],
   Orthopedics: [
     'bone', 'fracture', 'joint', 'knee pain', 'back pain', 'spine', 'sprain',
-    'broken', 'shoulder pain', 'arthritis',
-    'हड्डी', 'फ्रैक्चर', 'जोड़', 'घुटना', 'कमर दर्द', 'रीढ़', 'मोच', 'गठिया'
+    'broken', 'shoulder pain', 'arthritis', 'knee', 'waist',
+    'haddi', 'ghutna', 'ghutne', 'kamar', 'jod', 'moch', 'kandha',
+    'हड्डी', 'फ्रैक्चर', 'जोड़', 'घुटना', 'घुटने', 'कमर दर्द', 'कमर', 'रीढ़', 'मोच', 'गठिया'
   ],
   Dermatology: [
     'skin', 'rash', 'itching', 'acne', 'pimple', 'allergy skin', 'eczema',
-    ' त्वचा', 'खुजली', 'दाने', 'चर्म', 'फुंसी', 'एलर्जी'
+    'khujli', 'daane', 'dane', 'chakatte', 'phunsi', 'twacha',
+    'त्वचा', 'खुजली', 'दाने', 'चर्म', 'फुंसी', 'एलर्जी'
   ],
   ENT: [
-    'ear', 'nose', 'throat', 'ear pain', 'sore throat', 'sinus', 'tonsil',
+    'ear', 'ears', 'nose', 'throat', 'ear pain', 'sore throat', 'sinus', 'tonsil',
     'hearing', 'nose bleed',
-    'कान', 'नाक', 'गला', 'गले में दर्द', 'साइनस'
+    'kaan', 'kan dard', 'gala', 'gale', 'naak', 'nak',
+    'कान', 'नाक', 'गला', 'गले', 'गले में दर्द', 'साइनस'
   ],
   Ophthalmology: [
-    'eye', 'vision', 'blurred vision', 'red eye', 'eye pain', 'cataract',
+    'eye', 'eyes', 'vision', 'blurred vision', 'red eye', 'eye pain', 'cataract',
+    'aankh', 'ankh', 'aankhon', 'aankhein', 'nazar', 'motiyabind',
     'आंख', 'आँख', 'दृष्टि', 'नज़र', 'आँखों'
   ],
   Gynecology: [
     'pregnant', 'pregnancy', 'periods', 'menstrual', 'gynae', 'gynec',
     'delivery', 'menstruation',
+    'garbhvati', 'garbhwati', 'mahwari', 'period',
     'गर्भवती', 'गर्भावस्था', 'माहवारी', 'पीरियड', 'प्रसव', 'स्त्री रोग'
   ],
   Neurology: [
     'seizure', 'paralysis', 'numbness', 'migraine', 'severe headache', 'stroke',
     'fits', 'tremor', 'memory loss',
+    'lakwa', 'daura', 'mirgi', 'jhatke', 'sunn',
     'दौरा', 'लकवा', 'सुन्न', 'माइग्रेन', 'मिर्गी', 'कंपन'
   ],
   Gastroenterology: [
     'stomach pain', 'abdominal pain', 'vomiting', 'diarrhea', 'diarrhoea',
     'loose motion', 'acidity', 'constipation', 'stomach', 'ulcer', 'jaundice',
+    'pet', 'pet dard', 'ulti', 'dast', 'kabz', 'gas', 'piliya', 'jaundis',
     'पेट दर्द', 'उल्टी', 'दस्त', 'अपच', 'कब्ज', 'पेट', 'पीलिया', 'एसिडिटी'
   ],
   Dental: [
-    'tooth', 'teeth', 'toothache', 'gum', 'dental', 'cavity',
+    'tooth', 'teeth', 'toothache', 'gum', 'gums', 'dental', 'cavity',
+    'dant', 'daant', 'danth', 'masude',
     'दांत', 'दाँत', 'मसूड़े', 'दांत दर्द'
   ],
   Psychiatry: [
     'depression', 'anxiety', 'stress', 'mental', 'sleep problem', 'insomnia',
     'panic', 'sad',
+    'tanav', 'chinta', 'nind', 'neend', 'ghabrahat', 'udasi',
     'अवसाद', 'चिंता', 'तनाव', 'मानसिक', 'नींद', 'घबराहट'
   ],
   'General Medicine': [
     'fever', 'cold', 'cough', 'weakness', 'body pain', 'headache', 'flu',
     'tired', 'fatigue', 'general', 'checkup', 'infection', 'sugar', 'diabetes',
-    'बुखार', 'सर्दी', 'खांसी', 'कमजोरी', 'बदन दर्द', 'सिरदर्द', 'शुगर', 'मधुमेह', 'जांच'
+    'bukhar', 'bukhar', 'khansi', 'khasi', 'sardi', 'jukam', 'zukam',
+    'kamjori', 'sir dard', 'sar dard', 'sirdard', 'badan dard', 'thakan',
+    'shugar', 'dard', 'takleef', 'bimar', 'tabiyat',
+    'बुखार', 'सर्दी', 'खांसी', 'कमजोरी', 'बदन दर्द', 'सिरदर्द', 'शुगर', 'मधुमेह', 'जांच', 'दर्द', 'तकलीफ'
   ]
 };
 
@@ -90,8 +125,12 @@ const EMERGENCY_KEYWORDS = [
   'cant breathe', 'difficulty breathing', 'breathless', 'severe bleeding',
   'heavy bleeding', 'stroke', 'paralysis', 'seizure', 'convulsion', 'accident',
   'poisoning', 'suicide', 'severe injury', 'high fever child', 'blue lips',
+  // Hinglish
+  'seene me dard', 'seene mein dard', 'sine me dard', 'chhati me dard',
+  'saans nahi', 'saans lene me takleef', 'sans lene me dikkat', 'behosh',
+  'bahut khoon', 'khoon bah', 'lakwa', 'zeher', 'jahar', 'durghatna',
   'सीने में दर्द', 'दिल का दौरा', 'बेहोश', 'सांस नहीं', 'सांस लेने में तकलीफ',
-  'तेज़ खून', 'लकवा', 'दौरा', 'दुर्घटना', 'ज़हर', 'गंभीर चोट'
+  'साँस लेने में तकलीफ', 'साँस नहीं', 'तेज़ खून', 'लकवा', 'दौरा', 'दुर्घटना', 'ज़हर', 'गंभीर चोट'
 ];
 
 /**
@@ -106,14 +145,14 @@ function classifySymptoms(rawText) {
   }
 
   // Urgency scan first — red flags override everything.
-  const urgency = EMERGENCY_KEYWORDS.some(k => text.includes(k)) ? 'Emergency' : 'Normal';
+  const urgency = EMERGENCY_KEYWORDS.some(k => hasKeyword(text, k)) ? 'Emergency' : 'Normal';
 
   // Score each department by number of keyword hits.
   let bestDept = null;
   let bestScore = 0;
   let bestMatched = [];
   for (const [dept, keywords] of Object.entries(DEPARTMENT_KEYWORDS)) {
-    const hits = keywords.filter(k => text.includes(k));
+    const hits = keywords.filter(k => hasKeyword(text, k));
     if (hits.length > bestScore) {
       bestScore = hits.length;
       bestDept = dept;
@@ -160,7 +199,7 @@ function departmentMatches(canonical, actual) {
  */
 function detectPriorityCategory({ age, symptoms } = {}) {
   const text = (symptoms || '').toLowerCase();
-  if (PREGNANCY_KEYWORDS.some(k => text.includes(k))) return 'Pregnant';
+  if (PREGNANCY_KEYWORDS.some(k => hasKeyword(text, k))) return 'Pregnant';
   const a = parseInt(age);
   if (!isNaN(a) && a >= 60) return 'Senior';
   return 'None';
@@ -236,6 +275,7 @@ async function pickLeastBusyDoctor(doctors, department) {
 }
 
 module.exports = {
+  hasKeyword,
   classifySymptoms,
   departmentMatches,
   pickLeastBusyDoctor,
