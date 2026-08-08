@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BACKEND_URL, socket } from '../App';
+import useFacilitySocket from '../hooks/useFacilitySocket';
+import LiveActivityFeed from './LiveActivityFeed';
 
 export function PharmacyLogin({ setPharmacyToken, setPharmacyUser, onSuccess }) {
   const [username, setUsername] = useState('');
@@ -127,15 +129,25 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
   const [selectedToken, setSelectedToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('pending'); // 'pending' | 'all'
+  const [tab, setTab] = useState('dispense');      // 'dispense' | 'inventory'
+  const [inventory, setInventory] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [invQuery, setInvQuery] = useState('');
+  const [newMed, setNewMed] = useState({ name: '', strength: '', stockQty: '', unit: 'strip', reorderLevel: '10', expiryDate: '' });
+  const [flash, setFlash] = useState('');
+
+  // Facility-scoped realtime: this counter only hears its own hospital.
+  useFacilitySocket('pharmacy', pharmacyUser?.hospital);
+
+  const authHeaders = { Authorization: `Bearer ${pharmacyToken}` };
 
   const fetchPrescriptions = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/pharmacy/prescriptions`, {
-        headers: { 'Authorization': `Bearer ${pharmacyToken}` }
-      });
+      const res = await fetch(`${BACKEND_URL}/api/v1/pharmacy/prescriptions`, { headers: authHeaders });
       const data = await res.json();
       if (res.ok && Array.isArray(data)) {
         setTokens(data);
+        setSelectedToken(prev => (prev ? data.find(t => t._id === prev._id) || prev : null));
       }
     } catch (err) {
       console.error(err);
@@ -144,30 +156,73 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
     }
   };
 
+  const fetchInventory = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/pharmacy/inventory${invQuery ? `?q=${encodeURIComponent(invQuery)}` : ''}`, { headers: authHeaders });
+      if (res.ok) setInventory(await res.json());
+    } catch (err) {
+      console.error('Error loading inventory:', err);
+    }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/pharmacy/stats`, { headers: authHeaders });
+      if (res.ok) setStats(await res.json());
+    } catch (err) {
+      console.error('Error loading pharmacy stats:', err);
+    }
+  };
+
   useEffect(() => {
     fetchPrescriptions();
+    fetchInventory();
+    fetchStats();
 
-    socket.emit('join-room', 'queue:global');
-    const handleQueueUpdated = () => fetchPrescriptions();
-    socket.on('queue-updated', handleQueueUpdated);
+    const refreshRx = () => { fetchPrescriptions(); fetchStats(); };
+    const refreshInv = () => { fetchInventory(); fetchStats(); };
+    // A doctor finishing a checkup pushes `pharmacy-updated` straight here, so a
+    // new prescription lands on the counter the moment it is written.
+    socket.on('pharmacy-updated', refreshRx);
+    socket.on('queue-updated', refreshRx);
+    socket.on('inventory-updated', refreshInv);
+    socket.on('stock-alert', refreshInv);
 
     return () => {
-      socket.off('queue-updated', handleQueueUpdated);
+      socket.off('pharmacy-updated', refreshRx);
+      socket.off('queue-updated', refreshRx);
+      socket.off('inventory-updated', refreshInv);
+      socket.off('stock-alert', refreshInv);
     };
   }, []);
+
+  useEffect(() => {
+    const t = setTimeout(fetchInventory, 250); // debounce the search box
+    return () => clearTimeout(t);
+  }, [invQuery]);
+
+  useEffect(() => {
+    if (!flash) return undefined;
+    const t = setTimeout(() => setFlash(''), 7000);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   const handleDispense = async (tokenId) => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/pharmacy/prescriptions/${tokenId}/dispense`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${pharmacyToken}`
-        }
+        headers: { 'Content-Type': 'application/json', ...authHeaders }
       });
       const data = await res.json();
       if (res.ok) {
+        // Say plainly what was handed over and what could not be — the counter
+        // has to tell the patient before they walk away.
+        setFlash(data.shortages && data.shortages.length > 0
+          ? `Dispensed, but NOT available: ${data.shortages.map(s => s.requested).join(', ')}. The patient and doctor have been notified.`
+          : `Dispensed. Stock updated: ${(data.deducted || []).map(d => `${d.name} → ${d.remaining} left`).join(', ') || 'no tracked items'}.`);
         await fetchPrescriptions();
+        await fetchInventory();
+        await fetchStats();
         setSelectedToken(data.token);
       } else {
         alert(data.message || 'Error dispensing prescription');
@@ -177,8 +232,55 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
     }
   };
 
+  const handleAddMedicine = async (e) => {
+    e.preventDefault();
+    if (!newMed.name.trim()) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/pharmacy/inventory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          ...newMed,
+          stockQty: Number(newMed.stockQty) || 0,
+          reorderLevel: Number(newMed.reorderLevel) || 10
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFlash(data.message);
+        setNewMed({ name: '', strength: '', stockQty: '', unit: 'strip', reorderLevel: '10', expiryDate: '' });
+        fetchInventory(); fetchStats();
+      } else {
+        alert(data.message || 'Error saving medicine');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSetStock = async (id, stockQty) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/pharmacy/inventory/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ stockQty: Number(stockQty) })
+      });
+      if (res.ok) { fetchInventory(); fetchStats(); }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const isDispensed = (tok) => tok?.prescription?.dispensed;
   const visibleTokens = filter === 'pending' ? tokens.filter(t => !isDispensed(t)) : tokens;
+
+  const LEVEL_BADGE = {
+    'in-stock': 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+    low: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+    out: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
+    unknown: 'bg-zinc-500/15 text-zinc-500'
+  };
+  const LEVEL_TEXT = { 'in-stock': 'In stock', low: 'Low', out: 'OUT', unknown: 'Not listed' };
 
   return (
     <div className="flex-grow flex flex-col md:flex-row overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
@@ -195,6 +297,37 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
           >
             Logout
           </button>
+        </div>
+
+        {/* Counter workload + stock health at a glance. */}
+        {stats && (
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { label: 'To dispense', value: stats.pending, tone: stats.pending > 0 ? 'text-amber-500' : 'text-[var(--text-color)]' },
+              { label: 'Done today', value: stats.dispensedToday, tone: 'text-emerald-500' },
+              { label: 'Out of stock', value: stats.outOfStock, tone: stats.outOfStock > 0 ? 'text-rose-500' : 'text-[var(--text-color)]' },
+              { label: 'Low stock', value: stats.lowStock, tone: stats.lowStock > 0 ? 'text-amber-500' : 'text-[var(--text-color)]' }
+            ].map(s => (
+              <div key={s.label} className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl px-2.5 py-2">
+                <p className="text-[9px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">{s.label}</p>
+                <p className={`text-lg font-black leading-none mt-0.5 ${s.tone}`}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex gap-1.5">
+          {[['dispense', 'Dispensing'], ['inventory', 'Stock']].map(([t, label]) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex-1 px-2 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all ${
+                tab === t ? 'bg-[var(--primary-color)] text-[var(--primary-text)]' : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border border-[var(--border-color)]/40'
+              }`}
+            >
+              {label}{t === 'inventory' && stats && (stats.outOfStock + stats.lowStock) > 0 ? ` (${stats.outOfStock + stats.lowStock})` : ''}
+            </button>
+          ))}
         </div>
 
         <div className="flex gap-1.5">
@@ -229,14 +362,20 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
                       : 'bg-[var(--card-bg)] border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/10'
                   }`}
                 >
-                  <div>
-                    <p className="font-extrabold text-xs">{tok.tokenNumber}</p>
-                    <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5">{tok.patient?.name}</p>
+                  <div className="min-w-0">
+                    <p className="font-extrabold text-xs flex items-center gap-1">
+                      {tok.tokenNumber}
+                      {/* Warn BEFORE the patient is called forward. */}
+                      {!isDispensed(tok) && tok.hasShortage && (
+                        <span className="text-[8px] bg-rose-500 text-white px-1.5 py-0.5 rounded-full font-black">SHORT</span>
+                      )}
+                    </p>
+                    <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5 truncate">{tok.patient?.name}</p>
                   </div>
                   {isDispensed(tok) ? (
-                    <span className="bg-emerald-500/15 text-emerald-500 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">Dispensed</span>
+                    <span className="bg-emerald-500/15 text-emerald-500 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0">Dispensed</span>
                   ) : (
-                    <span className="bg-amber-500/15 text-amber-500 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">
+                    <span className="bg-amber-500/15 text-amber-500 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0">
                       {tok.prescription?.medicines?.length || 0} Med{(tok.prescription?.medicines?.length || 0) > 1 ? 's' : ''}
                     </span>
                   )}
@@ -245,13 +384,95 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
             </div>
           )}
         </div>
+
+        <LiveActivityFeed token={pharmacyToken} title="Hospital Activity" limit={20} compact />
       </div>
 
       {/* Right workstation pane */}
       <div className="flex-1 p-4 md:p-6 overflow-y-auto flex flex-col space-y-6 bg-[var(--bg-color)] text-left">
-        <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Medicine Dispensing Station</h3>
+        <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
+          {tab === 'inventory' ? 'Medicine Stock' : 'Medicine Dispensing Station'}
+        </h3>
 
-        {selectedToken ? (
+        {flash && (
+          <div className={`rounded-xl px-4 py-3 text-xs font-bold flex items-start gap-2 ${
+            flash.includes('NOT available')
+              ? 'bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400'
+              : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+          }`}>
+            <span className="material-symbols-outlined text-[18px]">{flash.includes('NOT available') ? 'warning' : 'check_circle'}</span>
+            <span>{flash}</span>
+          </div>
+        )}
+
+        {tab === 'inventory' ? (
+          <div className="space-y-5">
+            {/* Add or restock. Re-entering an existing name tops it up rather
+                than creating a duplicate row. */}
+            <form onSubmit={handleAddMedicine} className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 shadow-[var(--card-shadow)] space-y-3">
+              <h4 className="text-sm font-bold">Add / restock medicine</h4>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                <input required placeholder="Medicine name" value={newMed.name}
+                  onChange={e => setNewMed({ ...newMed, name: e.target.value })}
+                  className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-color)] text-xs font-semibold text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)]" />
+                <input placeholder="Strength (500 mg)" value={newMed.strength}
+                  onChange={e => setNewMed({ ...newMed, strength: e.target.value })}
+                  className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-color)] text-xs font-semibold text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)]" />
+                <input type="number" min="0" placeholder="Quantity" value={newMed.stockQty}
+                  onChange={e => setNewMed({ ...newMed, stockQty: e.target.value })}
+                  className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-color)] text-xs font-semibold text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)]" />
+                <input placeholder="Unit (strip)" value={newMed.unit}
+                  onChange={e => setNewMed({ ...newMed, unit: e.target.value })}
+                  className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-color)] text-xs font-semibold text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)]" />
+                <input type="number" min="0" placeholder="Reorder at" value={newMed.reorderLevel}
+                  onChange={e => setNewMed({ ...newMed, reorderLevel: e.target.value })}
+                  className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-color)] text-xs font-semibold text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)]" />
+                <input type="date" value={newMed.expiryDate}
+                  onChange={e => setNewMed({ ...newMed, expiryDate: e.target.value })}
+                  className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-color)] text-xs font-semibold text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)]" />
+              </div>
+              <button type="submit" className="px-4 py-2 bg-[var(--primary-color)] text-[var(--primary-text)] text-xs font-bold rounded-lg active:scale-95 transition-all">
+                Save to stock
+              </button>
+            </form>
+
+            <input placeholder="Search stock…" value={invQuery} onChange={e => setInvQuery(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-xs font-semibold text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)]" />
+
+            <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl overflow-hidden divide-y divide-[var(--border-color)]/20">
+              {inventory.length === 0 ? (
+                <p className="p-6 text-xs text-[var(--text-secondary)] text-center font-medium">
+                  No medicines in stock yet. Add the ones you keep at the counter so doctors can see availability while prescribing.
+                </p>
+              ) : inventory.map(m => (
+                <div key={m._id} className="p-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm flex items-center gap-2">
+                      {m.name}
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-black ${LEVEL_BADGE[m.level]}`}>{LEVEL_TEXT[m.level]}</span>
+                      {m.expiry && (
+                        <span className="text-[9px] px-2 py-0.5 rounded-full font-black bg-rose-500/15 text-rose-500">
+                          {m.expiry === 'expired' ? 'EXPIRED' : 'EXPIRING'}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-[var(--text-secondary)] font-semibold mt-0.5">
+                      {[m.strength, m.form].filter(Boolean).join(' • ')} — {m.stockQty} {m.unit} in hand (reorder at {m.reorderLevel})
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <input
+                      type="number" min="0" defaultValue={m.stockQty}
+                      onBlur={(e) => { if (Number(e.target.value) !== m.stockQty) handleSetStock(m._id, e.target.value); }}
+                      className="w-20 px-2 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-color)] text-xs font-bold text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)]"
+                    />
+                    <span className="text-[10px] text-[var(--text-secondary)] font-bold">set count</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : selectedToken ? (
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] space-y-6">
             <div className="flex justify-between items-start pb-4 border-b border-[var(--border-color)]/30">
               <div>
@@ -271,18 +492,50 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
             <div className="space-y-4">
               <h4 className="text-sm font-bold text-[var(--text-color)]">Prescribed Medicines</h4>
               <div className="space-y-3">
-                {(selectedToken.prescription?.medicines || []).map((med, i) => (
-                  <div key={i} className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/50 flex items-start space-x-3">
-                    <span className="material-symbols-outlined text-[var(--primary-color)] text-[20px]">pill</span>
-                    <div className="flex-1">
-                      <p className="font-bold text-sm">{med.name}</p>
-                      <p className="text-[11px] text-[var(--text-secondary)] font-semibold mt-0.5">
-                        {[med.dosage, med.duration, med.instructions].filter(Boolean).join(' • ') || 'As directed'}
-                      </p>
+                {(selectedToken.prescription?.medicines || []).map((med, i) => {
+                  // Live availability for THIS line, computed by the server.
+                  const stock = (selectedToken.stock || []).find(s => s.requested === med.name);
+                  const level = stock ? stock.level : null;
+                  return (
+                    <div key={i} className={`p-4 rounded-xl border flex items-start space-x-3 ${
+                      level === 'out' || level === 'unknown'
+                        ? 'bg-rose-500/5 border-rose-500/40'
+                        : 'bg-[var(--bg-color)] border-[var(--border-color)]/50'
+                    }`}>
+                      <span className="material-symbols-outlined text-[var(--primary-color)] text-[20px]">pill</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-sm flex items-center gap-2 flex-wrap">
+                          {med.name}
+                          {level && (
+                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-black ${LEVEL_BADGE[level]}`}>
+                              {LEVEL_TEXT[level]}{stock.stockQty ? ` • ${stock.stockQty} ${stock.unit || ''}` : ''}
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-[11px] text-[var(--text-secondary)] font-semibold mt-0.5">
+                          {[med.dosage, med.duration, med.instructions].filter(Boolean).join(' • ') || 'As directed'}
+                        </p>
+                        {level === 'unknown' && (
+                          <p className="text-[10px] text-rose-500 font-bold mt-1">Not in your stock list — add it under the Stock tab if you carry it.</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+
+              {selectedToken.hasShortage && !isDispensed(selectedToken) && (
+                <div className="bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px]">error</span>
+                  <span>Some medicines on this prescription are unavailable. Dispensing will record the shortage and notify the patient and the prescribing doctor.</span>
+                </div>
+              )}
+
+              {selectedToken.prescription?.partialNote && (
+                <div className="bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 rounded-xl px-4 py-3 text-xs font-bold">
+                  {selectedToken.prescription.partialNote}
+                </div>
+              )}
 
               {selectedToken.prescription?.advice && (
                 <div className="bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/40 text-xs">

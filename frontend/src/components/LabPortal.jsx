@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BACKEND_URL, socket } from '../App';
+import useFacilitySocket from '../hooks/useFacilitySocket';
+import LiveActivityFeed from './LiveActivityFeed';
 
 export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
   const [username, setUsername] = useState('lab_assistant');
@@ -130,19 +132,25 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
 export function LabDashboard({ labToken, labUser, onLogout }) {
   const [tokens, setTokens] = useState([]);
   const [selectedToken, setSelectedToken] = useState(null);
-  const [remarks, setRemarks] = useState({});
+  const [results, setResults] = useState({});
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [flash, setFlash] = useState('');
+
+  // Put this bench in its facility's realtime rooms so it receives lab events
+  // for THIS hospital only.
+  useFacilitySocket('lab', labUser?.hospital);
+
+  const authHeaders = { Authorization: `Bearer ${labToken}` };
 
   const fetchPendingTests = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/lab/queues/pending-tests`, {
-        headers: {
-          'Authorization': `Bearer ${labToken}`
-        }
-      });
+      const res = await fetch(`${BACKEND_URL}/api/v1/lab/queues/pending-tests`, { headers: authHeaders });
       const data = await res.json();
       if (res.ok) {
         setTokens(data);
+        // Keep the open worksheet in sync when the order changes underneath us.
+        setSelectedToken(prev => (prev ? data.find(t => t._id === prev._id) || null : null));
       }
     } catch (err) {
       console.error(err);
@@ -151,48 +159,86 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     }
   };
 
+  const fetchStats = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/lab/stats`, { headers: authHeaders });
+      if (res.ok) setStats(await res.json());
+    } catch (err) {
+      console.error('Error loading lab stats:', err);
+    }
+  };
+
   useEffect(() => {
     fetchPendingTests();
+    fetchStats();
 
-    // Join Socket Room
-    socket.emit('join-room', 'queue:global');
-    const handleQueueUpdated = () => {
-      fetchPendingTests();
-    };
-    socket.on('queue-updated', handleQueueUpdated);
+    const refresh = () => { fetchPendingTests(); fetchStats(); };
+    // `lab-updated` fires when a doctor orders a test — the worklist now appears
+    // instantly instead of waiting for the next generic queue refresh.
+    socket.on('lab-updated', refresh);
+    socket.on('queue-updated', refresh);
+    socket.on('queue-reset', refresh);
 
     return () => {
       // Pass the same handler reference — `socket` is a shared singleton, so
       // calling socket.off('queue-updated') with no handler would deregister
       // every other component's listener for this event too.
-      socket.off('queue-updated', handleQueueUpdated);
+      socket.off('lab-updated', refresh);
+      socket.off('queue-updated', refresh);
+      socket.off('queue-reset', refresh);
     };
   }, []);
 
-  const handleCompleteTest = async (tokenId, testName) => {
+  const keyOf = (tokenId, testName) => `${tokenId}-${testName}`;
+  const setField = (tokenId, testName, field, value) =>
+    setResults(prev => ({
+      ...prev,
+      [keyOf(tokenId, testName)]: { ...(prev[keyOf(tokenId, testName)] || {}), [field]: value }
+    }));
+
+  const handleCollect = async (tokenId, testName) => {
     try {
-      const testRemarks = remarks[`${tokenId}-${testName}`] || 'Completed successfully.';
-      const res = await fetch(`${BACKEND_URL}/api/v1/lab/tests/${tokenId}/complete`, {
+      const res = await fetch(`${BACKEND_URL}/api/v1/lab/tests/${tokenId}/collect`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${labToken}`
-        },
-        body: JSON.stringify({ testName, remarks: testRemarks })
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ testName })
       });
       const data = await res.json();
       if (res.ok) {
+        setFlash(`Sample logged for ${testName}.`);
+        fetchPendingTests(); fetchStats();
+      } else {
+        alert(data.message || 'Error marking sample collected');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleCompleteTest = async (tokenId, testName) => {
+    try {
+      const entry = results[keyOf(tokenId, testName)] || {};
+      const res = await fetch(`${BACKEND_URL}/api/v1/lab/tests/${tokenId}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          testName,
+          resultValue: entry.resultValue || '',
+          unit: entry.unit || '',
+          normalRange: entry.normalRange || '',
+          abnormal: Boolean(entry.abnormal),
+          remarks: entry.remarks || 'Completed successfully.'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // Tell the bench what just happened downstream — the doctor has already
+        // been notified and the patient has been told to walk back.
+        setFlash(data.allComplete
+          ? `All reports for this patient are done — the doctor has been notified and the patient told to return.`
+          : `${testName} result sent to the doctor.`);
         fetchPendingTests();
-        if (selectedToken && selectedToken._id === tokenId) {
-          // Refresh details in card
-          const updatedToken = data.token;
-          const pending = updatedToken.labTests.filter(t => t.status === 'Pending');
-          if (pending.length === 0) {
-            setSelectedToken(null);
-          } else {
-            setSelectedToken(updatedToken);
-          }
-        }
+        fetchStats();
       } else {
         alert(data.message || 'Error completing test');
       }
@@ -200,6 +246,12 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       console.error(err);
     }
   };
+
+  useEffect(() => {
+    if (!flash) return undefined;
+    const t = setTimeout(() => setFlash(''), 6000);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   return (
     <div className="flex-grow flex flex-col md:flex-row overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
@@ -218,6 +270,23 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
           </button>
         </div>
 
+        {/* Live workload — what the bench is actually carrying right now. */}
+        {stats && (
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { label: 'Pending', value: stats.pending, tone: stats.pending > 0 ? 'text-amber-500' : 'text-[var(--text-color)]' },
+              { label: 'Urgent', value: stats.urgentPending, tone: stats.urgentPending > 0 ? 'text-rose-500' : 'text-[var(--text-color)]' },
+              { label: 'Done today', value: stats.completedToday, tone: 'text-emerald-500' },
+              { label: 'Avg TAT', value: `${stats.avgTurnaroundMins}m`, tone: 'text-[var(--primary-color)]' }
+            ].map(s => (
+              <div key={s.label} className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl px-2.5 py-2">
+                <p className="text-[9px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">{s.label}</p>
+                <p className={`text-lg font-black leading-none mt-0.5 ${s.tone}`}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="space-y-3">
           <h4 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Patients Queue ({tokens.length})</h4>
           {loading ? (
@@ -227,7 +296,8 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
           ) : (
             <div className="space-y-2">
               {tokens.map(tok => {
-                const pendingCount = tok.labTests.filter(t => t.status === 'Pending').length;
+                const outstanding = tok.labTests.filter(t => t.status !== 'Completed');
+                const isUrgent = outstanding.some(t => t.urgency === 'Urgent');
                 return (
                   <div
                     key={tok._id}
@@ -235,15 +305,23 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                     className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between active:scale-[0.98] ${
                       selectedToken?._id === tok._id
                         ? 'bg-[var(--primary-color)]/10 border-[var(--primary-color)] text-[var(--text-color)] shadow-sm'
-                        : 'bg-[var(--card-bg)] border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/10'
+                        : isUrgent
+                          ? 'bg-rose-500/5 border-rose-500/40 hover:bg-rose-500/10'
+                          : 'bg-[var(--card-bg)] border-[var(--border-color)]/30 hover:bg-[var(--border-color)]/10'
                     }`}
                   >
-                    <div>
-                      <p className="font-extrabold text-xs">{tok.tokenNumber}</p>
-                      <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5">{tok.patient?.name}</p>
+                    <div className="min-w-0">
+                      <p className="font-extrabold text-xs flex items-center gap-1">
+                        {tok.tokenNumber}
+                        {isUrgent && <span className="text-[8px] bg-rose-500 text-white px-1.5 py-0.5 rounded-full font-black">URGENT</span>}
+                      </p>
+                      <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5 truncate">{tok.patient?.name}</p>
+                      <p className="text-[9px] text-[var(--text-secondary)]/70 font-medium truncate">
+                        {tok.doctor?.name || 'Doctor'}
+                      </p>
                     </div>
-                    <span className="bg-[var(--primary-color)] text-[var(--primary-text)] text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">
-                      {pendingCount} Test{pendingCount > 1 ? 's' : ''}
+                    <span className="bg-[var(--primary-color)] text-[var(--primary-text)] text-[9px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0">
+                      {outstanding.length} Test{outstanding.length > 1 ? 's' : ''}
                     </span>
                   </div>
                 );
@@ -251,11 +329,21 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
             </div>
           )}
         </div>
+
+        {/* The rest of the hospital, live. */}
+        <LiveActivityFeed token={labToken} title="Hospital Activity" limit={20} compact />
       </div>
 
       {/* Right workstation pane */}
       <div className="flex-1 p-4 md:p-6 overflow-y-auto flex flex-col space-y-6 bg-[var(--bg-color)] text-left">
         <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Lab Testing Station</h3>
+
+        {flash && (
+          <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+            <span className="material-symbols-outlined text-[18px]">check_circle</span>
+            {flash}
+          </div>
+        )}
 
         {selectedToken ? (
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] space-y-6">
@@ -274,35 +362,116 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
             </div>
 
             <div className="space-y-4">
-              <h4 className="text-sm font-bold text-[var(--text-color)]">Requested Diagnoses / Clinical Tests</h4>
-              <div className="space-y-3">
-                {selectedToken.labTests.filter(t => t.status === 'Pending').map(test => (
-                  <div key={test.testName} className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="flex items-center space-x-3">
-                      <span className="material-symbols-outlined text-[var(--primary-color)] text-[20px]">science</span>
-                      <span className="font-bold text-sm">{test.testName}</span>
-                    </div>
-                    <div className="flex-1 max-w-md flex items-center space-x-3">
-                      <input
-                        type="text"
-                        placeholder="Enter results / remarks..."
-                        value={remarks[`${selectedToken._id}-${test.testName}`] || ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setRemarks(prev => ({ ...prev, [`${selectedToken._id}-${test.testName}`]: val }));
-                        }}
-                        className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] transition-all font-semibold"
-                      />
-                      <button
-                        onClick={() => handleCompleteTest(selectedToken._id, test.testName)}
-                        className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white text-xs font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap"
-                      >
-                        Submit Results
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-[var(--text-color)]">Requested Diagnoses / Clinical Tests</h4>
+                <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                  Ordered by {selectedToken.doctor?.name || 'the doctor'}
+                </span>
               </div>
+
+              <div className="space-y-3">
+                {selectedToken.labTests.filter(t => t.status !== 'Completed').map(test => {
+                  const entry = results[`${selectedToken._id}-${test.testName}`] || {};
+                  return (
+                    <div key={test.testName} className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/50 space-y-3">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center space-x-3">
+                          <span className="material-symbols-outlined text-[var(--primary-color)] text-[20px]">science</span>
+                          <span className="font-bold text-sm">{test.testName}</span>
+                          {test.urgency === 'Urgent' && (
+                            <span className="text-[9px] bg-rose-500 text-white px-2 py-0.5 rounded-full font-black">URGENT</span>
+                          )}
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${
+                            test.status === 'Collected'
+                              ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                              : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                          }`}>
+                            {test.status === 'Collected' ? 'Sample collected' : 'Awaiting sample'}
+                          </span>
+                        </div>
+                        {test.status === 'Pending' && (
+                          <button
+                            onClick={() => handleCollect(selectedToken._id, test.testName)}
+                            className="px-3 py-1.5 bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 text-[11px] font-bold rounded-lg hover:bg-sky-500 hover:text-white transition-all active:scale-95"
+                          >
+                            Log sample collected
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Structured result: a number the doctor can act on, with the
+                          reference range and an explicit out-of-range flag. */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <input
+                          type="text" placeholder="Result value"
+                          value={entry.resultValue || ''}
+                          onChange={(e) => setField(selectedToken._id, test.testName, 'resultValue', e.target.value)}
+                          className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
+                        />
+                        <input
+                          type="text" placeholder="Unit (g/dL)"
+                          value={entry.unit || ''}
+                          onChange={(e) => setField(selectedToken._id, test.testName, 'unit', e.target.value)}
+                          className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
+                        />
+                        <input
+                          type="text" placeholder="Normal range"
+                          value={entry.normalRange || ''}
+                          onChange={(e) => setField(selectedToken._id, test.testName, 'normalRange', e.target.value)}
+                          className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
+                        />
+                        <label className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border cursor-pointer text-[11px] font-bold transition-all ${
+                          entry.abnormal
+                            ? 'bg-rose-500 border-rose-500 text-white'
+                            : 'bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-secondary)] hover:border-rose-500/50'
+                        }`}>
+                          <input
+                            type="checkbox" className="hidden"
+                            checked={Boolean(entry.abnormal)}
+                            onChange={(e) => setField(selectedToken._id, test.testName, 'abnormal', e.target.checked)}
+                          />
+                          <span className="material-symbols-outlined text-[14px]">warning</span>
+                          Abnormal
+                        </label>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="text" placeholder="Remarks for the doctor (optional)"
+                          value={entry.remarks || ''}
+                          onChange={(e) => setField(selectedToken._id, test.testName, 'remarks', e.target.value)}
+                          className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
+                        />
+                        <button
+                          onClick={() => handleCompleteTest(selectedToken._id, test.testName)}
+                          className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white text-xs font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap"
+                        >
+                          Send to doctor
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Reports already filed for this patient. */}
+              {selectedToken.labTests.some(t => t.status === 'Completed') && (
+                <div className="pt-3 border-t border-[var(--border-color)]/30 space-y-2">
+                  <h5 className="text-[11px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Filed reports</h5>
+                  {selectedToken.labTests.filter(t => t.status === 'Completed').map(t => (
+                    <div key={t.testName} className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${
+                      t.abnormal ? 'border-rose-500/40 bg-rose-500/5' : 'border-[var(--border-color)]/40 bg-[var(--bg-color)]'
+                    }`}>
+                      <span className="font-bold">{t.testName}</span>
+                      <span className={`font-semibold ${t.abnormal ? 'text-rose-500' : 'text-[var(--text-secondary)]'}`}>
+                        {t.resultValue || t.remarks}{t.unit ? ` ${t.unit}` : ''}
+                        {t.normalRange ? ` (ref ${t.normalRange})` : ''}
+                        {t.abnormal ? ' ⚠️' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ) : (

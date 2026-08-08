@@ -34,6 +34,7 @@ const labRoutes = require('./routes/lab');
 const pharmacyRoutes = require('./routes/pharmacy');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
+const opsRoutes = require('./routes/ops');
 
 const Token = require('./models/Token');
 const Queue = require('./models/Queue');
@@ -164,6 +165,7 @@ app.use('/api/v1/lab', labRoutes);
 app.use('/api/v1/pharmacy', pharmacyRoutes);
 app.use('/api/v1/messages', messageRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/ops', opsRoutes);
 
 // Health check endpoint
 app.get('/api/v1/health', (req, res) => {
@@ -182,6 +184,24 @@ io.on('connection', (socket) => {
   socket.on('join-room', (roomName) => {
     socket.join(roomName);
     console.log(`Client ${socket.id} joined room: ${roomName}`);
+  });
+
+  // One-call registration for a portal. Puts the socket in its facility room and
+  // its role room so events can be addressed precisely — a lab result no longer
+  // wakes every dashboard in every other facility, and a portal can listen for
+  // the events that concern IT rather than re-fetching on a global firehose.
+  socket.on('register', (info = {}) => {
+    const hospital = info.hospital || 'general-hospital';
+    const role = info.role;
+
+    socket.join(`hospital:${hospital}`);
+    if (role) socket.join(`role:${role}:${hospital}`);
+    if (info.doctorId) socket.join(`doctor:${info.doctorId}`);
+    // Legacy room: existing screens (public TV, patient tracker) still listen here.
+    socket.join('queue:global');
+
+    socket.emit('registered', { hospital, role, rooms: Array.from(socket.rooms) });
+    console.log(`Client ${socket.id} registered as ${role || 'viewer'} @ ${hospital}`);
   });
 
   socket.on('disconnect', () => {

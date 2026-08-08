@@ -22,7 +22,25 @@ const getBackendUrl = () => {
 };
 
 export const BACKEND_URL = getBackendUrl();
-export const socket = io(BACKEND_URL, { transports: ['websocket'] });
+
+// The realtime link every dashboard depends on.
+//
+// This used to be `io(url, { transports: ['websocket'] })` with no reconnection
+// settings, which fails badly in a hospital: if the socket ever dropped — server
+// restart, wifi blip, a laptop waking from sleep — the dashboards kept rendering
+// the last data they had and quietly stopped updating. A queue board that looks
+// live but is ten minutes stale is worse than one that says it is offline.
+//
+//  - polling fallback: some hospital networks/proxies block raw WebSockets.
+//  - unlimited retries: a dashboard left on overnight must recover by itself.
+export const socket = io(BACKEND_URL, {
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 8000
+});
 
 // Lazy load components
 const HospitalHub = React.lazy(() => import('./components/HospitalHub'));

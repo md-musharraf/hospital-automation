@@ -10,6 +10,9 @@ const { authenticateToken } = require('../middleware/auth');
 const { recalculateQueueTimes, notifyUpcomingPatients } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
+const { toRole, toFacility, logActivity, announceJourney } = require('../utils/realtime');
+const { setStage, deriveStage, hasUndispensedRx } = require('../utils/journeyHelper');
+const { checkAvailability } = require('../utils/stockHelper');
 
 // Middleware to ensure the user is a doctor
 const ensureDoctor = (req, res, next) => {
@@ -86,6 +89,7 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
     // Update token status
     token.status = 'Active';
     token.calledAt = new Date();
+    setStage(token, 'In Consultation', req.user.username || 'Doctor');
     await token.save();
 
     // Set queue currentToken
@@ -126,6 +130,15 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
       req.io.to(`patient:${token._id}`).emit('token-called', { status: 'Active', roomName: req.user.currentRoom || 'Cabin A', tokenNumber: token.tokenNumber });
     }
 
+    // Facility-wide: reception and the waiting-room screens see the call live,
+    // and it lands in the shared activity feed.
+    const hospital = req.user.hospital || 'general-hospital';
+    await announceJourney(req.io, {
+      hospital, token, stage: 'In Consultation', role: 'doctor',
+      actor: req.user.username || 'Doctor', type: 'token-called',
+      message: `${token.tokenNumber} called into ${req.user.currentRoom || 'the cabin'}${token.patient ? ` (${token.patient.name})` : ''}.`
+    });
+
     res.json({ message: `Called token ${token.tokenNumber}`, currentToken: token, activeQueue: queue.activeQueue });
   } catch (error) {
     console.error('Error calling next patient:', error);
@@ -164,9 +177,15 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
       if (medicines || advice) {
         token.prescription = {
           medicines: medicines || [],
-          advice: advice || ''
+          advice: advice || '',
+          dispensed: false
         };
+        token.markModified && token.markModified('prescription');
       }
+      // Where does the patient go next? Tests still out => the lab; medicines
+      // written => the pharmacy; otherwise they are done. Derived from the token
+      // itself so the stage can never contradict the data.
+      setStage(token, deriveStage(token), req.user.username || 'Doctor');
       await token.save();
 
       // Trigger Web Push Notification to Patient
@@ -235,8 +254,33 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
       req.io.to(`patient:${completedTokenId}`).emit('token-called', { status: 'Completed' });
     }
 
-    res.json({ 
+    // Hand off to the next department LIVE. The pharmacy counter sees the
+    // prescription the instant it is written — no walking a paper slip over —
+    // and reception sees the patient move out of the cabin.
+    const hospital = req.user.hospital || 'general-hospital';
+    if (token) {
+      const stage = token.journeyStage;
+      if (hasUndispensedRx(token)) {
+        toRole(req.io, 'pharmacy', hospital, 'pharmacy-updated', {
+          tokenId: String(token._id), tokenNumber: token.tokenNumber, reason: 'new-prescription'
+        });
+        await logActivity(req.io, {
+          hospital, type: 'rx-prescribed', role: 'doctor', actor: req.user.username || 'Doctor',
+          message: `Prescription for ${token.tokenNumber} sent to pharmacy (${(token.prescription.medicines || []).length} medicine(s)).`,
+          tokenNumber: token.tokenNumber, refId: token._id
+        });
+      }
+      await announceJourney(req.io, {
+        hospital, token, stage, role: 'doctor', actor: req.user.username || 'Doctor',
+        type: 'token-completed',
+        message: `Checkup complete for ${token.tokenNumber}${stage !== 'Completed' ? ` — next: ${stage}` : ''}.`,
+        severity: 'success'
+      });
+    }
+
+    res.json({
       message: 'Active checkup successfully marked as Completed',
+      nextStage: token ? token.journeyStage : 'Completed',
       revisitScheduled: revisitDays && parseInt(revisitDays) > 0
     });
   } catch (error) {
@@ -323,6 +367,20 @@ router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, r
       req.io.to(`patient:${absentTokenId}`).emit('token-called', { status: recalled ? 'Recalled' : 'Absent', position: recallPosition });
     }
 
+    // Reception sees no-shows live, so they can chase the patient in the hall
+    // instead of finding out at the end of the session.
+    await logActivity(req.io, {
+      hospital: req.user.hospital || 'general-hospital',
+      type: recalled ? 'token-recalled' : 'token-absent',
+      role: 'doctor', actor: req.user.username || 'Doctor',
+      message: recalled
+        ? `${token ? token.tokenNumber : 'Patient'} did not answer — auto-recalled to position #${recallPosition}.`
+        : `${token ? token.tokenNumber : 'Patient'} marked ABSENT after a second no-show.`,
+      tokenNumber: token && token.tokenNumber,
+      refId: absentTokenId,
+      severity: recalled ? 'warning' : 'critical'
+    });
+
     res.json({
       message: recalled
         ? `Patient did not show — auto-recalled to position #${recallPosition} (one more chance).`
@@ -363,6 +421,18 @@ router.post('/queue/add-buffer', authenticateToken, ensureDoctor, async (req, re
     if (req.io) {
       req.io.to('queue:global').emit('queue-updated', { doctorId });
       req.io.to(`doctor:${doctorId}`).emit('queue-updated');
+    }
+
+    // Reception needs to know a cabin is running late — they are the ones the
+    // waiting patients will ask.
+    if (parsedMinutes !== 0) {
+      const me = await Doctor.findById(doctorId);
+      await logActivity(req.io, {
+        hospital: req.user.hospital || 'general-hospital',
+        type: 'buffer-added', role: 'doctor', actor: (me && me.name) || 'Doctor',
+        message: `${(me && me.name) || 'A doctor'} is running ${queue.bufferDelay} min behind (${parsedMinutes > 0 ? '+' : ''}${parsedMinutes} min).`,
+        severity: queue.bufferDelay >= 30 ? 'warning' : 'info'
+      });
     }
 
     res.json({ message: `Manual buffer delay updated to ${queue.bufferDelay} minutes`, bufferDelay: queue.bufferDelay });
@@ -420,6 +490,20 @@ router.put('/availability', authenticateToken, ensureDoctor, async (req, res) =>
       req.io.to(`doctor:${doctorId}`).emit('queue-updated');
     }
 
+    // A doctor going On Break / Unavailable is the single most useful thing for
+    // reception to know instantly — it changes who they route walk-ins to.
+    if (availabilityStatus) {
+      const hospital = req.user.hospital || 'general-hospital';
+      toFacility(req.io, hospital, 'doctor-status-update', {
+        doctorId, name: doctor.name, availabilityStatus: doctor.availabilityStatus
+      });
+      await logActivity(req.io, {
+        hospital, type: 'doctor-status', role: 'doctor', actor: doctor.name,
+        message: `${doctor.name} is now ${doctor.availabilityStatus}.`,
+        severity: doctor.availabilityStatus === 'Available' ? 'success' : 'warning'
+      });
+    }
+
     res.json({ message: 'Doctor details updated successfully', doctor });
   } catch (error) {
     console.error('Error updating doctor details:', error);
@@ -427,14 +511,26 @@ router.put('/availability', authenticateToken, ensureDoctor, async (req, res) =>
   }
 });
 
-// POST request lab tests for active patient
+// POST request lab tests for the active patient.
+// Accepts one test or several at once, with an urgency flag, and pushes the
+// order straight onto the lab bench's worklist in real time.
 router.post('/queue/lab-request', authenticateToken, ensureDoctor, async (req, res) => {
   try {
     const doctorId = req.user.id;
-    const { testName } = req.body;
+    const hospital = req.user.hospital || 'general-hospital';
+    const { testName, testNames, urgency } = req.body;
 
-    if (!testName || typeof testName !== 'string' || testName.trim().length === 0 || testName.length > 100) {
-      return res.status(400).json({ message: 'testName is required and must be a string up to 100 characters' });
+    // Normalise to a list so the doctor can order a panel in one action.
+    const requested = Array.isArray(testNames) && testNames.length > 0 ? testNames : [testName];
+    const clean = requested
+      .filter(n => typeof n === 'string' && n.trim().length > 0 && n.length <= 100)
+      .map(n => n.trim());
+
+    if (clean.length === 0) {
+      return res.status(400).json({ message: 'At least one testName is required (string up to 100 characters)' });
+    }
+    if (urgency && !['Routine', 'Urgent'].includes(urgency)) {
+      return res.status(400).json({ message: 'urgency must be "Routine" or "Urgent"' });
     }
 
     const queue = await Queue.findOne({ doctor: doctorId });
@@ -442,18 +538,34 @@ router.post('/queue/lab-request', authenticateToken, ensureDoctor, async (req, r
       return res.status(400).json({ message: 'No active patient is currently inside the cabin' });
     }
 
-    const token = await Token.findById(queue.currentToken);
+    const token = await Token.findById(queue.currentToken).populate('patient');
     if (!token) {
       return res.status(404).json({ message: 'Active token not found' });
     }
 
-    // Add test if not already requested
-    const exists = token.labTests.some(t => t.testName.toLowerCase() === testName.toLowerCase());
-    if (exists) {
-      return res.status(400).json({ message: `Test "${testName}" has already been requested for this patient` });
+    if (!Array.isArray(token.labTests)) token.labTests = [];
+    const added = [];
+    const duplicates = [];
+    for (const name of clean) {
+      if (token.labTests.some(t => t.testName.toLowerCase() === name.toLowerCase())) {
+        duplicates.push(name);
+        continue;
+      }
+      token.labTests.push({
+        testName: name,
+        status: 'Pending',
+        urgency: urgency || 'Routine',
+        requestedBy: req.user.username || 'Doctor'
+      });
+      added.push(name);
     }
 
-    token.labTests.push({ testName, status: 'Pending' });
+    if (added.length === 0) {
+      return res.status(400).json({ message: `Already requested for this patient: ${duplicates.join(', ')}` });
+    }
+
+    token.markModified && token.markModified('labTests');
+    setStage(token, 'Lab Pending', req.user.username || 'Doctor');
     await token.save();
 
     // Broadcast updates
@@ -462,9 +574,178 @@ router.post('/queue/lab-request', authenticateToken, ensureDoctor, async (req, r
       req.io.to(`doctor:${doctorId}`).emit('queue-updated');
     }
 
-    res.json({ message: `Requested lab test "${testName}" successfully.`, token });
+    // The lab bench's worklist updates instantly — no phone call, no paper slip.
+    toRole(req.io, 'lab', hospital, 'lab-updated', {
+      tokenId: String(token._id), tokenNumber: token.tokenNumber,
+      tests: added, urgency: urgency || 'Routine', reason: 'new-request'
+    });
+
+    await announceJourney(req.io, {
+      hospital, token, stage: 'Lab Pending', role: 'doctor',
+      actor: req.user.username || 'Doctor', type: 'lab-requested',
+      message: `${urgency === 'Urgent' ? '🚨 URGENT ' : ''}Lab test${added.length > 1 ? 's' : ''} ordered for ${token.tokenNumber}: ${added.join(', ')}.`,
+      severity: urgency === 'Urgent' ? 'warning' : 'info'
+    });
+
+    // Tell the patient where to go next, so they don't sit back down in the OPD.
+    if (token.patient && token.patient.phone) {
+      try {
+        await sendWhatsAppNotification(token.patient.phone,
+          `Hello ${token.patient.name}, your doctor has ordered: ${added.join(', ')}.\n` +
+          `🧪 Please visit the LAB counter now with token ${token.tokenNumber}. We will WhatsApp you the moment your report is ready.\n` +
+          `🧪 कृपया टोकन ${token.tokenNumber} के साथ अभी लैब काउंटर पर जाएँ। रिपोर्ट तैयार होते ही हम WhatsApp कर देंगे।`);
+      } catch (waErr) {
+        console.error('Lab request WhatsApp failed:', waErr);
+      }
+    }
+
+    res.json({
+      message: `Requested lab test${added.length > 1 ? 's' : ''}: ${added.join(', ')}.`,
+      added, duplicates, token
+    });
   } catch (err) {
     console.error('Error requesting lab test:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET the patients whose lab reports have come back and who are waiting to be
+// seen again. This is the missing return path: before this, a patient sent for
+// tests fell off the doctor's screen entirely and had to re-register at
+// reception to get back in front of the same doctor.
+router.get('/lab-results', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const hospital = req.user.hospital || 'general-hospital';
+
+    // Match the doctor in JS against both an id and a populated-object form —
+    // other routes populate before saving, which can leave `token.doctor` as an
+    // embedded object, and a plain `{ doctor: id }` query would then miss it.
+    const tokens = await Token.find({ hospital }).populate('patient');
+    const ready = (tokens || [])
+      .filter(t => String((t.doctor && t.doctor._id) || t.doctor) === String(doctorId))
+      .filter(t => (t.labTests || []).length > 0 && (t.labTests || []).every(x => x.status === 'Completed'))
+      .filter(t => t.journeyStage === 'Lab Complete' || (t.labTests || []).some(x => x.abnormal))
+      .map(t => ({
+        _id: t._id,
+        tokenNumber: t.tokenNumber,
+        patient: t.patient ? { _id: t.patient._id, name: t.patient.name, age: t.patient.age, gender: t.patient.gender } : null,
+        symptoms: t.symptoms,
+        journeyStage: t.journeyStage,
+        hasAbnormal: (t.labTests || []).some(x => x.abnormal),
+        labTests: t.labTests,
+        completedAt: (t.labTests || []).reduce((latest, x) =>
+          x.completedAt && (!latest || new Date(x.completedAt) > new Date(latest)) ? x.completedAt : latest, null)
+      }))
+      // Abnormal results first — those are the ones that need a doctor's eyes now.
+      .sort((a, b) => (b.hasAbnormal ? 1 : 0) - (a.hasAbnormal ? 1 : 0)
+        || new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
+
+    res.json(ready);
+  } catch (err) {
+    console.error('Error fetching lab results:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST acknowledge a returned lab result — closes the loop after the doctor has
+// reviewed the report, so the "results ready" list doesn't grow forever.
+router.post('/lab-results/:tokenId/review', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const token = await Token.findById(req.params.tokenId);
+    if (!token) return res.status(404).json({ message: 'Token not found' });
+    if (String(token.doctor) !== String(req.user.id)) {
+      return res.status(403).json({ message: 'This patient belongs to another doctor' });
+    }
+
+    setStage(token, deriveStage(token), req.user.username || 'Doctor');
+    await token.save();
+
+    await announceJourney(req.io, {
+      hospital, token, stage: token.journeyStage, role: 'doctor',
+      actor: req.user.username || 'Doctor', type: 'system',
+      message: `Reports for ${token.tokenNumber} reviewed by ${req.user.username || 'the doctor'}.`
+    });
+
+    res.json({ message: 'Reports marked as reviewed.', stage: token.journeyStage });
+  } catch (err) {
+    console.error('Error reviewing lab result:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET live medicine availability while writing a prescription. Stops the classic
+// failure where a doctor prescribes something the store ran out of days ago and
+// nobody finds out until the patient is standing at the counter.
+router.get('/medicines', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const Medicine = require('../models/Medicine');
+    const { q, names } = req.query;
+
+    // Availability check for an already-written list of medicines.
+    if (names) {
+      const list = String(names).split('|').map(s => s.trim()).filter(Boolean).slice(0, 25);
+      return res.json(await checkAvailability(hospital, list));
+    }
+
+    // Type-ahead over the facility's stock.
+    let rows = await Medicine.find({ hospital });
+    if (q && typeof q === 'string') {
+      const needle = q.toLowerCase();
+      rows = rows.filter(m =>
+        (m.name || '').toLowerCase().includes(needle) ||
+        (m.genericName || '').toLowerCase().includes(needle));
+    }
+
+    res.json(rows.slice(0, 40).map(m => ({
+      _id: m._id, name: m.name, genericName: m.genericName, form: m.form,
+      strength: m.strength, stockQty: m.stockQty, unit: m.unit,
+      level: m.stockQty <= 0 ? 'out' : (m.stockQty <= (m.reorderLevel || 0) ? 'low' : 'in-stock')
+    })));
+  } catch (err) {
+    console.error('Error fetching medicines:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET this doctor's own numbers for today.
+router.get('/stats', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const hospital = req.user.hospital || 'general-hospital';
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+
+    const all = await Token.find({ hospital });
+    const today = (all || [])
+      .filter(t => String((t.doctor && t.doctor._id) || t.doctor) === String(doctorId))
+      .filter(t => !t.createdAt || new Date(t.createdAt) >= start);
+    const completed = today.filter(t => t.status === 'Completed');
+
+    // Average consultation time from called -> completed.
+    let totalMins = 0, counted = 0;
+    for (const t of completed) {
+      if (t.calledAt && t.completedAt) {
+        totalMins += (new Date(t.completedAt) - new Date(t.calledAt)) / 60000;
+        counted++;
+      }
+    }
+
+    const queue = await Queue.findOne({ doctor: doctorId });
+
+    res.json({
+      seenToday: completed.length,
+      waiting: (queue && queue.activeQueue && queue.activeQueue.length) || 0,
+      absent: today.filter(t => t.status === 'Absent').length,
+      emergency: today.filter(t => t.tokenType === 'Emergency').length,
+      awaitingLab: today.filter(t => (t.labTests || []).some(x => x.status !== 'Completed')).length,
+      resultsReady: today.filter(t => t.journeyStage === 'Lab Complete').length,
+      avgConsultMins: counted > 0 ? Math.round(totalMins / counted) : 0,
+      bufferDelay: (queue && queue.bufferDelay) || 0
+    });
+  } catch (err) {
+    console.error('Error building doctor stats:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });

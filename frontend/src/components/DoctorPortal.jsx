@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BACKEND_URL, socket } from '../App';
 import InternalChatBox from './InternalChatBox';
+import useFacilitySocket from '../hooks/useFacilitySocket';
 
 export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
   const [email, setEmail] = useState('sarah.jenkins@hospital.com');
@@ -153,6 +154,14 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
   const [history, setHistory] = useState([]);
   const [labTestName, setLabTestName] = useState('Complete Blood Count (CBC)');
   const [customLabTest, setCustomLabTest] = useState('');
+  const [labUrgency, setLabUrgency] = useState('Routine');
+  const [labResults, setLabResults] = useState([]);
+  const [docStats, setDocStats] = useState(null);
+  const [stockInfo, setStockInfo] = useState([]);
+  const [resultAlert, setResultAlert] = useState('');
+
+  // Facility + own-doctor rooms, with an automatic re-register on reconnect.
+  useFacilitySocket('doctor', doctorUser?.hospital || 'general-hospital', doctorUser?.id || doctorUser?._id);
 
   // Fetch patient visit history when token changes
   useEffect(() => {
@@ -198,9 +207,49 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
     }
   };
 
+  // Patients whose reports have come back and who are waiting to be seen again.
+  const loadLabResults = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/lab-results`, {
+        headers: { Authorization: `Bearer ${doctorToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setLabResults(data);
+      }
+    } catch (err) {
+      console.error('Error loading lab results:', err);
+    }
+  };
+
+  const loadDocStats = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/stats`, {
+        headers: { Authorization: `Bearer ${doctorToken}` }
+      });
+      if (res.ok) setDocStats(await res.json());
+    } catch (err) {
+      console.error('Error loading doctor stats:', err);
+    }
+  };
+
+  const markResultReviewed = async (tokenId) => {
+    try {
+      await fetch(`${BACKEND_URL}/api/v1/doctor/lab-results/${tokenId}/review`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${doctorToken}` }
+      });
+      loadLabResults();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     loadQueue();
     loadRefills();
+    loadLabResults();
+    loadDocStats();
 
     socket.emit('join-room', `doctor:${doctorUser?.id || doctorUser?._id}`);
     // Also join the hospital-wide room: internal chat messages (messages.js)
@@ -210,18 +259,68 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
 
     const handleQueueUpdated = () => {
       loadQueue();
+      loadDocStats();
+    };
+
+    // A report landing for THIS doctor arrives as a targeted event, so the
+    // "results ready" panel fills in without a refresh — this is the return path
+    // that used to require the patient to re-register at reception.
+    const handleResultReady = (payload) => {
+      loadLabResults();
+      loadDocStats();
+      if (payload && payload.abnormal) {
+        setResultAlert(`⚠️ ${payload.testName} for ${payload.tokenNumber} (${payload.patientName || 'patient'}) came back ABNORMAL: ${payload.result}`);
+      } else if (payload && payload.allComplete) {
+        setResultAlert(`🧪 All reports ready for ${payload.tokenNumber} — the patient is on their way back.`);
+      }
+    };
+
+    const handleRxDispensed = (payload) => {
+      if (payload && payload.shortages && payload.shortages.length > 0) {
+        setResultAlert(`💊 Pharmacy could not supply ${payload.shortages.map(s => s.requested).join(', ')} for ${payload.tokenNumber}. Consider an alternative.`);
+      }
     };
 
     socket.on('queue-updated', handleQueueUpdated);
     socket.on('queue-reset', handleQueueUpdated);
     socket.on('refill-request', loadRefills);
+    socket.on('lab-result-ready', handleResultReady);
+    socket.on('lab-updated', loadLabResults);
+    socket.on('rx-dispensed', handleRxDispensed);
 
     return () => {
       socket.off('queue-updated', handleQueueUpdated);
       socket.off('queue-reset', handleQueueUpdated);
       socket.off('refill-request', loadRefills);
+      socket.off('lab-result-ready', handleResultReady);
+      socket.off('lab-updated', loadLabResults);
+      socket.off('rx-dispensed', handleRxDispensed);
     };
   }, [doctorToken]);
+
+  // Live stock check for whatever is currently typed in the prescription form,
+  // so an out-of-stock medicine is caught in the cabin, not at the counter.
+  useEffect(() => {
+    const names = medicines.map(m => m.name).filter(n => n && n.trim().length > 1);
+    if (names.length === 0) { setStockInfo([]); return undefined; }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/v1/doctor/medicines?names=${encodeURIComponent(names.join('|'))}`, {
+          headers: { Authorization: `Bearer ${doctorToken}` }
+        });
+        if (res.ok) setStockInfo(await res.json());
+      } catch (err) {
+        console.error('Stock check failed:', err);
+      }
+    }, 450);
+    return () => clearTimeout(t);
+  }, [medicines, doctorToken]);
+
+  useEffect(() => {
+    if (!resultAlert) return undefined;
+    const t = setTimeout(() => setResultAlert(''), 12000);
+    return () => clearTimeout(t);
+  }, [resultAlert]);
 
   const handleUpdateAvailability = async (status) => {
     try {
@@ -383,11 +482,14 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${doctorToken}`
         },
-        body: JSON.stringify({ testName: name })
+        body: JSON.stringify({ testName: name, urgency: labUrgency })
       });
       if (res.ok) {
         setCustomLabTest('');
         loadQueue();
+        // Confirm the hand-off actually happened — the lab bench has the order
+        // and the patient has been told where to go.
+        setResultAlert(`🧪 ${name} sent to the lab${labUrgency === 'Urgent' ? ' as URGENT' : ''}. The patient has been messaged to visit the lab counter.`);
       } else {
         const data = await res.json();
         alert(data.message);
@@ -458,6 +560,63 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
             </button>
           </div>
         </div>
+
+        {/* Today at a glance — the doctor's own throughput and what is pending
+            on them from other departments. */}
+        {docStats && (
+          <div className="grid grid-cols-3 gap-1.5">
+            {[
+              { label: 'Seen', value: docStats.seenToday, tone: 'text-emerald-500' },
+              { label: 'Waiting', value: docStats.waiting, tone: 'text-[var(--primary-color)]' },
+              { label: 'Avg', value: `${docStats.avgConsultMins}m`, tone: 'text-[var(--text-color)]' },
+              { label: 'At lab', value: docStats.awaitingLab, tone: docStats.awaitingLab > 0 ? 'text-sky-500' : 'text-[var(--text-color)]' },
+              { label: 'Reports', value: docStats.resultsReady, tone: docStats.resultsReady > 0 ? 'text-amber-500' : 'text-[var(--text-color)]' },
+              { label: 'No-show', value: docStats.absent, tone: 'text-rose-500' }
+            ].map(s => (
+              <div key={s.label} className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-lg px-1.5 py-1.5 text-center">
+                <p className="text-[8px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">{s.label}</p>
+                <p className={`text-sm font-black leading-none mt-0.5 ${s.tone}`}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Lab reports that came back — the return path. The patient walks
+            straight back to this cabin instead of re-registering at reception. */}
+        {labResults.length > 0 && (
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wider flex items-center gap-1">
+              🧪 Reports Ready ({labResults.length})
+            </label>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {labResults.map(r => (
+                <div key={r._id} className={`rounded-xl p-2.5 border ${
+                  r.hasAbnormal ? 'bg-rose-500/5 border-rose-500/40' : 'bg-[var(--bg-color)] border-[var(--border-color)]/50'
+                }`}>
+                  <p className="text-xs font-bold text-[var(--text-color)] flex items-center gap-1.5">
+                    {r.patient?.name || 'Patient'}
+                    <span className="text-[9px] text-[var(--text-secondary)]">{r.tokenNumber}</span>
+                    {r.hasAbnormal && <span className="text-[8px] bg-rose-500 text-white px-1.5 py-0.5 rounded-full font-black">ABNORMAL</span>}
+                  </p>
+                  <div className="mt-1 space-y-0.5">
+                    {(r.labTests || []).map(t => (
+                      <p key={t.testName} className={`text-[10px] font-semibold ${t.abnormal ? 'text-rose-500' : 'text-[var(--text-secondary)]'}`}>
+                        {t.testName}: {t.resultValue || t.remarks}{t.unit ? ` ${t.unit}` : ''}
+                        {t.normalRange ? ` (ref ${t.normalRange})` : ''}
+                      </p>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => markResultReviewed(r._id)}
+                    className="mt-1.5 w-full py-1 rounded-lg bg-[var(--primary-color)] text-[var(--primary-text)] text-[11px] font-bold hover:opacity-90 transition-all"
+                  >
+                    ✓ Mark reviewed
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Medicine Refill Requests — approve a chronic patient's repeat prescription
             in one tap; it goes straight to the pharmacy, no OPD slot used. */}
@@ -535,6 +694,20 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
       {/* Right Core Cabin Controls & Active Patient Card */}
       <div className="flex-1 p-4 md:p-6 overflow-y-auto flex flex-col space-y-6 bg-[var(--bg-color)]">
         <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Active Cabin Workstation</h3>
+
+        {/* Live cross-department alerts: a report landed, a value is abnormal, or
+            the pharmacy could not supply something you prescribed. */}
+        {resultAlert && (
+          <div className={`rounded-xl px-4 py-3 text-xs font-bold flex items-start gap-2 ${
+            resultAlert.includes('ABNORMAL') || resultAlert.includes('could not supply')
+              ? 'bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400'
+              : 'bg-sky-500/10 border border-sky-500/30 text-sky-700 dark:text-sky-400'
+          }`}>
+            <span className="material-symbols-outlined text-[18px]">notifications_active</span>
+            <span className="flex-1">{resultAlert}</span>
+            <button onClick={() => setResultAlert('')} className="text-[10px] font-black opacity-60 hover:opacity-100">DISMISS</button>
+          </div>
+        )}
 
         {loading ? (
           <div className="text-[var(--text-secondary)] text-sm">Loading cabin state...</div>
@@ -651,6 +824,21 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                           />
                         )}
 
+                        {/* Urgency drives the lab's worklist order — an urgent
+                            order jumps the bench queue and is flagged in red. */}
+                        <select
+                          value={labUrgency}
+                          onChange={(e) => setLabUrgency(e.target.value)}
+                          className={`px-3 py-2 border rounded-xl outline-none font-bold ${
+                            labUrgency === 'Urgent'
+                              ? 'border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                              : 'border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--text-color)]'
+                          }`}
+                        >
+                          <option value="Routine">Routine</option>
+                          <option value="Urgent">Urgent</option>
+                        </select>
+
                         <button
                           type="submit"
                           className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl shadow-sm transition-all active:scale-[0.97]"
@@ -658,6 +846,28 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                           Order Test
                         </button>
                       </form>
+
+                      {/* Live status of tests already ordered for this patient. */}
+                      {(queue?.currentToken?.labTests || []).length > 0 && (
+                        <div className="mt-2.5 space-y-1 pt-2 border-t border-[var(--border-color)]/30">
+                          {queue.currentToken.labTests.map(t => (
+                            <div key={t.testName} className="flex items-center justify-between gap-2">
+                              <span className="font-bold text-[11px] text-[var(--text-color)]">{t.testName}</span>
+                              <span className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
+                                t.status === 'Completed'
+                                  ? (t.abnormal ? 'bg-rose-500/15 text-rose-500' : 'bg-emerald-500/15 text-emerald-500')
+                                  : t.status === 'Collected'
+                                    ? 'bg-sky-500/15 text-sky-500'
+                                    : 'bg-amber-500/15 text-amber-500'
+                              }`}>
+                                {t.status === 'Completed'
+                                  ? `${t.resultValue || 'Done'}${t.unit ? ' ' + t.unit : ''}${t.abnormal ? ' ⚠️' : ''}`
+                                  : t.status === 'Collected' ? 'Sample taken' : 'Awaiting sample'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* Visit History Section */}
@@ -832,7 +1042,29 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                 {medicines.map((med, idx) => (
                   <div key={idx} className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/30 relative text-left">
                     <div>
-                      <label className="block text-[10px] text-[var(--text-secondary)] font-bold mb-0.5">Medicine Name</label>
+                      <label className="flex items-center justify-between text-[10px] text-[var(--text-secondary)] font-bold mb-0.5">
+                        <span>Medicine Name</span>
+                        {/* Live pharmacy stock for what you are typing. Catching an
+                            out-of-stock medicine here saves the patient a wasted
+                            trip to the counter and a second visit. */}
+                        {(() => {
+                          const s = stockInfo.find(x => x.requested === med.name);
+                          if (!s || !med.name) return null;
+                          const style = {
+                            'in-stock': 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+                            low: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+                            out: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
+                            unknown: 'bg-zinc-500/15 text-zinc-500'
+                          }[s.level];
+                          const label = {
+                            'in-stock': `In stock (${s.stockQty})`,
+                            low: `Low (${s.stockQty} left)`,
+                            out: 'OUT OF STOCK',
+                            unknown: 'Not in pharmacy list'
+                          }[s.level];
+                          return <span className={`px-1.5 py-0.5 rounded-full font-black text-[9px] ${style}`}>{label}</span>;
+                        })()}
+                      </label>
                       <input
                         type="text"
                         placeholder="Paracetamol"

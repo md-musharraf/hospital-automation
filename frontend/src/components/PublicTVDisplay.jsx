@@ -20,6 +20,9 @@ export default function PublicTVDisplay() {
   useEffect(() => {
     fetchQueues();
 
+    // A waiting-room TV runs unattended for days — it must survive any dropped
+    // connection on its own, or it silently displays a stale queue.
+    if (!socket.connected) socket.connect();
     socket.emit('join-room', 'queue:global');
     const handleUpdate = () => {
       fetchQueues();

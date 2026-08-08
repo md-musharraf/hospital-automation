@@ -338,9 +338,25 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
     try {
       socketIo.to('queue:global').emit('queue-updated', { doctorId: selectedDoc._id });
       socketIo.to(`doctor:${selectedDoc._id}`).emit('queue-updated');
+      socketIo.to(`hospital:${currentHospId}`).emit('queue-updated', { doctorId: selectedDoc._id });
     } catch (sErr) {
       console.error('Socket emit error:', sErr);
     }
+  }
+
+  // Self-service bookings show up in the facility's live feed too, so reception
+  // sees chatbot/WhatsApp arrivals in the same place as their own walk-ins.
+  try {
+    const { logActivity } = require('../utils/realtime');
+    await logActivity(socketIo, {
+      hospital: currentHospId, type: 'token-created', role: 'patient',
+      actor: patient.name,
+      message: `${refreshedToken.tokenNumber} booked via ${session.sessionId.startsWith('wa_') ? 'WhatsApp' : 'the web assistant'} for ${selectedDoc.name}${tokenType === 'Emergency' ? ' — EMERGENCY' : ''}.`,
+      tokenNumber: refreshedToken.tokenNumber, refId: refreshedToken._id,
+      severity: tokenType === 'Emergency' ? 'critical' : 'info'
+    });
+  } catch (aErr) {
+    console.error('Activity log error:', aErr);
   }
 
   const waitMins = typeof refreshedToken.estimatedWaitTime === 'number' ? refreshedToken.estimatedWaitTime : 0;
@@ -1350,7 +1366,26 @@ router.get('/token/:tokenId', async (req, res) => {
       }
     }
 
-    res.json({ token, position });
+    // The patient's own live journey — where they are, what is outstanding, and
+    // what they should do next, in English + Hindi.
+    const { stageMessage } = require('../utils/journeyHelper');
+    const stage = token.journeyStage || 'Waiting';
+    const labTests = token.labTests || [];
+
+    res.json({
+      token,
+      position,
+      journey: {
+        stage,
+        message: stageMessage(stage),
+        history: token.stageHistory || [],
+        labPending: labTests.filter(t => t.status !== 'Completed').length,
+        labReady: labTests.filter(t => t.status === 'Completed').length,
+        hasAbnormal: labTests.some(t => t.abnormal),
+        medicinesReady: Boolean(token.prescription && (token.prescription.medicines || []).length > 0),
+        medicinesCollected: Boolean(token.prescription && token.prescription.dispensed)
+      }
+    });
   } catch (err) {
     console.error('Error fetching token details:', err);
     res.status(500).json({ message: 'Server error' });

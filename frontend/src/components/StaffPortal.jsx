@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Activity } from 'lucide-react';
 import { BACKEND_URL, socket } from '../App';
 import InternalChatBox from './InternalChatBox';
+import LiveActivityFeed from './LiveActivityFeed';
+import useFacilitySocket from '../hooks/useFacilitySocket';
 
 export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
   const [username, setUsername] = useState('alice_staff');
@@ -173,6 +175,12 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const [walkError, setWalkError] = useState('');
   const [walkSuccess, setWalkSuccess] = useState('');
 
+  // Live facility overview + cross-department alerts
+  const [overview, setOverview] = useState(null);
+  const [stockAlert, setStockAlert] = useState('');
+
+  useFacilitySocket('staff', staffUser?.hospital || 'general-hospital');
+
   // Reminders state
   const [reminders, setReminders] = useState([]);
   const [remindersLoading, setRemindersLoading] = useState(false);
@@ -235,26 +243,65 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     }
   };
 
+  // Whole-facility live picture: where every patient is, which cabin is drowning,
+  // what the lab and pharmacy are sitting on. Reception could previously only see
+  // doctor queues and had to phone the other counters for anything else.
+  const loadOverview = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/ops/overview`, {
+        headers: { Authorization: `Bearer ${staffToken}` }
+      });
+      if (res.ok) setOverview(await res.json());
+    } catch (err) {
+      console.error('Error loading facility overview:', err);
+    }
+  };
+
   useEffect(() => {
     loadData();
+    loadOverview();
 
     socket.emit('join-room', 'queue:global');
 
     const handleQueueUpdated = () => {
       loadData();
+      loadOverview();
       if (activeSidebarTab === 'reminders') {
         loadReminders();
       }
     };
 
+    const handleStockAlert = (payload) => {
+      if (payload && payload.name) {
+        setStockAlert(`${payload.name} is ${payload.level === 'out' ? 'OUT OF STOCK' : 'running low'} at the pharmacy${payload.tokenNumber ? ` (needed for ${payload.tokenNumber})` : ''}.`);
+      }
+      loadOverview();
+    };
+
     socket.on('queue-updated', handleQueueUpdated);
     socket.on('queue-reset', handleQueueUpdated);
+    // Reception is the counter patients complain to, so it needs the same live
+    // signals as the departments themselves.
+    socket.on('journey-updated', loadOverview);
+    socket.on('lab-updated', loadOverview);
+    socket.on('doctor-status-update', loadOverview);
+    socket.on('stock-alert', handleStockAlert);
 
     return () => {
       socket.off('queue-updated', handleQueueUpdated);
       socket.off('queue-reset', handleQueueUpdated);
+      socket.off('journey-updated', loadOverview);
+      socket.off('lab-updated', loadOverview);
+      socket.off('doctor-status-update', loadOverview);
+      socket.off('stock-alert', handleStockAlert);
     };
   }, [staffToken, activeSidebarTab]);
+
+  useEffect(() => {
+    if (!stockAlert) return undefined;
+    const t = setTimeout(() => setStockAlert(''), 15000);
+    return () => clearTimeout(t);
+  }, [stockAlert]);
 
   const handleRegisterWalkIn = async (e) => {
     e.preventDefault();
@@ -609,10 +656,106 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
         <div className="p-4 md:p-8 flex-1 flex flex-col">
           
+          {/* Cross-department alert: reception hears about a stock-out the
+              moment the pharmacy does, because the patient will ask them. */}
+          {stockAlert && (
+            <div className="mb-5 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+              <span className="material-symbols-outlined text-[18px]">production_quantity_limits</span>
+              <span className="flex-1">{stockAlert}</span>
+              <button onClick={() => setStockAlert('')} className="text-[10px] font-black opacity-60 hover:opacity-100">DISMISS</button>
+            </div>
+          )}
+
           {/* TAB 1: DASHBOARD OVERVIEW */}
           {activeSidebarTab === 'dashboard' && (
             <div className="space-y-8 animate-fade-in">
-              
+
+              {/* LIVE FLOOR VIEW — where every patient in the building is right
+                  now, and which department is the bottleneck. */}
+              {overview && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-2 bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] space-y-5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div>
+                        <h4 className="font-extrabold text-[var(--text-color)] text-base">Live Floor View</h4>
+                        <p className="text-xs text-[var(--text-secondary)] font-medium">Every patient in the building, by stage</p>
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] font-bold">
+                        <span className="text-[var(--text-secondary)]">
+                          {overview.doctorsOnDuty} doctor{overview.doctorsOnDuty === 1 ? '' : 's'} on duty
+                        </span>
+                        {overview.longestWaitMins > 0 && (
+                          <span className={overview.longestWaitMins > 45 ? 'text-rose-500' : 'text-amber-500'}>
+                            Longest wait {overview.longestWaitMins}m ({overview.longestWaitToken})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { k: 'Waiting', v: overview.byStage.Waiting || 0, tone: 'text-amber-500' },
+                        { k: 'In cabin', v: overview.byStage['In Consultation'] || 0, tone: 'text-[var(--primary-color)]' },
+                        { k: 'At lab', v: (overview.byStage['Lab Pending'] || 0) + (overview.byStage['Lab Complete'] || 0), tone: 'text-sky-500' },
+                        { k: 'At pharmacy', v: overview.byStage['Pharmacy Pending'] || 0, tone: 'text-violet-500' }
+                      ].map(s => (
+                        <div key={s.k} className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl p-3">
+                          <p className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">{s.k}</p>
+                          <p className={`text-2xl font-black leading-none mt-1 ${s.tone}`}>{s.v}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Per-cabin load — who to route the next walk-in to. */}
+                    <div className="space-y-2">
+                      <p className="text-[10px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Cabin load</p>
+                      {overview.doctorLoad.map(d => (
+                        <div key={d._id} className="flex items-center justify-between gap-3 bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-[var(--text-color)] truncate">
+                              {d.name} <span className="text-[var(--text-secondary)] font-semibold">• {d.department}</span>
+                            </p>
+                            <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
+                              {d.room} • seen {d.seenToday} today
+                              {d.dailyTokenLimit > 0 ? ` • cap ${d.dailyTokenLimit}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
+                              d.availabilityStatus === 'Available'
+                                ? 'bg-emerald-500/15 text-emerald-500'
+                                : 'bg-amber-500/15 text-amber-500'
+                            }`}>{d.availabilityStatus}</span>
+                            <div className="text-right">
+                              <p className={`text-sm font-black leading-none ${d.waiting > 8 ? 'text-rose-500' : 'text-[var(--text-color)]'}`}>{d.waiting}</p>
+                              <p className="text-[9px] text-[var(--text-secondary)] font-bold">~{d.estimatedWait}m</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Other departments' backlog — no more phoning the counters. */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                      {[
+                        { k: 'Lab pending', v: overview.departments.lab.pending, warn: overview.departments.lab.urgent > 0, note: overview.departments.lab.urgent ? `${overview.departments.lab.urgent} urgent` : '' },
+                        { k: 'Abnormal', v: overview.departments.lab.abnormal, warn: overview.departments.lab.abnormal > 0, note: 'needs doctor' },
+                        { k: 'Rx pending', v: overview.departments.pharmacy.pending, warn: false, note: '' },
+                        { k: 'Stock issues', v: overview.departments.pharmacy.outOfStock + overview.departments.pharmacy.lowStock, warn: overview.departments.pharmacy.outOfStock > 0, note: `${overview.departments.pharmacy.outOfStock} out` }
+                      ].map(s => (
+                        <div key={s.k} className={`rounded-xl p-3 border ${s.warn ? 'bg-rose-500/5 border-rose-500/30' : 'bg-[var(--bg-color)] border-[var(--border-color)]/40'}`}>
+                          <p className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">{s.k}</p>
+                          <p className={`text-xl font-black leading-none mt-1 ${s.warn ? 'text-rose-500' : 'text-[var(--text-color)]'}`}>{s.v}</p>
+                          {s.note && <p className="text-[9px] font-bold text-[var(--text-secondary)] mt-0.5">{s.note}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <LiveActivityFeed token={staffToken} title="Live Hospital Activity" limit={30} />
+                </div>
+              )}
+
               {/* Widescreen KPI cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 {[

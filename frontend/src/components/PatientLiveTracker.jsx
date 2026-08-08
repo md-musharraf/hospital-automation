@@ -47,14 +47,23 @@ export default function PatientLiveTracker() {
   useEffect(() => {
     loadTracker();
 
+    // The shared socket may have given up earlier (e.g. the backend was
+    // restarting); a tracker showing a frozen queue position is worse than one
+    // that reconnects itself.
+    if (!socket.connected) socket.connect();
     socket.emit('join-room', 'queue:global');
+    // The patient's own room receives targeted journey updates (sent to the lab,
+    // reports ready, medicines dispensed) without a page refresh.
+    socket.emit('join-room', `patient:${tokenId}`);
     const handleUpdate = () => {
       loadTracker();
     };
     socket.on('queue-updated', handleUpdate);
+    socket.on('journey-updated', handleUpdate);
 
     return () => {
       socket.off('queue-updated', handleUpdate);
+      socket.off('journey-updated', handleUpdate);
     };
   }, [tokenId]);
 
@@ -138,8 +147,23 @@ export default function PatientLiveTracker() {
     );
   }
 
-  const { token, position } = data;
+  const { token, position, journey } = data;
   const inCabin = position === 0;
+  // The visit as the patient experiences it. Before this they only saw a queue
+  // position and had no idea they were meant to go to the lab or the pharmacy.
+  const JOURNEY_STEPS = ['Waiting', 'In Consultation', 'Lab Pending', 'Lab Complete', 'Pharmacy Pending', 'Dispensed'];
+  const stepLabels = {
+    Waiting: 'In queue', 'In Consultation': 'With doctor', 'Lab Pending': 'Lab tests',
+    'Lab Complete': 'Reports ready', 'Pharmacy Pending': 'Pharmacy', Dispensed: 'Done'
+  };
+  const currentStage = journey?.stage || 'Waiting';
+  // Steps that don't apply to this visit (no tests / no medicines) are skipped.
+  const relevantSteps = JOURNEY_STEPS.filter(s => {
+    if (s === 'Lab Pending' || s === 'Lab Complete') return (journey?.labPending || 0) + (journey?.labReady || 0) > 0;
+    if (s === 'Pharmacy Pending' || s === 'Dispensed') return journey?.medicinesReady;
+    return true;
+  });
+  const currentIdx = relevantSteps.indexOf(currentStage);
   const positionText = inCabin 
     ? 'Please proceed inside' 
     : position > 0 
@@ -176,6 +200,47 @@ export default function PatientLiveTracker() {
             </div>
           </div>
         </div>
+
+        {/* Visit progress — what has happened and what to do next. */}
+        {journey && (
+          <div className="mb-6 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center gap-1">
+              {relevantSteps.map((s, i) => {
+                const done = currentIdx >= 0 && i < currentIdx;
+                const active = i === currentIdx;
+                return (
+                  <React.Fragment key={s}>
+                    <div className="flex flex-col items-center gap-1 flex-1 min-w-0">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 border-2 ${
+                        done ? 'bg-emerald-500 border-emerald-500 text-white'
+                          : active ? 'bg-[var(--primary-color)] border-[var(--primary-color)] text-white animate-pulse'
+                            : 'bg-transparent border-[var(--border-color)] text-[var(--text-secondary)]'
+                      }`}>
+                        <span className="material-symbols-outlined text-[13px]">{done ? 'check' : active ? 'radio_button_checked' : 'circle'}</span>
+                      </div>
+                      <span className={`text-[8px] font-bold text-center leading-tight ${
+                        active ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'
+                      }`}>{stepLabels[s]}</span>
+                    </div>
+                    {i < relevantSteps.length - 1 && (
+                      <div className={`h-0.5 flex-1 -mt-4 ${done ? 'bg-emerald-500' : 'bg-[var(--border-color)]'}`} />
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+
+            <p className="text-[11px] font-bold text-[var(--text-color)] leading-relaxed text-center pt-1 border-t border-[var(--border-color)]/30">
+              {journey.message}
+            </p>
+
+            {journey.hasAbnormal && (
+              <p className="text-[10px] font-bold text-rose-500 text-center">
+                ⚠️ One of your results is outside the normal range — please show it to your doctor.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Live Wait Status Card */}
         <div className="space-y-4">

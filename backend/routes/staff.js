@@ -11,6 +11,8 @@ const { recalculateQueueTimes, formatApptTime, insertTokenByPriority, isDoctorFu
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
+const { logActivity, announceJourney } = require('../utils/realtime');
+const { setStage, deriveStage } = require('../utils/journeyHelper');
 
 // Middleware to ensure the user is staff
 const ensureStaff = (req, res, next) => {
@@ -213,6 +215,16 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       }
     }
 
+    // Feed line so the whole facility sees the new arrival — the doctor's console,
+    // the lab's screen and the manager's overview all pick it up without polling.
+    await logActivity(req.io, {
+      hospital: req.user.hospital || 'general-hospital',
+      type: 'token-created', role: 'staff', actor: req.user.username || 'Reception',
+      message: `Walk-in ${createdToken.tokenNumber} registered for ${createdToken.doctor ? createdToken.doctor.name : 'a doctor'}${autoTriaged ? ` (auto-triaged → ${triagedDepartment})` : ''}${resolvedPriority && resolvedPriority !== 'None' ? ` — ${resolvedPriority} priority` : ''}.`,
+      tokenNumber: createdToken.tokenNumber, refId: createdToken._id,
+      severity: createdToken.tokenType === 'Emergency' ? 'critical' : 'info'
+    });
+
     res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken, whatsapp, autoTriaged, triagedDepartment, priorityCategory: resolvedPriority || 'None' });
   } catch (error) {
     console.error('Error booking walk-in:', error);
@@ -304,6 +316,10 @@ router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req
       // Reset timestamps if needed
       if (status === 'Completed') token.completedAt = new Date();
     }
+    // Keep the shared patient journey in step with a manual status override,
+    // otherwise the lab/pharmacy would still show a patient who reception has
+    // already closed out.
+    setStage(token, status === 'Absent' ? 'Absent' : deriveStage(token), req.user.username || 'Reception');
     await token.save();
 
     const queue = await Queue.findOne({ doctor: token.doctor });
@@ -328,6 +344,13 @@ router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req
         req.io.to(`patient:${tokenId}`).emit('token-called', { status });
       }
     }
+
+    await announceJourney(req.io, {
+      hospital: staffHosp, token, stage: token.journeyStage, role: 'staff',
+      actor: req.user.username || 'Reception', type: 'system',
+      message: `${token.tokenNumber} set to ${status} by reception (was ${previousStatus}).`,
+      severity: status === 'Absent' ? 'warning' : 'info'
+    });
 
     res.json({ message: `Token status updated to ${status}`, token });
   } catch (error) {
