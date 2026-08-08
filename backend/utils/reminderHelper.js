@@ -1,22 +1,23 @@
 const Reminder = require('../models/Reminder');
 const { sendWhatsAppNotification } = require('./whatsappHelper');
+const log = require('./logger').child({ module: 'reminders' });
 
 /**
  * Searches the database for pending reminders scheduled for today or earlier,
  * simulates sending them, and updates their status to 'Sent'.
- * 
+ *
  * @returns {Promise<Array>} List of processed reminders
  */
 async function processPendingReminders() {
   const now = new Date();
-  
+
   // Find all pending reminders where scheduledDate <= now
   const pendingReminders = await Reminder.find({
     status: 'Pending',
     scheduledDate: { $lte: now }
   })
-  .populate('patient')
-  .populate('doctor');
+    .populate('patient')
+    .populate('doctor');
 
   const processed = [];
 
@@ -38,7 +39,7 @@ async function processPendingReminders() {
       const doctorName = reminder.doctor ? reminder.doctor.name : 'Doctor';
 
       // Send automated SMS & WhatsApp notification
-      console.log(`[SIMULATED SMS SENT] To: ${phone} | Msg: "${reminder.message}"`);
+      log.info(`To: ${phone} | Msg: "${reminder.message}"`);
       await sendWhatsAppNotification(phone, reminder.message);
 
       processed.push({
@@ -53,7 +54,7 @@ async function processPendingReminders() {
       // Don't let one bad reminder abort the rest of the batch — it stays
       // claimed as 'Sent' if the save above succeeded, or 'Pending' (and
       // will be retried next cycle) if it failed before that point.
-      console.error(`[REMINDER] Failed to process reminder ${reminder._id}:`, err);
+      log.error(`Failed to process reminder ${reminder._id}:`, err);
     }
   }
 

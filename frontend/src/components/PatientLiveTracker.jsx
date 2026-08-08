@@ -3,10 +3,8 @@ import { useParams } from 'react-router-dom';
 import { BACKEND_URL, socket } from '../App';
 
 function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding)
-    .replace(/\-/g, '+')
-    .replace(/_/g, '/');
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
 
   const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
@@ -70,8 +68,8 @@ export default function PatientLiveTracker() {
   useEffect(() => {
     if ('serviceWorker' in navigator && 'PushManager' in window) {
       setPushSupported(true);
-      navigator.serviceWorker.ready.then(reg => {
-        reg.pushManager.getSubscription().then(sub => {
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.pushManager.getSubscription().then((sub) => {
           if (sub) {
             setIsSubscribed(true);
           }
@@ -122,7 +120,6 @@ export default function PatientLiveTracker() {
         const subErr = await subRes.json();
         throw new Error(subErr.message || 'Failed to register subscription on server');
       }
-
     } catch (err) {
       console.error('Subscription error:', err);
       alert('Subscription failed: ' + err.message);
@@ -142,7 +139,9 @@ export default function PatientLiveTracker() {
   if (error || !data) {
     return (
       <div className="flex-grow flex items-center justify-center p-6 bg-[var(--bg-color)]">
-        <div className="text-rose-500 font-bold text-sm border border-rose-500/20 bg-rose-500/5 px-4 py-3 rounded-xl">{error || 'Tracker failed'}</div>
+        <div className="text-rose-500 font-bold text-sm border border-rose-500/20 bg-rose-500/5 px-4 py-3 rounded-xl">
+          {error || 'Tracker failed'}
+        </div>
       </div>
     );
   }
@@ -151,44 +150,61 @@ export default function PatientLiveTracker() {
   const inCabin = position === 0;
   // The visit as the patient experiences it. Before this they only saw a queue
   // position and had no idea they were meant to go to the lab or the pharmacy.
-  const JOURNEY_STEPS = ['Waiting', 'In Consultation', 'Lab Pending', 'Lab Complete', 'Pharmacy Pending', 'Dispensed'];
+  const JOURNEY_STEPS = [
+    'Waiting',
+    'In Consultation',
+    'Lab Pending',
+    'Lab Complete',
+    'Pharmacy Pending',
+    'Dispensed'
+  ];
   const stepLabels = {
-    Waiting: 'In queue', 'In Consultation': 'With doctor', 'Lab Pending': 'Lab tests',
-    'Lab Complete': 'Reports ready', 'Pharmacy Pending': 'Pharmacy', Dispensed: 'Done'
+    Waiting: 'In queue',
+    'In Consultation': 'With doctor',
+    'Lab Pending': 'Lab tests',
+    'Lab Complete': 'Reports ready',
+    'Pharmacy Pending': 'Pharmacy',
+    Dispensed: 'Done'
   };
   const currentStage = journey?.stage || 'Waiting';
   // Steps that don't apply to this visit (no tests / no medicines) are skipped.
-  const relevantSteps = JOURNEY_STEPS.filter(s => {
-    if (s === 'Lab Pending' || s === 'Lab Complete') return (journey?.labPending || 0) + (journey?.labReady || 0) > 0;
+  const relevantSteps = JOURNEY_STEPS.filter((s) => {
+    if (s === 'Lab Pending' || s === 'Lab Complete')
+      return (journey?.labPending || 0) + (journey?.labReady || 0) > 0;
     if (s === 'Pharmacy Pending' || s === 'Dispensed') return journey?.medicinesReady;
     return true;
   });
   const currentIdx = relevantSteps.indexOf(currentStage);
-  const positionText = inCabin 
-    ? 'Please proceed inside' 
-    : position > 0 
-      ? `${position - 1} patient(s) ahead of you` 
+  const positionText = inCabin
+    ? 'Please proceed inside'
+    : position > 0
+      ? `${position - 1} patient(s) ahead of you`
       : 'Checkup complete';
 
   return (
     <div className="flex-grow flex items-center justify-center p-4 bg-[var(--bg-color)]">
       <div className="w-full max-w-md bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-3xl p-6 shadow-[var(--card-shadow)] relative overflow-hidden text-[var(--text-color)]">
-        
         {/* Hospital Branding Header */}
         <div className="flex justify-between items-center pb-4 border-b border-[var(--border-color)]/30 mb-6">
           <div className="flex items-center space-x-2">
-            <span className="material-symbols-outlined text-[var(--primary-color)] text-[22px]">health_and_safety</span>
+            <span className="material-symbols-outlined text-[var(--primary-color)] text-[22px]">
+              health_and_safety
+            </span>
             <span className="font-extrabold text-sm tracking-tight text-left">CareeAi Live Tracker</span>
           </div>
-          <span className="bg-[var(--tertiary-color)] text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">Live Connection</span>
+          <span className="bg-[var(--tertiary-color)] text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+            Live Connection
+          </span>
         </div>
 
         {/* Big Ticket Token Box */}
         <div className="bg-gradient-to-br from-[var(--primary-color)] to-[var(--primary-container)] text-white rounded-2xl p-6 shadow-md relative overflow-hidden border border-white/10 text-center mb-6">
           <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
-          <p className="text-[9px] text-white/70 uppercase tracking-widest font-bold mb-1 relative z-10">Active Ticket</p>
+          <p className="text-[9px] text-white/70 uppercase tracking-widest font-bold mb-1 relative z-10">
+            Active Ticket
+          </p>
           <h2 className="text-5xl font-black relative z-10 leading-none">{token.tokenNumber}</h2>
-          
+
           <div className="mt-4 pt-4 border-t border-white/10 flex justify-around text-xs font-semibold relative z-10">
             <div>
               <p className="text-white/65 text-[9px]">Cabin Room</p>
@@ -211,19 +227,31 @@ export default function PatientLiveTracker() {
                 return (
                   <React.Fragment key={s}>
                     <div className="flex flex-col items-center gap-1 flex-1 min-w-0">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 border-2 ${
-                        done ? 'bg-emerald-500 border-emerald-500 text-white'
-                          : active ? 'bg-[var(--primary-color)] border-[var(--primary-color)] text-white animate-pulse'
-                            : 'bg-transparent border-[var(--border-color)] text-[var(--text-secondary)]'
-                      }`}>
-                        <span className="material-symbols-outlined text-[13px]">{done ? 'check' : active ? 'radio_button_checked' : 'circle'}</span>
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 border-2 ${
+                          done
+                            ? 'bg-emerald-500 border-emerald-500 text-white'
+                            : active
+                              ? 'bg-[var(--primary-color)] border-[var(--primary-color)] text-white animate-pulse'
+                              : 'bg-transparent border-[var(--border-color)] text-[var(--text-secondary)]'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[13px]">
+                          {done ? 'check' : active ? 'radio_button_checked' : 'circle'}
+                        </span>
                       </div>
-                      <span className={`text-[8px] font-bold text-center leading-tight ${
-                        active ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'
-                      }`}>{stepLabels[s]}</span>
+                      <span
+                        className={`text-[8px] font-bold text-center leading-tight ${
+                          active ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'
+                        }`}
+                      >
+                        {stepLabels[s]}
+                      </span>
                     </div>
                     {i < relevantSteps.length - 1 && (
-                      <div className={`h-0.5 flex-1 -mt-4 ${done ? 'bg-emerald-500' : 'bg-[var(--border-color)]'}`} />
+                      <div
+                        className={`h-0.5 flex-1 -mt-4 ${done ? 'bg-emerald-500' : 'bg-[var(--border-color)]'}`}
+                      />
                     )}
                   </React.Fragment>
                 );
@@ -246,22 +274,33 @@ export default function PatientLiveTracker() {
         <div className="space-y-4">
           <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-4 flex items-center justify-between shadow-inner">
             <div className="flex items-center space-x-3 text-left">
-              <span className={`material-symbols-outlined text-[26px] ${inCabin ? 'text-[var(--tertiary-color)] animate-pulse' : 'text-[var(--primary-color)]'}`}>
+              <span
+                className={`material-symbols-outlined text-[26px] ${inCabin ? 'text-[var(--tertiary-color)] animate-pulse' : 'text-[var(--primary-color)]'}`}
+              >
                 {inCabin ? 'check_circle' : 'hourglass_empty'}
               </span>
               <div>
-                <p className="text-[10px] text-[var(--text-secondary)] uppercase font-extrabold">Queue Position</p>
+                <p className="text-[10px] text-[var(--text-secondary)] uppercase font-extrabold">
+                  Queue Position
+                </p>
                 <p className="text-sm font-extrabold text-[var(--text-color)] mt-0.5">{positionText}</p>
               </div>
             </div>
             {!inCabin && position > 0 && (
-              <span className="text-lg font-black text-[var(--primary-color)] shrink-0">{token.estimatedWaitTime} <span className="text-[9px] font-medium text-[var(--text-secondary)]">mins</span></span>
+              <span className="text-lg font-black text-[var(--primary-color)] shrink-0">
+                {token.estimatedWaitTime}{' '}
+                <span className="text-[9px] font-medium text-[var(--text-secondary)]">mins</span>
+              </span>
             )}
           </div>
 
           <div className="text-center">
-            <p className="text-[10px] text-[var(--text-secondary)] font-bold">Please wait in the reception lounge until called.</p>
-            <p className="text-[9px] text-[var(--text-secondary)]/50 mt-1">Refreshes automatically when the queue updates.</p>
+            <p className="text-[10px] text-[var(--text-secondary)] font-bold">
+              Please wait in the reception lounge until called.
+            </p>
+            <p className="text-[9px] text-[var(--text-secondary)]/50 mt-1">
+              Refreshes automatically when the queue updates.
+            </p>
           </div>
 
           {pushSupported && (
@@ -284,7 +323,6 @@ export default function PatientLiveTracker() {
             </div>
           )}
         </div>
-
       </div>
     </div>
   );

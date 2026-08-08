@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const HospitalMessage = require('../models/HospitalMessage');
 const { authenticateToken } = require('../middleware/auth');
+const logger = require('../utils/logger');
 
 // POST a new internal message
 router.post('/', authenticateToken, async (req, res) => {
@@ -53,7 +54,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
     res.json({ message: 'Message sent successfully.', data: message });
   } catch (err) {
-    console.error('Error sending internal message:', err);
+    logger.error('Error sending internal message', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -83,12 +84,12 @@ router.get('/', authenticateToken, async (req, res) => {
         { senderRole: role }
       ]
     })
-    .sort({ createdAt: -1 })
-    .limit(50);
+      .sort({ createdAt: -1 })
+      .limit(50);
 
     res.json(messages);
   } catch (err) {
-    console.error('Error fetching messages:', err);
+    logger.error('Error fetching messages', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });

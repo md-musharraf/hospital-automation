@@ -4,6 +4,7 @@ import { BACKEND_URL, socket } from '../App';
 import InternalChatBox from './InternalChatBox';
 import LiveActivityFeed from './LiveActivityFeed';
 import useFacilitySocket from '../hooks/useFacilitySocket';
+import useLiveRefresh from '../hooks/useLiveRefresh';
 
 export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
   const [username, setUsername] = useState('alice_staff');
@@ -18,8 +19,8 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => res.json())
+      .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
           setHospitals(data);
           // The <select> below is controlled by `selectedHospital`, which
@@ -29,10 +30,10 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
           // option while the state — and therefore the login request — still
           // silently points at 'general-hospital', causing a confusing
           // "Invalid credentials" error. Keep state in sync with what's shown.
-          setSelectedHospital(prev => data.some(h => h.id === prev) ? prev : data[0].id);
+          setSelectedHospital((prev) => (data.some((h) => h.id === prev) ? prev : data[0].id));
         }
       })
-      .catch(err => console.error('Error fetching hospitals for login:', err));
+      .catch((err) => console.error('Error fetching hospitals for login:', err));
   }, []);
 
   const handleLogin = async (e) => {
@@ -59,7 +60,9 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
       onSuccess();
     } catch (err) {
       if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
-        setError('Unable to connect to the server. Please ensure the backend is running or check your network connection.');
+        setError(
+          'Unable to connect to the server. Please ensure the backend is running or check your network connection.'
+        );
       } else {
         setError(err.message);
       }
@@ -75,7 +78,9 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
           <div className="bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/20 p-2 rounded-lg text-[var(--primary-color)]">
             <span className="material-symbols-outlined">shield</span>
           </div>
-          <h2 className="text-xl font-extrabold text-[var(--text-color)] tracking-tight">Staff Portal Login</h2>
+          <h2 className="text-xl font-extrabold text-[var(--text-color)] tracking-tight">
+            Staff Portal Login
+          </h2>
         </div>
 
         {error && (
@@ -93,8 +98,10 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
               onChange={(e) => setSelectedHospital(e.target.value)}
               className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2.5 outline-none text-[var(--text-color)] font-bold cursor-pointer"
             >
-              {hospitals.map(h => (
-                <option key={h.id} value={h.id}>{h.name}</option>
+              {hospitals.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.name}
+                </option>
               ))}
             </select>
           </div>
@@ -123,7 +130,9 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
             disabled={loading}
             className="w-full bg-[var(--text-color)] text-[var(--bg-color)] font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center space-x-2 disabled:opacity-50"
           >
-            {loading ? <span>Connecting...</span> : (
+            {loading ? (
+              <span>Connecting...</span>
+            ) : (
               <>
                 <span className="material-symbols-outlined text-[16px]">lock</span>
                 <span>Secure Log In</span>
@@ -178,6 +187,12 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   // Live facility overview + cross-department alerts
   const [overview, setOverview] = useState(null);
   const [stockAlert, setStockAlert] = useState('');
+  // Errors from queue actions (status change / emergency override). These
+  // handlers previously called a `setError` that was never declared, so the
+  // success path threw a ReferenceError before it could refresh the board and
+  // the failure path threw again inside its own catch — the buttons looked
+  // dead. ESLint's no-undef caught it.
+  const [queueError, setQueueError] = useState('');
 
   useFacilitySocket('staff', staffUser?.hospital || 'general-hospital');
 
@@ -189,7 +204,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const loadData = async () => {
     try {
       const resQ = await fetch(`${BACKEND_URL}/api/v1/staff/queues`, {
-        headers: { 'Authorization': `Bearer ${staffToken}` }
+        headers: { Authorization: `Bearer ${staffToken}` }
       });
       if (resQ.status === 401 || resQ.status === 403) {
         onLogout();
@@ -198,7 +213,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       const dataQ = await resQ.json();
       if (Array.isArray(dataQ)) {
         setQueues(dataQ);
-        const fetchedDocs = dataQ.map(q => q.doctor).filter(Boolean);
+        const fetchedDocs = dataQ.map((q) => q.doctor).filter(Boolean);
         setDoctors(fetchedDocs);
         // Leave walkDoctorId empty by default → the walk-in form uses SMART
         // AUTO-ASSIGN (symptom-based triage + least-busy doctor) unless reception
@@ -209,7 +224,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
       // Fetch patients
       const resP = await fetch(`${BACKEND_URL}/api/v1/staff/patients`, {
-        headers: { 'Authorization': `Bearer ${staffToken}` }
+        headers: { Authorization: `Bearer ${staffToken}` }
       });
       if (resP.status === 401 || resP.status === 403) {
         onLogout();
@@ -232,7 +247,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     setRemindersLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/staff/reminders`, {
-        headers: { 'Authorization': `Bearer ${staffToken}` }
+        headers: { Authorization: `Bearer ${staffToken}` }
       });
       const data = await res.json();
       setReminders(data);
@@ -273,29 +288,29 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
     const handleStockAlert = (payload) => {
       if (payload && payload.name) {
-        setStockAlert(`${payload.name} is ${payload.level === 'out' ? 'OUT OF STOCK' : 'running low'} at the pharmacy${payload.tokenNumber ? ` (needed for ${payload.tokenNumber})` : ''}.`);
+        setStockAlert(
+          `${payload.name} is ${payload.level === 'out' ? 'OUT OF STOCK' : 'running low'} at the pharmacy${payload.tokenNumber ? ` (needed for ${payload.tokenNumber})` : ''}.`
+        );
       }
       loadOverview();
     };
 
-    socket.on('queue-updated', handleQueueUpdated);
-    socket.on('queue-reset', handleQueueUpdated);
-    // Reception is the counter patients complain to, so it needs the same live
-    // signals as the departments themselves.
-    socket.on('journey-updated', loadOverview);
-    socket.on('lab-updated', loadOverview);
-    socket.on('doctor-status-update', loadOverview);
+    // Only the alert banner needs the raw event; the reloads are coalesced by
+    // useLiveRefresh below so one clinical action causes one refresh, not four.
     socket.on('stock-alert', handleStockAlert);
-
-    return () => {
-      socket.off('queue-updated', handleQueueUpdated);
-      socket.off('queue-reset', handleQueueUpdated);
-      socket.off('journey-updated', loadOverview);
-      socket.off('lab-updated', loadOverview);
-      socket.off('doctor-status-update', loadOverview);
-      socket.off('stock-alert', handleStockAlert);
-    };
+    return () => socket.off('stock-alert', handleStockAlert);
   }, [staffToken, activeSidebarTab]);
+
+  // One reload for a burst of events. Reception's refresh is the most expensive
+  // in the app (queues + patient directory + facility overview), so collapsing
+  // the fan-out of a single doctor action from four refetches to one is what
+  // stops the board stuttering on a busy morning.
+  useLiveRefresh(['queue-updated', 'queue-reset'], () => {
+    loadData();
+    loadOverview();
+    if (activeSidebarTab === 'reminders') loadReminders();
+  });
+  useLiveRefresh(['journey-updated', 'lab-updated', 'doctor-status-update', 'stock-alert'], loadOverview);
 
   useEffect(() => {
     if (!stockAlert) return undefined;
@@ -326,7 +341,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${staffToken}`
+          Authorization: `Bearer ${staffToken}`
         },
         body: JSON.stringify(payload)
       });
@@ -339,7 +354,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       const docName = data.token?.doctor?.name || 'the assigned doctor';
       if (data.autoTriaged) {
         const emTag = data.token?.tokenType === 'Emergency' ? ' 🚨 auto-flagged EMERGENCY' : '';
-        setWalkSuccess(`Token ${data.token.tokenNumber} → auto-routed to ${docName} (${data.triagedDepartment})${emTag}.`);
+        setWalkSuccess(
+          `Token ${data.token.tokenNumber} → auto-routed to ${docName} (${data.triagedDepartment})${emTag}.`
+        );
       } else {
         setWalkSuccess(`Walk-in generated: Token ${data.token.tokenNumber} for ${docName}.`);
       }
@@ -362,7 +379,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${staffToken}`
+          Authorization: `Bearer ${staffToken}`
         },
         body: JSON.stringify({ status })
       });
@@ -370,10 +387,10 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       if (!res.ok) {
         throw new Error(data.message || 'Failed to update token status');
       }
-      setError('');
+      setQueueError('');
       loadData();
     } catch (err) {
-      setError(err.message);
+      setQueueError(err.message);
     }
   };
 
@@ -381,16 +398,16 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/staff/tokens/${tokenId}/override`, {
         method: 'PUT',
-        headers: { 'Authorization': `Bearer ${staffToken}` }
+        headers: { Authorization: `Bearer ${staffToken}` }
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.message || 'Failed to escalate token to Emergency');
       }
-      setError('');
+      setQueueError('');
       loadData();
     } catch (err) {
-      setError(err.message);
+      setQueueError(err.message);
     }
   };
 
@@ -404,7 +421,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${staffToken}`
+          Authorization: `Bearer ${staffToken}`
         },
         body: JSON.stringify({
           name: patName,
@@ -444,7 +461,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${staffToken}`
+          Authorization: `Bearer ${staffToken}`
         },
         body: JSON.stringify({
           name: patName,
@@ -475,7 +492,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/staff/reminders/trigger`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${staffToken}` }
+        headers: { Authorization: `Bearer ${staffToken}` }
       });
       const data = await res.json();
       if (res.ok) {
@@ -490,54 +507,74 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
   // Compute live Healight KPI stats
   const totalDocCount = Array.isArray(doctors) ? doctors.length : 0;
-  const activeAppointmentsCount = Array.isArray(queues) ? queues.reduce((acc, q) => acc + (q.currentToken ? 1 : 0) + (q.activeQueue ? q.activeQueue.length : 0), 0) : 0;
-  const availableRoomsCount = Array.isArray(queues) ? queues.filter(q => q.doctor?.availabilityStatus === 'Available').length : 0;
+  const activeAppointmentsCount = Array.isArray(queues)
+    ? queues.reduce(
+        (acc, q) => acc + (q.currentToken ? 1 : 0) + (q.activeQueue ? q.activeQueue.length : 0),
+        0
+      )
+    : 0;
+  const availableRoomsCount = Array.isArray(queues)
+    ? queues.filter((q) => q.doctor?.availabilityStatus === 'Available').length
+    : 0;
   const totalPatientsCount = Array.isArray(patients) ? patients.length : 0;
 
   // Extract next 4 appointments in line across all doctors
   const nextAppointments = [];
   if (Array.isArray(queues)) {
-    queues.forEach(q => {
+    queues.forEach((q) => {
       if (q.currentToken) {
         nextAppointments.push({
           name: q.currentToken.patient?.name || 'Walk-in Patient',
           symptoms: q.currentToken.symptoms,
-          time: q.currentToken.calledAt ? new Date(q.currentToken.calledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Active',
+          time: q.currentToken.calledAt
+            ? new Date(q.currentToken.calledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : 'Active',
           avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${q.currentToken.patient?.name || 'patient'}`
         });
       }
       if (Array.isArray(q.activeQueue)) {
-        q.activeQueue.filter(Boolean).slice(0, 2).forEach((tok, idx) => {
-          nextAppointments.push({
-            name: tok.patient?.name || 'Waiting Patient',
-            symptoms: tok.symptoms,
-            time: `Wait: ${tok.estimatedWaitTime}m`,
-            avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${tok.patient?.name || 'patient'}`
+        q.activeQueue
+          .filter(Boolean)
+          .slice(0, 2)
+          .forEach((tok, idx) => {
+            nextAppointments.push({
+              name: tok.patient?.name || 'Waiting Patient',
+              symptoms: tok.symptoms,
+              time: `Wait: ${tok.estimatedWaitTime}m`,
+              avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${tok.patient?.name || 'patient'}`
+            });
           });
-        });
       }
     });
   }
   const recentAppointmentsList = nextAppointments.slice(0, 4);
 
   // Filter patients list
-  const filteredPatients = Array.isArray(patients) ? patients.filter(p => 
-    (p.name && p.name.toLowerCase().includes(patientSearch.toLowerCase())) || 
-    (p.phone && p.phone.includes(patientSearch))
-  ) : [];
+  const filteredPatients = Array.isArray(patients)
+    ? patients.filter(
+        (p) =>
+          (p.name && p.name.toLowerCase().includes(patientSearch.toLowerCase())) ||
+          (p.phone && p.phone.includes(patientSearch))
+      )
+    : [];
 
   return (
     <div className="flex-1 flex overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] font-sans transition-colors duration-200">
-      
       {/* 1. Left Sidebar Navigation Panel */}
       <div className="hidden md:flex w-64 bg-[var(--card-bg)] text-[var(--text-color)] flex-col justify-between shrink-0 shadow-lg border-r border-[var(--border-color)]/30">
         <div className="flex flex-col">
           {/* CareeAi Sidebar Logo header */}
           <div className="p-6 border-b border-[var(--border-color)]/30 flex items-center space-x-3">
-            <span className="material-symbols-outlined text-[var(--primary-color)] text-[32px]">local_hospital</span>
+            <span className="material-symbols-outlined text-[var(--primary-color)] text-[32px]">
+              local_hospital
+            </span>
             <div>
-              <h1 className="font-extrabold text-sm text-[var(--primary-color)] dark:text-zinc-300 leading-tight tracking-tight">CareeAi Admin</h1>
-              <p className="text-[10px] text-[var(--text-secondary)] font-semibold leading-none">General Hospital</p>
+              <h1 className="font-extrabold text-sm text-[var(--primary-color)] dark:text-zinc-300 leading-tight tracking-tight">
+                CareeAi Admin
+              </h1>
+              <p className="text-[10px] text-[var(--text-secondary)] font-semibold leading-none">
+                General Hospital
+              </p>
             </div>
           </div>
 
@@ -553,7 +590,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               { id: 'reports', label: 'Reports', icon: 'assessment', tab: 'dashboard' },
               { id: 'analytics', label: 'Analytics', icon: 'analytics', tab: 'dashboard' },
               { id: 'settings', label: 'Settings', icon: 'settings', tab: 'dashboard' }
-            ].map(item => {
+            ].map((item) => {
               const isActive = activeSidebarTab === item.tab;
               return (
                 <button
@@ -563,12 +600,14 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     if (item.tab === 'reminders') loadReminders();
                   }}
                   className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
-                    isActive 
-                      ? 'bg-[var(--primary-color)]/10 text-[var(--primary-color)] border border-[var(--primary-color)]/20' 
+                    isActive
+                      ? 'bg-[var(--primary-color)]/10 text-[var(--primary-color)] border border-[var(--primary-color)]/20'
                       : 'hover:bg-[var(--border-color)]/20 text-[var(--text-secondary)] hover:text-[var(--text-color)]'
                   }`}
                 >
-                  <span className={`material-symbols-outlined text-[18px] ${isActive ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'}`}>
+                  <span
+                    className={`material-symbols-outlined text-[18px] ${isActive ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'}`}
+                  >
                     {item.icon}
                   </span>
                   <span>{item.label}</span>
@@ -585,11 +624,13 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {staffUser?.name ? staffUser.name.charAt(0) : 'S'}
             </div>
             <div>
-              <p className="text-xs font-bold text-[var(--text-color)] leading-tight">{staffUser?.name || 'Staff'}</p>
+              <p className="text-xs font-bold text-[var(--text-color)] leading-tight">
+                {staffUser?.name || 'Staff'}
+              </p>
               <p className="text-[10px] text-[var(--text-secondary)] font-semibold">Reception Desk</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={onLogout}
             className="text-[var(--text-secondary)] hover:text-rose-500 p-2 hover:bg-[var(--border-color)]/20 rounded-lg transition-all flex items-center justify-center"
             title="Log Out Workspace"
@@ -601,14 +642,19 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
       {/* 2. Main Workspace Content Area */}
       <div className="flex-1 flex flex-col overflow-y-auto bg-[var(--bg-color)]">
-        
         {/* Workspace Header toolbar */}
         <div className="px-8 py-4 bg-[var(--card-bg)] border-b border-[var(--border-color)]/30 flex items-center justify-between sticky top-0 z-30 shadow-sm">
           <div>
             <h2 className="text-lg font-bold text-[var(--primary-color)] dark:text-zinc-300 tracking-tight capitalize">
-              {activeSidebarTab === 'monitor' ? 'Queue Management Board' : activeSidebarTab === 'reminders' ? 'Follow-ups / Reminders' : activeSidebarTab + ' Workspace'}
+              {activeSidebarTab === 'monitor'
+                ? 'Queue Management Board'
+                : activeSidebarTab === 'reminders'
+                  ? 'Follow-ups / Reminders'
+                  : activeSidebarTab + ' Workspace'}
             </h2>
-            <p className="text-[10px] text-[var(--text-secondary)] font-semibold">{staffUser?.counterNumber || 'Reception Desk'}</p>
+            <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
+              {staffUser?.counterNumber || 'Reception Desk'}
+            </p>
           </div>
           <div className="flex items-center space-x-3 text-xs md:text-sm">
             <button className="p-2 rounded-full hover:bg-[var(--border-color)]/30 text-[var(--text-secondary)] transition-colors flex items-center justify-center">
@@ -630,7 +676,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             { id: 'patients', label: 'Patients Directory', tab: 'patients' },
             { id: 'queues', label: 'Live Queue Monitor', tab: 'monitor' },
             { id: 'followups', label: 'SMS Reminders', tab: 'reminders' }
-          ].map(item => (
+          ].map((item) => (
             <button
               key={item.id}
               onClick={() => {
@@ -638,8 +684,8 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 if (item.tab === 'reminders') loadReminders();
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
-                activeSidebarTab === item.tab 
-                  ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-sm' 
+                activeSidebarTab === item.tab
+                  ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-sm'
                   : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:text-[var(--text-color)]'
               }`}
             >
@@ -655,21 +701,39 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         </div>
 
         <div className="p-4 md:p-8 flex-1 flex flex-col">
-          
+          {/* A failed queue action must be visible — reception needs to know the
+              token did NOT change, not be left guessing why nothing happened. */}
+          {queueError && (
+            <div className="mb-5 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+              <span className="material-symbols-outlined text-[18px]">error</span>
+              <span className="flex-1">{queueError}</span>
+              <button
+                onClick={() => setQueueError('')}
+                className="text-[10px] font-black opacity-60 hover:opacity-100"
+              >
+                DISMISS
+              </button>
+            </div>
+          )}
+
           {/* Cross-department alert: reception hears about a stock-out the
               moment the pharmacy does, because the patient will ask them. */}
           {stockAlert && (
             <div className="mb-5 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px]">production_quantity_limits</span>
               <span className="flex-1">{stockAlert}</span>
-              <button onClick={() => setStockAlert('')} className="text-[10px] font-black opacity-60 hover:opacity-100">DISMISS</button>
+              <button
+                onClick={() => setStockAlert('')}
+                className="text-[10px] font-black opacity-60 hover:opacity-100"
+              >
+                DISMISS
+              </button>
             </div>
           )}
 
           {/* TAB 1: DASHBOARD OVERVIEW */}
           {activeSidebarTab === 'dashboard' && (
             <div className="space-y-8 animate-fade-in">
-
               {/* LIVE FLOOR VIEW — where every patient in the building is right
                   now, and which department is the bottleneck. */}
               {overview && (
@@ -678,14 +742,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div>
                         <h4 className="font-extrabold text-[var(--text-color)] text-base">Live Floor View</h4>
-                        <p className="text-xs text-[var(--text-secondary)] font-medium">Every patient in the building, by stage</p>
+                        <p className="text-xs text-[var(--text-secondary)] font-medium">
+                          Every patient in the building, by stage
+                        </p>
                       </div>
                       <div className="flex items-center gap-3 text-[11px] font-bold">
                         <span className="text-[var(--text-secondary)]">
                           {overview.doctorsOnDuty} doctor{overview.doctorsOnDuty === 1 ? '' : 's'} on duty
                         </span>
                         {overview.longestWaitMins > 0 && (
-                          <span className={overview.longestWaitMins > 45 ? 'text-rose-500' : 'text-amber-500'}>
+                          <span
+                            className={overview.longestWaitMins > 45 ? 'text-rose-500' : 'text-amber-500'}
+                          >
                             Longest wait {overview.longestWaitMins}m ({overview.longestWaitToken})
                           </span>
                         )}
@@ -695,12 +763,29 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {[
                         { k: 'Waiting', v: overview.byStage.Waiting || 0, tone: 'text-amber-500' },
-                        { k: 'In cabin', v: overview.byStage['In Consultation'] || 0, tone: 'text-[var(--primary-color)]' },
-                        { k: 'At lab', v: (overview.byStage['Lab Pending'] || 0) + (overview.byStage['Lab Complete'] || 0), tone: 'text-sky-500' },
-                        { k: 'At pharmacy', v: overview.byStage['Pharmacy Pending'] || 0, tone: 'text-violet-500' }
-                      ].map(s => (
-                        <div key={s.k} className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl p-3">
-                          <p className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">{s.k}</p>
+                        {
+                          k: 'In cabin',
+                          v: overview.byStage['In Consultation'] || 0,
+                          tone: 'text-[var(--primary-color)]'
+                        },
+                        {
+                          k: 'At lab',
+                          v: (overview.byStage['Lab Pending'] || 0) + (overview.byStage['Lab Complete'] || 0),
+                          tone: 'text-sky-500'
+                        },
+                        {
+                          k: 'At pharmacy',
+                          v: overview.byStage['Pharmacy Pending'] || 0,
+                          tone: 'text-violet-500'
+                        }
+                      ].map((s) => (
+                        <div
+                          key={s.k}
+                          className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl p-3"
+                        >
+                          <p className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">
+                            {s.k}
+                          </p>
                           <p className={`text-2xl font-black leading-none mt-1 ${s.tone}`}>{s.v}</p>
                         </div>
                       ))}
@@ -708,12 +793,20 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                     {/* Per-cabin load — who to route the next walk-in to. */}
                     <div className="space-y-2">
-                      <p className="text-[10px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">Cabin load</p>
-                      {overview.doctorLoad.map(d => (
-                        <div key={d._id} className="flex items-center justify-between gap-3 bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl px-3 py-2">
+                      <p className="text-[10px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
+                        Cabin load
+                      </p>
+                      {overview.doctorLoad.map((d) => (
+                        <div
+                          key={d._id}
+                          className="flex items-center justify-between gap-3 bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl px-3 py-2"
+                        >
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-[var(--text-color)] truncate">
-                              {d.name} <span className="text-[var(--text-secondary)] font-semibold">• {d.department}</span>
+                              {d.name}{' '}
+                              <span className="text-[var(--text-secondary)] font-semibold">
+                                • {d.department}
+                              </span>
                             </p>
                             <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
                               {d.room} • seen {d.seenToday} today
@@ -721,14 +814,24 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             </p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
-                              d.availabilityStatus === 'Available'
-                                ? 'bg-emerald-500/15 text-emerald-500'
-                                : 'bg-amber-500/15 text-amber-500'
-                            }`}>{d.availabilityStatus}</span>
+                            <span
+                              className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
+                                d.availabilityStatus === 'Available'
+                                  ? 'bg-emerald-500/15 text-emerald-500'
+                                  : 'bg-amber-500/15 text-amber-500'
+                              }`}
+                            >
+                              {d.availabilityStatus}
+                            </span>
                             <div className="text-right">
-                              <p className={`text-sm font-black leading-none ${d.waiting > 8 ? 'text-rose-500' : 'text-[var(--text-color)]'}`}>{d.waiting}</p>
-                              <p className="text-[9px] text-[var(--text-secondary)] font-bold">~{d.estimatedWait}m</p>
+                              <p
+                                className={`text-sm font-black leading-none ${d.waiting > 8 ? 'text-rose-500' : 'text-[var(--text-color)]'}`}
+                              >
+                                {d.waiting}
+                              </p>
+                              <p className="text-[9px] text-[var(--text-secondary)] font-bold">
+                                ~{d.estimatedWait}m
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -738,15 +841,46 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     {/* Other departments' backlog — no more phoning the counters. */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
                       {[
-                        { k: 'Lab pending', v: overview.departments.lab.pending, warn: overview.departments.lab.urgent > 0, note: overview.departments.lab.urgent ? `${overview.departments.lab.urgent} urgent` : '' },
-                        { k: 'Abnormal', v: overview.departments.lab.abnormal, warn: overview.departments.lab.abnormal > 0, note: 'needs doctor' },
+                        {
+                          k: 'Lab pending',
+                          v: overview.departments.lab.pending,
+                          warn: overview.departments.lab.urgent > 0,
+                          note: overview.departments.lab.urgent
+                            ? `${overview.departments.lab.urgent} urgent`
+                            : ''
+                        },
+                        {
+                          k: 'Abnormal',
+                          v: overview.departments.lab.abnormal,
+                          warn: overview.departments.lab.abnormal > 0,
+                          note: 'needs doctor'
+                        },
                         { k: 'Rx pending', v: overview.departments.pharmacy.pending, warn: false, note: '' },
-                        { k: 'Stock issues', v: overview.departments.pharmacy.outOfStock + overview.departments.pharmacy.lowStock, warn: overview.departments.pharmacy.outOfStock > 0, note: `${overview.departments.pharmacy.outOfStock} out` }
-                      ].map(s => (
-                        <div key={s.k} className={`rounded-xl p-3 border ${s.warn ? 'bg-rose-500/5 border-rose-500/30' : 'bg-[var(--bg-color)] border-[var(--border-color)]/40'}`}>
-                          <p className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">{s.k}</p>
-                          <p className={`text-xl font-black leading-none mt-1 ${s.warn ? 'text-rose-500' : 'text-[var(--text-color)]'}`}>{s.v}</p>
-                          {s.note && <p className="text-[9px] font-bold text-[var(--text-secondary)] mt-0.5">{s.note}</p>}
+                        {
+                          k: 'Stock issues',
+                          v:
+                            overview.departments.pharmacy.outOfStock + overview.departments.pharmacy.lowStock,
+                          warn: overview.departments.pharmacy.outOfStock > 0,
+                          note: `${overview.departments.pharmacy.outOfStock} out`
+                        }
+                      ].map((s) => (
+                        <div
+                          key={s.k}
+                          className={`rounded-xl p-3 border ${s.warn ? 'bg-rose-500/5 border-rose-500/30' : 'bg-[var(--bg-color)] border-[var(--border-color)]/40'}`}
+                        >
+                          <p className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">
+                            {s.k}
+                          </p>
+                          <p
+                            className={`text-xl font-black leading-none mt-1 ${s.warn ? 'text-rose-500' : 'text-[var(--text-color)]'}`}
+                          >
+                            {s.v}
+                          </p>
+                          {s.note && (
+                            <p className="text-[9px] font-bold text-[var(--text-secondary)] mt-0.5">
+                              {s.note}
+                            </p>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -759,17 +893,62 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {/* Widescreen KPI cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 {[
-                  { label: "Today's Patients", count: totalPatientsCount, icon: 'groups', sub: 'Total registered in directory', color: 'text-[var(--primary-color)]', bg: 'bg-[var(--primary-color)]/10' },
-                  { label: 'Waiting', count: activeAppointmentsCount, icon: 'hourglass_empty', sub: 'Live active queue volume', color: 'text-[var(--secondary-color)]', bg: 'bg-[var(--secondary-color)]/10' },
-                  { label: 'Emergency', count: queues.reduce((acc, q) => acc + (q.currentToken && q.currentToken.tokenType === 'Emergency' ? 1 : 0) + (q.activeQueue ? q.activeQueue.filter(t => t && t.tokenType === 'Emergency').length : 0), 0), icon: 'emergency', sub: 'Critical SOS tokens active', color: 'text-[var(--error-color)]', bg: 'bg-[var(--error-bg)]/80' },
-                  { label: 'Available Rooms', count: availableRoomsCount, icon: 'payments', sub: 'Doctor rooms active now', color: 'text-[var(--tertiary-color)]', bg: 'bg-[var(--tertiary-container)]/10' }
+                  {
+                    label: "Today's Patients",
+                    count: totalPatientsCount,
+                    icon: 'groups',
+                    sub: 'Total registered in directory',
+                    color: 'text-[var(--primary-color)]',
+                    bg: 'bg-[var(--primary-color)]/10'
+                  },
+                  {
+                    label: 'Waiting',
+                    count: activeAppointmentsCount,
+                    icon: 'hourglass_empty',
+                    sub: 'Live active queue volume',
+                    color: 'text-[var(--secondary-color)]',
+                    bg: 'bg-[var(--secondary-color)]/10'
+                  },
+                  {
+                    label: 'Emergency',
+                    count: queues.reduce(
+                      (acc, q) =>
+                        acc +
+                        (q.currentToken && q.currentToken.tokenType === 'Emergency' ? 1 : 0) +
+                        (q.activeQueue
+                          ? q.activeQueue.filter((t) => t && t.tokenType === 'Emergency').length
+                          : 0),
+                      0
+                    ),
+                    icon: 'emergency',
+                    sub: 'Critical SOS tokens active',
+                    color: 'text-[var(--error-color)]',
+                    bg: 'bg-[var(--error-bg)]/80'
+                  },
+                  {
+                    label: 'Available Rooms',
+                    count: availableRoomsCount,
+                    icon: 'payments',
+                    sub: 'Doctor rooms active now',
+                    color: 'text-[var(--tertiary-color)]',
+                    bg: 'bg-[var(--tertiary-container)]/10'
+                  }
                 ].map((kpi, idx) => (
-                  <div key={idx} className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-xl p-5 shadow-[var(--card-shadow)] flex items-center justify-between">
+                  <div
+                    key={idx}
+                    className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-xl p-5 shadow-[var(--card-shadow)] flex items-center justify-between"
+                  >
                     <div>
-                      <p className="text-[10px] font-extrabold text-[var(--text-secondary)] uppercase tracking-wider mb-1">{kpi.label}</p>
-                      <p className="text-3xl font-black text-[var(--primary-color)] dark:text-zinc-300 leading-none">{kpi.count}</p>
+                      <p className="text-[10px] font-extrabold text-[var(--text-secondary)] uppercase tracking-wider mb-1">
+                        {kpi.label}
+                      </p>
+                      <p className="text-3xl font-black text-[var(--primary-color)] dark:text-zinc-300 leading-none">
+                        {kpi.count}
+                      </p>
                     </div>
-                    <div className={`w-11 h-11 rounded-full ${kpi.bg} flex items-center justify-center ${kpi.color}`}>
+                    <div
+                      className={`w-11 h-11 rounded-full ${kpi.bg} flex items-center justify-center ${kpi.color}`}
+                    >
                       <span className="material-symbols-outlined text-[20px]">{kpi.icon}</span>
                     </div>
                   </div>
@@ -778,17 +957,26 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
               {/* Middle Section: Chart & Appointments Stack */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                
                 {/* Left Card: Weekly Recovery SVG Line Chart */}
                 <div className="lg:col-span-2 bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] flex flex-col space-y-4">
                   <div className="flex justify-between items-center pb-2 border-b border-[var(--border-color)]/30">
                     <div>
-                      <h4 className="font-extrabold text-[var(--text-color)] text-base">Checkup Inflow Trends</h4>
-                      <p className="text-xs text-[var(--text-secondary)] font-medium">Insights of daily checkup registrations and recoveries</p>
+                      <h4 className="font-extrabold text-[var(--text-color)] text-base">
+                        Checkup Inflow Trends
+                      </h4>
+                      <p className="text-xs text-[var(--text-secondary)] font-medium">
+                        Insights of daily checkup registrations and recoveries
+                      </p>
                     </div>
                     <div className="flex space-x-3 text-xs font-semibold">
-                      <div className="flex items-center space-x-1.5"><span className="h-2 w-2 rounded-full bg-[var(--primary-color)]"></span><span className="text-[var(--text-secondary)]">Treatment</span></div>
-                      <div className="flex items-center space-x-1.5"><span className="h-2 w-2 rounded-full bg-[var(--tertiary-color)]"></span><span className="text-[var(--text-secondary)]">Recovered</span></div>
+                      <div className="flex items-center space-x-1.5">
+                        <span className="h-2 w-2 rounded-full bg-[var(--primary-color)]"></span>
+                        <span className="text-[var(--text-secondary)]">Treatment</span>
+                      </div>
+                      <div className="flex items-center space-x-1.5">
+                        <span className="h-2 w-2 rounded-full bg-[var(--tertiary-color)]"></span>
+                        <span className="text-[var(--text-secondary)]">Recovered</span>
+                      </div>
                     </div>
                   </div>
 
@@ -801,24 +989,30 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       <line x1="0" y1="150" x2="500" y2="150" stroke="#f5f5f4" strokeWidth="1" />
 
                       {/* Under treatment line (primary Calm Cyan) */}
-                      <path 
-                        d="M 10 130 Q 90 90 170 120 T 330 70 T 490 110" 
-                        fill="none" 
-                        stroke="var(--primary-color)" 
-                        strokeWidth="3.5" 
+                      <path
+                        d="M 10 130 Q 90 90 170 120 T 330 70 T 490 110"
+                        fill="none"
+                        stroke="var(--primary-color)"
+                        strokeWidth="3.5"
                         strokeLinecap="round"
                       />
                       {/* Recovered line (tertiary Health Green) */}
-                      <path 
-                        d="M 10 170 Q 90 140 170 160 T 330 130 T 490 120" 
-                        fill="none" 
-                        stroke="var(--tertiary-color)" 
-                        strokeWidth="3.5" 
+                      <path
+                        d="M 10 170 Q 90 140 170 160 T 330 130 T 490 120"
+                        fill="none"
+                        stroke="var(--tertiary-color)"
+                        strokeWidth="3.5"
                         strokeLinecap="round"
                       />
                     </svg>
                     <div className="absolute inset-0 flex justify-between items-end text-[9px] text-stone-400 font-bold px-1.5 pt-2">
-                      <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                      <span>Sun</span>
+                      <span>Mon</span>
+                      <span>Tue</span>
+                      <span>Wed</span>
+                      <span>Thu</span>
+                      <span>Fri</span>
+                      <span>Sat</span>
                     </div>
                   </div>
                 </div>
@@ -827,7 +1021,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] flex flex-col space-y-4">
                   <div className="pb-2 border-b border-[var(--border-color)]/30">
                     <h4 className="font-extrabold text-[var(--text-color)] text-base">Next in Cabin Queue</h4>
-                    <p className="text-xs text-[var(--text-secondary)] font-medium">Active and upcoming queue admissions</p>
+                    <p className="text-xs text-[var(--text-secondary)] font-medium">
+                      Active and upcoming queue admissions
+                    </p>
                   </div>
 
                   {recentAppointmentsList.length > 0 ? (
@@ -835,43 +1031,62 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       {recentAppointmentsList.map((app, i) => (
                         <div key={i} className="py-2.5 flex items-center justify-between text-xs">
                           <div className="flex items-center space-x-3">
-                            <img src={app.avatar} alt="avatar" className="h-8 w-8 rounded-full bg-[var(--bg-color)] border border-[var(--border-color)]/30 shrink-0" />
+                            <img
+                              src={app.avatar}
+                              alt="avatar"
+                              className="h-8 w-8 rounded-full bg-[var(--bg-color)] border border-[var(--border-color)]/30 shrink-0"
+                            />
                             <div>
                               <p className="font-bold text-[var(--text-color)]">{app.name}</p>
-                              <p className="text-[10px] text-[var(--text-secondary)] truncate max-w-36 font-semibold">{app.symptoms}</p>
+                              <p className="text-[10px] text-[var(--text-secondary)] truncate max-w-36 font-semibold">
+                                {app.symptoms}
+                              </p>
                             </div>
                           </div>
                           <div className="text-right">
-                            <span className="text-[10px] font-extrabold bg-[var(--bg-color)] border border-[var(--border-color)]/30 px-2 py-0.5 rounded text-[var(--text-color)]">{app.time}</span>
+                            <span className="text-[10px] font-extrabold bg-[var(--bg-color)] border border-[var(--border-color)]/30 px-2 py-0.5 rounded text-[var(--text-color)]">
+                              {app.time}
+                            </span>
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="text-[var(--text-secondary)] text-xs italic py-8 text-center flex-1 flex items-center justify-center">No active appointments in system.</div>
+                    <div className="text-[var(--text-secondary)] text-xs italic py-8 text-center flex-1 flex items-center justify-center">
+                      No active appointments in system.
+                    </div>
                   )}
                 </div>
-
               </div>
 
               {/* Bottom Row: Doctor availability & Polyclinics */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                
                 {/* Doctor's availability status summary list */}
                 <div className="md:col-span-2 bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)]">
-                  <h4 className="font-extrabold text-[var(--text-color)] text-sm mb-4">Doctor Schedules & Availability</h4>
+                  <h4 className="font-extrabold text-[var(--text-color)] text-sm mb-4">
+                    Doctor Schedules & Availability
+                  </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {doctors.map(doc => (
-                      <div key={doc._id} className="p-3 bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-xl flex justify-between items-center text-xs">
+                    {doctors.map((doc) => (
+                      <div
+                        key={doc._id}
+                        className="p-3 bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-xl flex justify-between items-center text-xs"
+                      >
                         <div>
                           <p className="font-bold text-[var(--text-color)]">{doc.name}</p>
-                          <p className="text-[10px] text-[var(--text-secondary)] font-medium">{doc.department} | {doc.currentRoom}</p>
+                          <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                            {doc.department} | {doc.currentRoom}
+                          </p>
                         </div>
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                          doc.availabilityStatus === 'Available' ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' :
-                          doc.availabilityStatus === 'In Surgery' ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20' :
-                          'bg-amber-500/10 text-amber-600 border border-amber-500/20'
-                        }`}>
+                        <span
+                          className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                            doc.availabilityStatus === 'Available'
+                              ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                              : doc.availabilityStatus === 'In Surgery'
+                                ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
+                                : 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                          }`}
+                        >
                           {doc.availabilityStatus}
                         </span>
                       </div>
@@ -882,32 +1097,40 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 {/* Polyclinic summary card */}
                 <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] flex flex-col justify-between">
                   <div>
-                    <h4 className="font-extrabold text-[var(--text-color)] text-sm mb-2">Hospital Departments</h4>
-                    <p className="text-xs text-[var(--text-secondary)] font-semibold mb-4">+35% checkup increase this week</p>
+                    <h4 className="font-extrabold text-[var(--text-color)] text-sm mb-2">
+                      Hospital Departments
+                    </h4>
+                    <p className="text-xs text-[var(--text-secondary)] font-semibold mb-4">
+                      +35% checkup increase this week
+                    </p>
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-center text-xs">
                     <div>
                       <p className="text-lg font-black text-[var(--text-color)]">80</p>
-                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">General</p>
+                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
+                        General
+                      </p>
                     </div>
                     <div>
                       <p className="text-lg font-black text-[var(--text-color)]">50</p>
-                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">Peds</p>
+                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
+                        Peds
+                      </p>
                     </div>
                     <div>
                       <p className="text-lg font-black text-[var(--text-color)]">40</p>
-                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">Cardio</p>
+                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
+                        Cardio
+                      </p>
                     </div>
                   </div>
                 </div>
-
               </div>
 
               {/* Intercom Row */}
               <div className="grid grid-cols-1 gap-8 max-w-2xl mt-8">
                 <InternalChatBox token={staffToken} user={staffUser} role="Staff" />
               </div>
-
             </div>
           )}
 
@@ -920,21 +1143,27 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                 {walkError && (
                   <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl flex items-center space-x-2">
-                    <span className="material-symbols-outlined text-[16px] text-rose-500 shrink-0">error</span>
+                    <span className="material-symbols-outlined text-[16px] text-rose-500 shrink-0">
+                      error
+                    </span>
                     <span>{walkError}</span>
                   </div>
                 )}
 
                 {walkSuccess && (
                   <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-550 text-xs rounded-xl flex items-center space-x-2">
-                    <span className="material-symbols-outlined text-[16px] text-emerald-500 shrink-0">check_circle</span>
+                    <span className="material-symbols-outlined text-[16px] text-emerald-500 shrink-0">
+                      check_circle
+                    </span>
                     <span>{walkSuccess}</span>
                   </div>
                 )}
 
                 <form onSubmit={handleRegisterWalkIn} className="space-y-4">
                   <div>
-                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">Patient Name</label>
+                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">
+                      Patient Name
+                    </label>
                     <input
                       type="text"
                       value={walkName}
@@ -970,7 +1199,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   </div>
 
                   <div>
-                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">Phone Number</label>
+                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">
+                      Phone Number
+                    </label>
                     <input
                       type="text"
                       value={walkPhone}
@@ -983,7 +1214,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                   <div>
                     <label className="block text-[var(--text-secondary)] font-semibold mb-1 flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[15px] text-[var(--primary-color)]">auto_awesome</span>
+                      <span className="material-symbols-outlined text-[15px] text-[var(--primary-color)]">
+                        auto_awesome
+                      </span>
                       Assign Doctor
                     </label>
                     <select
@@ -992,19 +1225,22 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
                     >
                       <option value="">🤖 Auto-assign (smart triage — recommended)</option>
-                      {doctors.map(doc => (
+                      {doctors.map((doc) => (
                         <option key={doc._id} value={doc._id}>
                           {doc.name} ({doc.department})
                         </option>
                       ))}
                     </select>
                     <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-1">
-                      Leave on Auto-assign — the system reads the symptoms, picks the right department & the least-busy doctor.
+                      Leave on Auto-assign — the system reads the symptoms, picks the right department & the
+                      least-busy doctor.
                     </p>
                   </div>
 
                   <div>
-                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">Symptoms Summary</label>
+                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">
+                      Symptoms Summary
+                    </label>
                     <textarea
                       value={walkSymptoms}
                       onChange={(e) => setWalkSymptoms(e.target.value)}
@@ -1015,7 +1251,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   </div>
 
                   <div>
-                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">Priority Group (auto-detected if left as None)</label>
+                    <label className="block text-[var(--text-secondary)] font-semibold mb-1">
+                      Priority Group (auto-detected if left as None)
+                    </label>
                     <select
                       value={walkPriority}
                       onChange={(e) => setWalkPriority(e.target.value)}
@@ -1030,10 +1268,14 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                   <div className="flex items-center justify-between p-3 bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-xl">
                     <div className="flex items-center space-x-2">
-                      <span className="material-symbols-outlined text-rose-500 animate-pulse text-[18px]">local_fire_department</span>
+                      <span className="material-symbols-outlined text-rose-500 animate-pulse text-[18px]">
+                        local_fire_department
+                      </span>
                       <div>
                         <p className="text-xs font-bold text-[var(--text-color)]">Emergency SOS</p>
-                        <p className="text-[10px] text-[var(--text-secondary)] font-medium">Bypass queue to top</p>
+                        <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                          Bypass queue to top
+                        </p>
                       </div>
                     </div>
                     <input
@@ -1057,27 +1299,42 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {/* Right List: Live Doctor queue monitor cards */}
               <div className="flex-1 lg:overflow-y-auto space-y-6">
                 {queues.length === 0 ? (
-                  <div className="text-[var(--text-secondary)] text-sm italic py-8">No hospital queues initialized.</div>
+                  <div className="text-[var(--text-secondary)] text-sm italic py-8">
+                    No hospital queues initialized.
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {queues.map(q => (
-                      <div key={q._id} className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 flex flex-col space-y-4 shadow-[var(--card-shadow)]">
+                    {queues.map((q) => (
+                      <div
+                        key={q._id}
+                        className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 flex flex-col space-y-4 shadow-[var(--card-shadow)]"
+                      >
                         <div className="flex justify-between items-start pb-3 border-b border-[var(--border-color)]/30">
                           <div>
-                            <h4 className="font-extrabold text-[var(--text-color)] text-base">{q.doctor?.name}</h4>
-                            <p className="text-xs text-[var(--text-secondary)] font-semibold">{q.doctor?.department} | {q.doctor?.currentRoom}</p>
+                            <h4 className="font-extrabold text-[var(--text-color)] text-base">
+                              {q.doctor?.name}
+                            </h4>
+                            <p className="text-xs text-[var(--text-secondary)] font-semibold">
+                              {q.doctor?.department} | {q.doctor?.currentRoom}
+                            </p>
                           </div>
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                            q.doctor?.availabilityStatus === 'Available' ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' :
-                            q.doctor?.availabilityStatus === 'In Surgery' ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20' :
-                            'bg-amber-500/10 text-amber-600 border border-amber-500/20'
-                          }`}>
+                          <span
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                              q.doctor?.availabilityStatus === 'Available'
+                                ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                                : q.doctor?.availabilityStatus === 'In Surgery'
+                                  ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
+                                  : 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                            }`}
+                          >
                             {q.doctor?.availabilityStatus}
                           </span>
                         </div>
 
                         <div className="flex items-center justify-between bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/30">
-                          <span className="text-xs text-[var(--text-secondary)] font-bold">In Cabin checkup:</span>
+                          <span className="text-xs text-[var(--text-secondary)] font-bold">
+                            In Cabin checkup:
+                          </span>
                           {q.currentToken ? (
                             <span className="text-xs font-bold text-teal-650 bg-teal-500/10 px-3 py-1 rounded-lg border border-teal-500/20">
                               Token {q.currentToken.tokenNumber} ({q.currentToken.tokenType})
@@ -1088,25 +1345,33 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         </div>
 
                         <div className="flex-1 flex flex-col space-y-2">
-                          <span className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wider">Waiting list ({q.activeQueue?.length || 0})</span>
-                          
+                          <span className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wider">
+                            Waiting list ({q.activeQueue?.length || 0})
+                          </span>
+
                           {q.activeQueue && q.activeQueue.filter(Boolean).length > 0 ? (
                             <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
                               {q.activeQueue.filter(Boolean).map((tok, idx) => (
-                                <div 
+                                <div
                                   key={tok._id}
                                   className={`p-3 rounded-xl border flex items-center justify-between text-xs transition-all bg-[var(--card-bg)] ${
-                                    tok.tokenType === 'Emergency' 
-                                      ? 'animate-flashing-emergency border-rose-500/40 bg-rose-500/5' 
+                                    tok.tokenType === 'Emergency'
+                                      ? 'animate-flashing-emergency border-rose-500/40 bg-rose-500/5'
                                       : 'border-[var(--border-color)] hover:border-[var(--text-secondary)]/30'
                                   }`}
                                 >
                                   <div>
                                     <div className="flex items-center space-x-2">
-                                      <span className="font-extrabold text-[var(--text-color)]">{tok.tokenNumber}</span>
-                                      <span className="text-[10px] text-[var(--text-secondary)] font-semibold">({tok.patient?.name})</span>
+                                      <span className="font-extrabold text-[var(--text-color)]">
+                                        {tok.tokenNumber}
+                                      </span>
+                                      <span className="text-[10px] text-[var(--text-secondary)] font-semibold">
+                                        ({tok.patient?.name})
+                                      </span>
                                     </div>
-                                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5 truncate max-w-44 font-semibold">Sym: {tok.symptoms}</p>
+                                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5 truncate max-w-44 font-semibold">
+                                      Sym: {tok.symptoms}
+                                    </p>
                                   </div>
 
                                   <div className="flex items-center space-x-1">
@@ -1136,7 +1401,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                               ))}
                             </div>
                           ) : (
-                            <div className="text-xs text-[var(--text-secondary)]/50 italic py-2">No patients currently waiting.</div>
+                            <div className="text-xs text-[var(--text-secondary)]/50 italic py-2">
+                              No patients currently waiting.
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1150,7 +1417,6 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           {/* TAB 3: PATIENT MANAGEMENT REGISTRY */}
           {activeSidebarTab === 'patients' && (
             <div className="space-y-6 animate-fade-in text-[var(--text-color)]">
-              
               {/* Toolbar search & Add Button */}
               <div className="flex justify-between items-center bg-[var(--card-bg)] border border-[var(--border-color)]/30 p-4 rounded-xl shadow-[var(--card-shadow)]">
                 <div className="relative max-w-xs w-full">
@@ -1162,7 +1428,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     className="w-full bg-[var(--bg-color)] border border-[var(--border-color)] focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-xs text-[var(--text-color)] font-semibold"
                   />
                 </div>
-                
+
                 <button
                   onClick={() => {
                     setPatName('');
@@ -1198,17 +1464,31 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     <tbody className="divide-y divide-[var(--border-color)]/20 text-[var(--text-color)] font-medium">
                       {filteredPatients.length === 0 ? (
                         <tr>
-                          <td colSpan="7" className="p-8 text-center text-[var(--text-secondary)]/50 italic">No patient records match the criteria.</td>
+                          <td colSpan="7" className="p-8 text-center text-[var(--text-secondary)]/50 italic">
+                            No patient records match the criteria.
+                          </td>
                         </tr>
                       ) : (
-                        filteredPatients.map(pat => (
+                        filteredPatients.map((pat) => (
                           <tr key={pat._id} className="hover:bg-[var(--border-color)]/10 transition-all">
-                            <td className="p-4 whitespace-nowrap font-bold text-[var(--text-color)]">{pat.name}</td>
-                            <td className="p-4 whitespace-nowrap font-semibold text-[var(--text-secondary)]">{pat.phone}</td>
-                            <td className="p-4 whitespace-nowrap font-bold text-[var(--text-color)]">{pat.age} years</td>
-                            <td className="p-4 whitespace-nowrap text-[var(--text-secondary)] font-semibold">{pat.gender}</td>
-                            <td className="p-4 text-center font-black text-[var(--secondary-color)]">{pat.visitCount || 1}</td>
-                            <td className="p-4 whitespace-nowrap text-[var(--text-secondary)]">{new Date(pat.createdAt || Date.now()).toLocaleDateString()}</td>
+                            <td className="p-4 whitespace-nowrap font-bold text-[var(--text-color)]">
+                              {pat.name}
+                            </td>
+                            <td className="p-4 whitespace-nowrap font-semibold text-[var(--text-secondary)]">
+                              {pat.phone}
+                            </td>
+                            <td className="p-4 whitespace-nowrap font-bold text-[var(--text-color)]">
+                              {pat.age} years
+                            </td>
+                            <td className="p-4 whitespace-nowrap text-[var(--text-secondary)] font-semibold">
+                              {pat.gender}
+                            </td>
+                            <td className="p-4 text-center font-black text-[var(--secondary-color)]">
+                              {pat.visitCount || 1}
+                            </td>
+                            <td className="p-4 whitespace-nowrap text-[var(--text-secondary)]">
+                              {new Date(pat.createdAt || Date.now()).toLocaleDateString()}
+                            </td>
                             <td className="p-4 text-right whitespace-nowrap space-x-2">
                               <button
                                 onClick={() => {
@@ -1239,12 +1519,15 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           {/* TAB 4: SMS REMINDERS LOGS */}
           {activeSidebarTab === 'reminders' && (
             <div className="flex-1 flex flex-col space-y-6 animate-fade-in text-[var(--text-color)]">
-              
               {/* Trigger controller */}
               <div className="flex justify-between items-center bg-[var(--card-bg)] border border-[var(--border-color)]/30 p-4 rounded-xl shadow-[var(--card-shadow)]">
                 <div>
-                  <h4 className="font-extrabold text-[var(--text-color)] text-sm">Dispatched Reminder Logs</h4>
-                  <p className="text-[10px] text-[var(--text-secondary)] font-medium">Manually dispatch pending re-visit SMS notifications scheduled for today.</p>
+                  <h4 className="font-extrabold text-[var(--text-color)] text-sm">
+                    Dispatched Reminder Logs
+                  </h4>
+                  <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                    Manually dispatch pending re-visit SMS notifications scheduled for today.
+                  </p>
                 </div>
                 <button
                   onClick={handleTriggerReminders}
@@ -1258,20 +1541,31 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {triggerLog && (
                 <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs space-y-2 text-emerald-600 animate-fade-in shadow-sm">
                   <div className="flex items-center space-x-2">
-                    <span className="material-symbols-outlined text-[16px] text-emerald-500">check_circle</span>
-                    <span className="font-bold">Reminders Dispatched Successfully! ({triggerLog.length} sent)</span>
+                    <span className="material-symbols-outlined text-[16px] text-emerald-500">
+                      check_circle
+                    </span>
+                    <span className="font-bold">
+                      Reminders Dispatched Successfully! ({triggerLog.length} sent)
+                    </span>
                   </div>
                   {triggerLog.length > 0 ? (
                     <div className="max-h-24 overflow-y-auto space-y-1.5 pr-1">
                       {triggerLog.map((log, idx) => (
-                        <div key={idx} className="bg-[var(--card-bg)] p-2 rounded border border-[var(--border-color)]/30">
-                          <p className="font-bold text-[var(--text-color)]">To: {log.patientName} ({log.patientPhone}) | Doctor: {log.doctorName}</p>
+                        <div
+                          key={idx}
+                          className="bg-[var(--card-bg)] p-2 rounded border border-[var(--border-color)]/30"
+                        >
+                          <p className="font-bold text-[var(--text-color)]">
+                            To: {log.patientName} ({log.patientPhone}) | Doctor: {log.doctorName}
+                          </p>
                           <p className="text-[var(--text-secondary)] mt-0.5 font-medium">"{log.message}"</p>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="font-medium text-[var(--text-secondary)]">No pending reminders were scheduled for today or earlier.</p>
+                    <p className="font-medium text-[var(--text-secondary)]">
+                      No pending reminders were scheduled for today or earlier.
+                    </p>
                   )}
                 </div>
               )}
@@ -1294,36 +1588,63 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     <tbody className="divide-y divide-[var(--border-color)]/20 text-[var(--text-color)] font-medium">
                       {remindersLoading ? (
                         <tr>
-                          <td colSpan="7" className="p-8 text-center text-[var(--text-secondary)]/50 italic">Loading reminders...</td>
+                          <td colSpan="7" className="p-8 text-center text-[var(--text-secondary)]/50 italic">
+                            Loading reminders...
+                          </td>
                         </tr>
                       ) : reminders.length === 0 ? (
                         <tr>
-                          <td colSpan="7" className="p-8 text-center text-[var(--text-secondary)]/50 italic">No scheduled reminders recorded in system database.</td>
+                          <td colSpan="7" className="p-8 text-center text-[var(--text-secondary)]/50 italic">
+                            No scheduled reminders recorded in system database.
+                          </td>
                         </tr>
                       ) : (
-                        reminders.map(rem => (
+                        reminders.map((rem) => (
                           <tr key={rem._id} className="hover:bg-[var(--border-color)]/10 transition-all">
-                            <td className="p-4 whitespace-nowrap text-[var(--text-secondary)]">{new Date(rem.createdAt).toLocaleDateString()}</td>
-                            <td className="p-4 whitespace-nowrap">
-                              <div className="font-bold text-[var(--text-color)]">{rem.patient?.name || 'Patient'}</div>
-                              <div className="text-[10px] text-[var(--text-secondary)]">{rem.patient?.phone}</div>
+                            <td className="p-4 whitespace-nowrap text-[var(--text-secondary)]">
+                              {new Date(rem.createdAt).toLocaleDateString()}
                             </td>
                             <td className="p-4 whitespace-nowrap">
-                              <div className="font-bold text-[var(--text-color)]">{rem.doctor?.name || 'Doctor'}</div>
-                              <div className="text-[10px] text-[var(--text-secondary)]">{rem.doctor?.department}</div>
+                              <div className="font-bold text-[var(--text-color)]">
+                                {rem.patient?.name || 'Patient'}
+                              </div>
+                              <div className="text-[10px] text-[var(--text-secondary)]">
+                                {rem.patient?.phone}
+                              </div>
                             </td>
-                            <td className="p-4 whitespace-nowrap text-[var(--text-color)] font-black">{new Date(rem.scheduledDate).toLocaleDateString()}</td>
-                            <td className="p-4 whitespace-nowrap font-bold text-[var(--text-color)]">{rem.revisitDays} days</td>
                             <td className="p-4 whitespace-nowrap">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                rem.status === 'Pending' ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' :
-                                rem.status === 'Sent' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-555' :
-                                'bg-rose-500/10 border-rose-500/20 text-rose-500'
-                              }`}>
+                              <div className="font-bold text-[var(--text-color)]">
+                                {rem.doctor?.name || 'Doctor'}
+                              </div>
+                              <div className="text-[10px] text-[var(--text-secondary)]">
+                                {rem.doctor?.department}
+                              </div>
+                            </td>
+                            <td className="p-4 whitespace-nowrap text-[var(--text-color)] font-black">
+                              {new Date(rem.scheduledDate).toLocaleDateString()}
+                            </td>
+                            <td className="p-4 whitespace-nowrap font-bold text-[var(--text-color)]">
+                              {rem.revisitDays} days
+                            </td>
+                            <td className="p-4 whitespace-nowrap">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  rem.status === 'Pending'
+                                    ? 'bg-amber-500/10 border-amber-500/20 text-amber-500'
+                                    : rem.status === 'Sent'
+                                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-555'
+                                      : 'bg-rose-500/10 border-rose-500/20 text-rose-500'
+                                }`}
+                              >
                                 {rem.status}
                               </span>
                             </td>
-                            <td className="p-4 max-w-56 truncate text-[var(--text-secondary)] font-medium" title={rem.message}>{rem.message}</td>
+                            <td
+                              className="p-4 max-w-56 truncate text-[var(--text-secondary)] font-medium"
+                              title={rem.message}
+                            >
+                              {rem.message}
+                            </td>
                           </tr>
                         ))
                       )}
@@ -1333,7 +1654,6 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </div>
             </div>
           )}
-
         </div>
       </div>
 

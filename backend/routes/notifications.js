@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Subscription = require('../models/Subscription');
 const pushHelper = require('../utils/pushHelper');
+const logger = require('../utils/logger');
 
 // GET VAPID Public Key
 router.get('/vapid-key', (req, res) => {
@@ -15,20 +16,28 @@ router.get('/vapid-key', (req, res) => {
 router.post('/subscribe', async (req, res) => {
   const { subscription, tokenId, role } = req.body;
 
-  if (!subscription || !subscription.endpoint || !subscription.keys || !subscription.keys.auth || !subscription.keys.p256dh) {
+  if (
+    !subscription ||
+    !subscription.endpoint ||
+    !subscription.keys ||
+    !subscription.keys.auth ||
+    !subscription.keys.p256dh
+  ) {
     return res.status(400).json({ message: 'Invalid subscription payload' });
   }
 
   try {
     // Check if subscription already exists
-    let existingSub = await Subscription.findOne({ endpoint: subscription.endpoint });
+    const existingSub = await Subscription.findOne({ endpoint: subscription.endpoint });
 
     if (existingSub) {
       existingSub.tokenId = tokenId || existingSub.tokenId;
       existingSub.role = role || existingSub.role;
       existingSub.keys = subscription.keys;
       await existingSub.save();
-      return res.status(200).json({ message: 'Subscription updated successfully', subscription: existingSub });
+      return res
+        .status(200)
+        .json({ message: 'Subscription updated successfully', subscription: existingSub });
     }
 
     const newSub = new Subscription({
@@ -53,7 +62,7 @@ router.post('/subscribe', async (req, res) => {
 
     res.status(201).json({ message: 'Subscribed successfully', subscription: newSub });
   } catch (err) {
-    console.error('Subscription saving failed:', err);
+    logger.error('Subscription saving failed', { err: err });
     res.status(500).json({ message: 'Failed to save subscription details', error: err.message });
   }
 });

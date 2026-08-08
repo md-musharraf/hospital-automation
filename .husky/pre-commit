@@ -1,0 +1,13 @@
+# Pre-commit gate.
+#
+# Two stages, cheapest first:
+#   1. lint-staged  — lint + format ONLY the files being committed (fast).
+#   2. npm test     — the offline chat-engine suite (~1s, no DB, no server).
+#
+# Keeping this under a couple of seconds is the point: a hook that is slow gets
+# bypassed with --no-verify, and a hook that is bypassed protects nothing.
+# The heavier cross-role integration suite needs a running backend, so it stays
+# a deliberate `npm run test:integration` before opening a PR.
+
+npx lint-staged || exit 1
+npm test || exit 1

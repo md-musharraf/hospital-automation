@@ -6,16 +6,32 @@ const Doctor = require('../models/Doctor');
 const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Hospital = require('../models/Hospital');
-const { recalculateQueueTimes, formatApptTime, insertTokenByPriority, isDoctorFull } = require('../utils/queueHelper');
-const { sendWhatsAppNotification, getWhatsAppConfig, setWhatsAppConfig, getWhatsAppHistory, getPrimaryWhatsAppNumber, checkMetaToken } = require('../utils/whatsappHelper');
+const {
+  recalculateQueueTimes,
+  formatApptTime,
+  insertTokenByPriority,
+  isDoctorFull
+} = require('../utils/queueHelper');
+const {
+  sendWhatsAppNotification,
+  getWhatsAppConfig,
+  setWhatsAppConfig,
+  getWhatsAppHistory,
+  getPrimaryWhatsAppNumber,
+  checkMetaToken
+} = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { resolveLocation } = require('../utils/locationHelper');
 const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
+const logger = require('../utils/logger');
 
 // Bilingual Translation Dictionary
 const dictionary = {
   en: {
-    welcome: 'Welcome to CareeAi AI Assistant! 🏥 (You can also chat with us on WhatsApp at ' + getPrimaryWhatsAppNumber() + ')',
+    welcome:
+      'Welcome to CareeAi AI Assistant! 🏥 (You can also chat with us on WhatsApp at ' +
+      getPrimaryWhatsAppNumber() +
+      ')',
     selectOption: 'Please select an option below to proceed:',
     options: [
       'Book New Appointment / Generate Token',
@@ -24,15 +40,19 @@ const dictionary = {
       'Check Live Queue Status',
       'Medicine Refill (Repeat)'
     ],
-    refillPhone: "💊 Medicine Refill: please enter the patient's registered phone number to find the last prescription:",
-    refillNoRecord: "I couldn't find any past prescription for this number. Please book a normal appointment so a doctor can prescribe.",
-    refillRequested: (doctor, meds) => `✅ Refill request sent to ${doctor}. You'll get a WhatsApp once it's approved — no need to visit the OPD.\n💊 Requested: ${meds}\n\n✅ रिफिल अनुरोध ${doctor} को भेज दिया गया है। मंज़ूरी मिलते ही आपको WhatsApp मिलेगा — OPD आने की ज़रूरत नहीं।`,
+    refillPhone:
+      "💊 Medicine Refill: please enter the patient's registered phone number to find the last prescription:",
+    refillNoRecord:
+      "I couldn't find any past prescription for this number. Please book a normal appointment so a doctor can prescribe.",
+    refillRequested: (doctor, meds) =>
+      `✅ Refill request sent to ${doctor}. You'll get a WhatsApp once it's approved — no need to visit the OPD.\n💊 Requested: ${meds}\n\n✅ रिफिल अनुरोध ${doctor} को भेज दिया गया है। मंज़ूरी मिलते ही आपको WhatsApp मिलेगा — OPD आने की ज़रूरत नहीं।`,
     enterPhone: "To begin, please enter the Patient's Phone Number (e.g. +91 9876543210):",
     invalidPhone: 'Please enter a valid Phone Number (minimum 7 characters):',
     invalidName: 'Please enter a valid name (at least 2 characters):',
-    welcomeBackPhone: "Welcome back! Please enter your registered Phone Number to locate your file:",
+    welcomeBackPhone: 'Welcome back! Please enter your registered Phone Number to locate your file:',
     emergencyPhone: "🚨 EMERGENCY SOS TRIGGERED. Please enter the Patient's Phone Number immediately:",
-    welcomeBackText: (name, age, gender) => `Welcome back, ${name}! I located your details (Age: ${age}, Gender: ${gender}).`,
+    welcomeBackText: (name, age, gender) =>
+      `Welcome back, ${name}! I located your details (Age: ${age}, Gender: ${gender}).`,
     describeSymptoms: 'Please describe your current symptoms (e.g. high fever, throat pain):',
     phoneNotFound: "I couldn't find a registration for this number. Let's register you as a new patient.",
     enterFullName: "Please enter the Patient's Full Name:",
@@ -46,37 +66,50 @@ const dictionary = {
     noDoctors: 'No doctors are currently available. Type "Hi" to try again later.',
     selectDoctorPrompt: 'Select an available doctor to book your token:',
     invalidDoctor: 'Invalid doctor selection. Please choose from the list:',
-    emergencyDetected: '🚨 Your symptoms may need URGENT care. I have marked this token as EMERGENCY priority so you are seen first.',
-    triageRecommend: (dept, doctor, room, wait) => `✅ Based on your symptoms, the right department is *${dept}*.\n\n👨‍⚕️ Recommended: ${doctor}\n🚪 ${room}\n⏱️ Approx. wait: ${wait} min (least-busy doctor for you)`,
+    emergencyDetected:
+      '🚨 Your symptoms may need URGENT care. I have marked this token as EMERGENCY priority so you are seen first.',
+    triageRecommend: (dept, doctor, room, wait) =>
+      `✅ Based on your symptoms, the right department is *${dept}*.\n\n👨‍⚕️ Recommended: ${doctor}\n🚪 ${room}\n⏱️ Approx. wait: ${wait} min (least-busy doctor for you)`,
     triageConfirmPrompt: 'Shall I book this token for you now?',
     triageConfirmOptions: ['✅ Yes, Book My Token', '🔄 Choose Another Doctor'],
-    opdFull: "🛑 Sorry, today's OPD token limit for this department is full. Please come tomorrow morning, or choose another facility. No need to travel today — you would not get a token.\n🛑 क्षमा करें, आज के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं — आज आने की ज़रूरत नहीं।",
-    priorityNote: (cat) => cat === 'Senior'
-      ? '👵 Senior citizen — you have been given priority in the queue.'
-      : cat === 'Pregnant'
-        ? '🤰 Expecting mother — you have been given priority in the queue.'
-        : '♿ Priority patient — you have been moved ahead in the queue.',
+    opdFull:
+      "🛑 Sorry, today's OPD token limit for this department is full. Please come tomorrow morning, or choose another facility. No need to travel today — you would not get a token.\n🛑 क्षमा करें, आज के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं — आज आने की ज़रूरत नहीं।",
+    priorityNote: (cat) =>
+      cat === 'Senior'
+        ? '👵 Senior citizen — you have been given priority in the queue.'
+        : cat === 'Pregnant'
+          ? '🤰 Expecting mother — you have been given priority in the queue.'
+          : '♿ Priority patient — you have been moved ahead in the queue.',
     bookingCompleteHeader: 'Booking Complete! 🎉',
-    bookingCompleteBody: (tokenNumber, doctor, room, wait) => `• Token Number: ${tokenNumber}\n• Doctor: ${doctor}\n• Cabin: ${room}\n• Estimated Wait: ${wait} mins.`,
+    bookingCompleteBody: (tokenNumber, doctor, room, wait) =>
+      `• Token Number: ${tokenNumber}\n• Doctor: ${doctor}\n• Cabin: ${room}\n• Estimated Wait: ${wait} mins.`,
     defaultCatchAll: 'Your previous booking is complete. Type "Hi" to start a new inquiry!',
     enterTokenToCheck: 'Please enter your Token Number (e.g., T-101 or T-102):',
     tokenNotFound: 'Token not found. Please verify the token number and try again, or type "Hi" to restart.',
     statusInCabin: 'You are currently inside the cabin! Please proceed.',
-    statusWaiting: (position, wait) => `There are ${position - 1} patient(s) ahead of you. Estimated wait: ${wait} mins.`,
+    statusWaiting: (position, wait) =>
+      `There are ${position - 1} patient(s) ahead of you. Estimated wait: ${wait} mins.`,
     statusCompleted: (status) => `Status: ${status}. Checkup complete or token cancelled.`,
     tokenDetailsHeader: (tokenNumber) => `Token Details for ${tokenNumber}:`,
-    tokenDetailsBody: (patient, doctor, dept, statusText) => `• Patient: ${patient}\n• Doctor: ${doctor} (${dept})\n• Live Status: ${statusText}`,
+    tokenDetailsBody: (patient, doctor, dept, statusText) =>
+      `• Patient: ${patient}\n• Doctor: ${doctor} (${dept})\n• Live Status: ${statusText}`,
     // --- Ease-of-use additions -------------------------------------------------
     menuTitle: 'Main Menu — what would you like to do?',
-    notUnderstood: "Sorry, I didn't quite get that. Tap an option below, reply with its number, or just type your problem (e.g. \"fever since 2 days\").",
-    helpText: '🆘 *How to use this assistant*\n\n• Just type your problem — e.g. "fever and cough" — and I will pick the right department & doctor for you.\n• Reply with a number (1-5) or tap an option to use the menu.\n• Type your token number (e.g. T-101) anytime to see your live queue position.\n• Type *MENU* to go back • *HELP* for this help • *CHANGE* to use a different phone number.\n\n✅ You never need to stand in line — we WhatsApp you when your turn is near.',
-    usingWhatsAppNumber: (num) => `📱 Using your WhatsApp number ${num} — no need to type it. (Reply *CHANGE* to use a different number.)`,
+    notUnderstood:
+      'Sorry, I didn\'t quite get that. Tap an option below, reply with its number, or just type your problem (e.g. "fever since 2 days").',
+    helpText:
+      '🆘 *How to use this assistant*\n\n• Just type your problem — e.g. "fever and cough" — and I will pick the right department & doctor for you.\n• Reply with a number (1-5) or tap an option to use the menu.\n• Type your token number (e.g. T-101) anytime to see your live queue position.\n• Type *MENU* to go back • *HELP* for this help • *CHANGE* to use a different phone number.\n\n✅ You never need to stand in line — we WhatsApp you when your turn is near.',
+    usingWhatsAppNumber: (num) =>
+      `📱 Using your WhatsApp number ${num} — no need to type it. (Reply *CHANGE* to use a different number.)`,
     changeNumberPrompt: 'Sure — please enter the phone number you would like to use:',
     symptomsNoted: (s) => `Got it — "${s}". Let me find the right doctor for you.`,
     tipTypeProblem: 'Tip: you can also just type your problem (e.g. "chest pain") and I will do the rest.'
   },
   hi: {
-    welcome: 'केयरसिंक एआई असिस्टेंट में आपका स्वागत है! 🏥 (आप हमसे सीधे व्हाट्सएप पर ' + getPrimaryWhatsAppNumber() + ' पर भी चैट कर सकते हैं)',
+    welcome:
+      'केयरसिंक एआई असिस्टेंट में आपका स्वागत है! 🏥 (आप हमसे सीधे व्हाट्सएप पर ' +
+      getPrimaryWhatsAppNumber() +
+      ' पर भी चैट कर सकते हैं)',
     selectOption: 'कृपया आगे बढ़ने के लिए नीचे दिए गए विकल्पों में से एक चुनें:',
     options: [
       'नया अपॉइंटमेंट बुक करें / टोकन जेनरेट करें',
@@ -85,59 +118,75 @@ const dictionary = {
       'लाइव क्यू स्टेटस जांचें',
       'दवा रिफिल (दोबारा)'
     ],
-    refillPhone: "💊 दवा रिफिल: पिछली पर्ची ढूँढने के लिए कृपया मरीज का पंजीकृत मोबाइल नंबर दर्ज करें:",
-    refillNoRecord: "इस नंबर के लिए कोई पुरानी पर्ची नहीं मिली। कृपया सामान्य अपॉइंटमेंट बुक करें ताकि डॉक्टर दवा लिख सकें।",
-    refillRequested: (doctor, meds) => `✅ रिफिल अनुरोध ${doctor} को भेज दिया गया है। मंज़ूरी मिलते ही आपको WhatsApp मिलेगा — OPD आने की ज़रूरत नहीं।\n💊 अनुरोधित: ${meds}`,
-    enterPhone: "शुरू करने के लिए, कृपया मरीज का मोबाइल नंबर दर्ज करें (उदा. +91 9876543210):",
+    refillPhone: '💊 दवा रिफिल: पिछली पर्ची ढूँढने के लिए कृपया मरीज का पंजीकृत मोबाइल नंबर दर्ज करें:',
+    refillNoRecord:
+      'इस नंबर के लिए कोई पुरानी पर्ची नहीं मिली। कृपया सामान्य अपॉइंटमेंट बुक करें ताकि डॉक्टर दवा लिख सकें।',
+    refillRequested: (doctor, meds) =>
+      `✅ रिफिल अनुरोध ${doctor} को भेज दिया गया है। मंज़ूरी मिलते ही आपको WhatsApp मिलेगा — OPD आने की ज़रूरत नहीं।\n💊 अनुरोधित: ${meds}`,
+    enterPhone: 'शुरू करने के लिए, कृपया मरीज का मोबाइल नंबर दर्ज करें (उदा. +91 9876543210):',
     invalidPhone: 'कृपया एक सही मोबाइल नंबर दर्ज करें (कम से कम 7 अंक):',
     invalidName: 'कृपया एक वैध नाम दर्ज करें (कम से कम 2 अक्षर):',
-    welcomeBackPhone: "वापसी पर आपका स्वागत है! अपनी फ़ाइल ढूँढने के लिए अपना पंजीकृत मोबाइल नंबर दर्ज करें:",
-    emergencyPhone: "🚨 इमरजेंसी एसओएस। कृपया तुरंत मरीज का मोबाइल नंबर दर्ज करें:",
-    welcomeBackText: (name, age, gender) => `वापसी पर आपका स्वागत है, ${name}! मुझे आपकी जानकारी मिल गई है (उम्र: ${age}, लिंग: ${gender === 'Male' ? 'पुरुष' : gender === 'Female' ? 'महिला' : 'अन्य'}).`,
+    welcomeBackPhone: 'वापसी पर आपका स्वागत है! अपनी फ़ाइल ढूँढने के लिए अपना पंजीकृत मोबाइल नंबर दर्ज करें:',
+    emergencyPhone: '🚨 इमरजेंसी एसओएस। कृपया तुरंत मरीज का मोबाइल नंबर दर्ज करें:',
+    welcomeBackText: (name, age, gender) =>
+      `वापसी पर आपका स्वागत है, ${name}! मुझे आपकी जानकारी मिल गई है (उम्र: ${age}, लिंग: ${gender === 'Male' ? 'पुरुष' : gender === 'Female' ? 'महिला' : 'अन्य'}).`,
     describeSymptoms: 'कृपया अपने वर्तमान लक्षणों का वर्णन करें (जैसे: तेज़ बुखार, गले में दर्द):',
-    phoneNotFound: "मुझे इस नंबर का कोई रजिस्ट्रेशन नहीं मिला। आइए आपको एक नए मरीज के रूप में पंजीकृत करें।",
-    enterFullName: "कृपया मरीज का पूरा नाम दर्ज करें:",
-    enterFullNameGeneric: "धन्यवाद। अब, कृपया मरीज का पूरा नाम दर्ज करें:",
+    phoneNotFound: 'मुझे इस नंबर का कोई रजिस्ट्रेशन नहीं मिला। आइए आपको एक नए मरीज के रूप में पंजीकृत करें।',
+    enterFullName: 'कृपया मरीज का पूरा नाम दर्ज करें:',
+    enterFullNameGeneric: 'धन्यवाद। अब, कृपया मरीज का पूरा नाम दर्ज करें:',
     enterAge: (name) => `ठीक है। ${name} की उम्र क्या है?`,
     invalidAge: 'कृपया एक सही उम्र दर्ज करें (1 से 130 के बीच की संख्या):',
     selectGender: 'मरीज का लिंग चुनें:',
     genderOptions: ['पुरुष', 'महिला', 'अन्य'],
     invalidGender: 'कृपया नीचे दिए गए विकल्पों में से एक चुनें:',
-    describeSymptomsLong: 'कृपया अपने लक्षणों का संक्षेप में वर्णन करें (जैसे: तेज़ बुखार, सांस लेने में तकलीफ, खांसी):',
+    describeSymptomsLong:
+      'कृपया अपने लक्षणों का संक्षेप में वर्णन करें (जैसे: तेज़ बुखार, सांस लेने में तकलीफ, खांसी):',
     noDoctors: 'वर्तमान में कोई डॉक्टर उपलब्ध नहीं हैं। बाद में पुनः प्रयास करने के लिए "Hi" टाइप करें।',
     selectDoctorPrompt: 'टोकन बुक करने के लिए उपलब्ध डॉक्टर का चयन करें:',
     invalidDoctor: 'गलत डॉक्टर का चयन। कृपया सूची में से चुनें:',
-    emergencyDetected: '🚨 आपके लक्षणों को तुरंत इलाज की ज़रूरत हो सकती है। मैंने इस टोकन को इमरजेंसी प्राथमिकता दे दी है ताकि आपको पहले देखा जाए।',
-    triageRecommend: (dept, doctor, room, wait) => `✅ आपके लक्षणों के आधार पर सही विभाग है *${dept}*।\n\n👨‍⚕️ सुझाव: ${doctor}\n🚪 ${room}\n⏱️ अनुमानित प्रतीक्षा: ${wait} मिनट (आपके लिए सबसे कम भीड़ वाले डॉक्टर)`,
+    emergencyDetected:
+      '🚨 आपके लक्षणों को तुरंत इलाज की ज़रूरत हो सकती है। मैंने इस टोकन को इमरजेंसी प्राथमिकता दे दी है ताकि आपको पहले देखा जाए।',
+    triageRecommend: (dept, doctor, room, wait) =>
+      `✅ आपके लक्षणों के आधार पर सही विभाग है *${dept}*।\n\n👨‍⚕️ सुझाव: ${doctor}\n🚪 ${room}\n⏱️ अनुमानित प्रतीक्षा: ${wait} मिनट (आपके लिए सबसे कम भीड़ वाले डॉक्टर)`,
     triageConfirmPrompt: 'क्या मैं आपका टोकन अभी बुक कर दूँ?',
     triageConfirmOptions: ['✅ हाँ, मेरा टोकन बुक करें', '🔄 दूसरा डॉक्टर चुनें'],
-    opdFull: "🛑 क्षमा करें, आज इस विभाग के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं, या कोई दूसरी सुविधा चुनें। आज आने की ज़रूरत नहीं — टोकन नहीं मिलेगा।",
-    priorityNote: (cat) => cat === 'Senior'
-      ? '👵 वरिष्ठ नागरिक — आपको क़तार में प्राथमिकता दी गई है।'
-      : cat === 'Pregnant'
-        ? '🤰 गर्भवती महिला — आपको क़तार में प्राथमिकता दी गई है।'
-        : '♿ प्राथमिकता मरीज़ — आपको क़तार में आगे कर दिया गया है।',
+    opdFull:
+      '🛑 क्षमा करें, आज इस विभाग के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं, या कोई दूसरी सुविधा चुनें। आज आने की ज़रूरत नहीं — टोकन नहीं मिलेगा।',
+    priorityNote: (cat) =>
+      cat === 'Senior'
+        ? '👵 वरिष्ठ नागरिक — आपको क़तार में प्राथमिकता दी गई है।'
+        : cat === 'Pregnant'
+          ? '🤰 गर्भवती महिला — आपको क़तार में प्राथमिकता दी गई है।'
+          : '♿ प्राथमिकता मरीज़ — आपको क़तार में आगे कर दिया गया है।',
     bookingCompleteHeader: 'बुकिंग पूरी हो गई! 🎉',
-    bookingCompleteBody: (tokenNumber, doctor, room, wait) => `• टोकन नंबर: ${tokenNumber}\n• डॉक्टर: ${doctor}\n• केबिन: ${room}\n• अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
+    bookingCompleteBody: (tokenNumber, doctor, room, wait) =>
+      `• टोकन नंबर: ${tokenNumber}\n• डॉक्टर: ${doctor}\n• केबिन: ${room}\n• अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
     defaultCatchAll: 'आपकी पिछली बुकिंग पूरी हो चुकी है। नया टोकन बनाने के लिए "Hi" टाइप करें!',
     enterTokenToCheck: 'कृपया अपना टोकन नंबर दर्ज करें (उदा. T-101 या T-102):',
-    tokenNotFound: 'टोकन नहीं मिला। कृपया टोकन नंबर की जांच करें और पुनः प्रयास करें, या पुनरारंभ करने के लिए "Hi" टाइप करें।',
+    tokenNotFound:
+      'टोकन नहीं मिला। कृपया टोकन नंबर की जांच करें और पुनः प्रयास करें, या पुनरारंभ करने के लिए "Hi" टाइप करें।',
     statusInCabin: 'आप वर्तमान में केबिन के अंदर हैं! कृपया आगे बढ़ें।',
-    statusWaiting: (position, wait) => `आपसे आगे ${position - 1} मरीज हैं। अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
-    statusCompleted: (status) => `स्थिति: ${status === 'Completed' ? 'पूर्ण' : status}. चेकअप पूरा हो चुका है या टोकन रद्द कर दिया गया है.`,
+    statusWaiting: (position, wait) =>
+      `आपसे आगे ${position - 1} मरीज हैं। अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
+    statusCompleted: (status) =>
+      `स्थिति: ${status === 'Completed' ? 'पूर्ण' : status}. चेकअप पूरा हो चुका है या टोकन रद्द कर दिया गया है.`,
     tokenDetailsHeader: (tokenNumber) => `टोकन विवरण ${tokenNumber} के लिए:`,
-    tokenDetailsBody: (patient, doctor, dept, statusText) => `• मरीज: ${patient}\n• डॉक्टर: ${doctor} (${dept})\n• लाइव स्थिति: ${statusText}`,
+    tokenDetailsBody: (patient, doctor, dept, statusText) =>
+      `• मरीज: ${patient}\n• डॉक्टर: ${doctor} (${dept})\n• लाइव स्थिति: ${statusText}`,
     // --- Ease-of-use additions -------------------------------------------------
     menuTitle: 'मुख्य मेनू — मैं आपकी क्या मदद करूँ?',
-    notUnderstood: 'माफ़ कीजिए, मैं समझ नहीं पाया। नीचे कोई विकल्प चुनें, उसका नंबर भेजें, या सीधे अपनी तकलीफ़ लिखें (जैसे "2 दिन से बुखार")।',
-    helpText: '🆘 *इस असिस्टेंट का उपयोग कैसे करें*\n\n• बस अपनी तकलीफ़ लिखें — जैसे "बुखार और खांसी" — मैं सही विभाग और डॉक्टर चुन दूँगा।\n• मेनू के लिए नंबर (1-5) भेजें या विकल्प पर टैप करें।\n• अपना टोकन नंबर (जैसे T-101) कभी भी भेजें और लाइव स्थिति देखें।\n• *MENU* लिखें — मेनू पर वापस • *HELP* — यह मदद • *CHANGE* — दूसरा मोबाइल नंबर।\n\n✅ लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।',
-    usingWhatsAppNumber: (num) => `📱 आपका WhatsApp नंबर ${num} इस्तेमाल कर रहे हैं — टाइप करने की ज़रूरत नहीं। (दूसरा नंबर देने के लिए *CHANGE* लिखें।)`,
+    notUnderstood:
+      'माफ़ कीजिए, मैं समझ नहीं पाया। नीचे कोई विकल्प चुनें, उसका नंबर भेजें, या सीधे अपनी तकलीफ़ लिखें (जैसे "2 दिन से बुखार")।',
+    helpText:
+      '🆘 *इस असिस्टेंट का उपयोग कैसे करें*\n\n• बस अपनी तकलीफ़ लिखें — जैसे "बुखार और खांसी" — मैं सही विभाग और डॉक्टर चुन दूँगा।\n• मेनू के लिए नंबर (1-5) भेजें या विकल्प पर टैप करें।\n• अपना टोकन नंबर (जैसे T-101) कभी भी भेजें और लाइव स्थिति देखें।\n• *MENU* लिखें — मेनू पर वापस • *HELP* — यह मदद • *CHANGE* — दूसरा मोबाइल नंबर।\n\n✅ लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।',
+    usingWhatsAppNumber: (num) =>
+      `📱 आपका WhatsApp नंबर ${num} इस्तेमाल कर रहे हैं — टाइप करने की ज़रूरत नहीं। (दूसरा नंबर देने के लिए *CHANGE* लिखें।)`,
     changeNumberPrompt: 'ठीक है — कृपया वह मोबाइल नंबर दर्ज करें जिसे आप उपयोग करना चाहते हैं:',
     symptomsNoted: (s) => `समझ गया — "${s}"। मैं आपके लिए सही डॉक्टर ढूँढता हूँ।`,
-    tipTypeProblem: 'सुझाव: आप सीधे अपनी तकलीफ़ भी लिख सकते हैं (जैसे "सीने में दर्द") — बाकी मैं संभाल लूँगा।'
+    tipTypeProblem:
+      'सुझाव: आप सीधे अपनी तकलीफ़ भी लिख सकते हैं (जैसे "सीने में दर्द") — बाकी मैं संभाल लूँगा।'
   }
 };
-
 
 // ---------------------------------------------------------------------------
 // Input understanding helpers.
@@ -150,11 +199,30 @@ const norm = (s) => (s || '').toString().trim().toLowerCase();
 const digitsOnly = (s) => (s || '').toString().replace(/\D/g, '');
 
 // Global commands understood in EVERY state, on both channels.
-const MENU_TRIGGERS = ['menu', 'main menu', '0', 'back', 'cancel', 'exit', 'stop',
-  'मेनू', 'मुख्य मेनू', 'वापस', 'रद्द', 'बंद'];
+const MENU_TRIGGERS = [
+  'menu',
+  'main menu',
+  '0',
+  'back',
+  'cancel',
+  'exit',
+  'stop',
+  'मेनू',
+  'मुख्य मेनू',
+  'वापस',
+  'रद्द',
+  'बंद'
+];
 const HELP_TRIGGERS = ['help', '?', 'help me', 'commands', 'options', 'मदद', 'सहायता'];
-const CHANGE_PHONE_TRIGGERS = ['change', 'change number', 'other number', 'change phone',
-  'बदलें', 'नंबर बदलें', 'दूसरा नंबर'];
+const CHANGE_PHONE_TRIGGERS = [
+  'change',
+  'change number',
+  'other number',
+  'change phone',
+  'बदलें',
+  'नंबर बदलें',
+  'दूसरा नंबर'
+];
 const RESET_TRIGGERS = ['hi', 'hello', 'hey', 'start', 'reset', 'restart', 'नमस्ते', 'हैलो', 'शुरू'];
 // Only these wipe the chosen language too; a plain "hi" just returns to the menu.
 const HARD_RESET_TRIGGERS = ['reset', 'restart'];
@@ -186,17 +254,26 @@ function phoneVariants(raw) {
   const trimmed = (raw || '').toString().trim();
   const d = digitsOnly(trimmed);
   const last10 = d.slice(-10);
-  return [...new Set([
-    trimmed, trimmed.replace(/\s+/g, ''), normalizePhone(trimmed),
-    d, `+${d}`, last10, `+91${last10}`, `91${last10}`, `0${last10}`
-  ])].filter(Boolean);
+  return [
+    ...new Set([
+      trimmed,
+      trimmed.replace(/\s+/g, ''),
+      normalizePhone(trimmed),
+      d,
+      `+${d}`,
+      last10,
+      `+91${last10}`,
+      `91${last10}`,
+      `0${last10}`
+    ])
+  ].filter(Boolean);
 }
 
 /** Tenant-scoped patient lookup that tolerates phone-number formatting. */
 async function findPatientByPhone(hospitalId, raw) {
   const variants = phoneVariants(raw);
   if (variants.length === 0) return null;
-  return Patient.findOne({ hospital: hospitalId, $or: variants.map(p => ({ phone: p })) });
+  return Patient.findOne({ hospital: hospitalId, $or: variants.map((p) => ({ phone: p })) });
 }
 
 /** "T-101", "t101", "101" → the canonical token number, else null. */
@@ -230,7 +307,7 @@ function detectMenuIntent(raw) {
 
   // 2. Exact option label in either language.
   for (const lang of ['en', 'hi']) {
-    const idx = dictionary[lang].options.findIndex(o => norm(o) === m);
+    const idx = dictionary[lang].options.findIndex((o) => norm(o) === m);
     if (idx >= 0) return ['book', 'revisit', 'emergency', 'status', 'refill'][idx];
   }
 
@@ -238,9 +315,15 @@ function detectMenuIntent(raw) {
   //    more specific intent before the generic "book" catch-all.
   if (/(emerg|sos|urgent|serious|critical|ambulance|इमरजेंसी|आपात|तुरंत|गंभीर)/.test(m)) return 'emergency';
   if (/(refill|repeat|same medicine|medicine|tablet|dawa|davai|रिफिल|दवा|दवाई|गोली)/.test(m)) return 'refill';
-  if (/(status|queue|position|how long|kitna|kitni|kab tak|number kaha|स्थिति|कतार|क़तार|कितनी देर|मेरा नंबर)/.test(m)) return 'status';
+  if (
+    /(status|queue|position|how long|kitna|kitni|kab tak|number kaha|स्थिति|कतार|क़तार|कितनी देर|मेरा नंबर)/.test(
+      m
+    )
+  )
+    return 'status';
   if (/(re-?visit|revisit|follow ?up|again|existing|purana|दोबारा|पुराना|फिर से)/.test(m)) return 'revisit';
-  if (/(book|appoint|token|slot|consult|doctor|new patient|बुक|अपॉइंटमेंट|टोकन|नया|डॉक्टर|दिखाना)/.test(m)) return 'book';
+  if (/(book|appoint|token|slot|consult|doctor|new patient|बुक|अपॉइंटमेंट|टोकन|नया|डॉक्टर|दिखाना)/.test(m))
+    return 'book';
 
   return null;
 }
@@ -277,7 +360,7 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   // OPD capacity cutoff — never refuse an Emergency, but a Regular/Re-visit booking
   // is blocked once the doctor hits the daily token limit, so the patient is told
   // NOW (before travelling) instead of standing in a line for a token that won't come.
-  if (tokenType !== 'Emergency' && await isDoctorFull(selectedDoc)) {
+  if (tokenType !== 'Emergency' && (await isDoctorFull(selectedDoc))) {
     return {
       messages: [{ sender: 'bot', text: text.opdFull }],
       options: text.options
@@ -286,8 +369,12 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
 
   // Vulnerable-group priority: auto Senior (age>=60) / Pregnant (symptoms), or an
   // explicit category set by reception. Emergencies keep their own higher priority.
-  const priorityCategory = (session.tempData && session.tempData.priorityCategory)
-    || detectPriorityCategory({ age: session.tempData && session.tempData.age, symptoms: session.tempData && session.tempData.symptoms });
+  const priorityCategory =
+    (session.tempData && session.tempData.priorityCategory) ||
+    detectPriorityCategory({
+      age: session.tempData && session.tempData.age,
+      symptoms: session.tempData && session.tempData.symptoms
+    });
 
   const tokenNumber = await generateUniqueTokenNumber(currentHospId);
 
@@ -314,7 +401,7 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   try {
     await recalculateQueueTimes(selectedDoc._id);
   } catch (qErr) {
-    console.error('Error recalculating queue times:', qErr);
+    logger.error('Error recalculating queue times', { err: qErr });
   }
 
   session.currentState = 'COMPLETED';
@@ -331,7 +418,7 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   try {
     await sendWhatsAppNotification(patient.phone, bookingMessage);
   } catch (waErr) {
-    console.error('WhatsApp notification error:', waErr);
+    logger.error('WhatsApp notification error', { err: waErr });
   }
 
   if (socketIo) {
@@ -340,7 +427,7 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
       socketIo.to(`doctor:${selectedDoc._id}`).emit('queue-updated');
       socketIo.to(`hospital:${currentHospId}`).emit('queue-updated', { doctorId: selectedDoc._id });
     } catch (sErr) {
-      console.error('Socket emit error:', sErr);
+      logger.error('Socket emit error', { err: sErr });
     }
   }
 
@@ -349,21 +436,33 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   try {
     const { logActivity } = require('../utils/realtime');
     await logActivity(socketIo, {
-      hospital: currentHospId, type: 'token-created', role: 'patient',
+      hospital: currentHospId,
+      type: 'token-created',
+      role: 'patient',
       actor: patient.name,
       message: `${refreshedToken.tokenNumber} booked via ${session.sessionId.startsWith('wa_') ? 'WhatsApp' : 'the web assistant'} for ${selectedDoc.name}${tokenType === 'Emergency' ? ' — EMERGENCY' : ''}.`,
-      tokenNumber: refreshedToken.tokenNumber, refId: refreshedToken._id,
+      tokenNumber: refreshedToken.tokenNumber,
+      refId: refreshedToken._id,
       severity: tokenType === 'Emergency' ? 'critical' : 'info'
     });
   } catch (aErr) {
-    console.error('Activity log error:', aErr);
+    logger.error('Activity log error', { err: aErr });
   }
 
-  const waitMins = typeof refreshedToken.estimatedWaitTime === 'number' ? refreshedToken.estimatedWaitTime : 0;
+  const waitMins =
+    typeof refreshedToken.estimatedWaitTime === 'number' ? refreshedToken.estimatedWaitTime : 0;
 
   const completeMessages = [
     { sender: 'bot', text: text.bookingCompleteHeader },
-    { sender: 'bot', text: text.bookingCompleteBody(refreshedToken.tokenNumber, selectedDoc.name, selectedDoc.currentRoom || 'Cabin A', waitMins) }
+    {
+      sender: 'bot',
+      text: text.bookingCompleteBody(
+        refreshedToken.tokenNumber,
+        selectedDoc.name,
+        selectedDoc.currentRoom || 'Cabin A',
+        waitMins
+      )
+    }
   ];
   if (priorityCategory && priorityCategory !== 'None') {
     completeMessages.push({ sender: 'bot', text: text.priorityNote(priorityCategory) });
@@ -426,7 +525,11 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
     msgs.push({ sender: 'bot', text: text.emergencyDetected });
   }
 
-  const { doctor: suggested, matchedDepartment, allFull } = await pickLeastBusyDoctor(doctors, triage.department);
+  const {
+    doctor: suggested,
+    matchedDepartment,
+    allFull
+  } = await pickLeastBusyDoctor(doctors, triage.department);
 
   // OPD capacity cutoff: if every candidate doctor is full and this is not an
   // emergency, tell the patient now — don't recommend a doctor who can't take them.
@@ -443,7 +546,7 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
     const sQueue = await Queue.findOne({ doctor: suggested._id });
     const sLen = (sQueue && sQueue.activeQueue && sQueue.activeQueue.length) || 0;
     const sWait = sLen * (suggested.averageCheckupTime || 10) + ((sQueue && sQueue.bufferDelay) || 0);
-    const shownDept = matchedDepartment ? triage.department : (suggested.department || triage.department);
+    const shownDept = matchedDepartment ? triage.department : suggested.department || triage.department;
 
     session.tempData.suggestedDoctorId = String(suggested._id);
     session.currentState = 'AWAITING_TRIAGE_CONFIRM';
@@ -453,7 +556,10 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
     return {
       messages: [
         ...msgs,
-        { sender: 'bot', text: text.triageRecommend(shownDept, suggested.name, suggested.currentRoom || 'Cabin A', sWait) },
+        {
+          sender: 'bot',
+          text: text.triageRecommend(shownDept, suggested.name, suggested.currentRoom || 'Cabin A', sWait)
+        },
         { sender: 'bot', text: text.triageConfirmPrompt }
       ],
       options: text.triageConfirmOptions
@@ -466,7 +572,7 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
   await session.save();
   return {
     messages: [...msgs, { sender: 'bot', text: text.selectDoctorPrompt }],
-    options: doctors.map(d => `${d.name} (${d.department})`)
+    options: doctors.map((d) => `${d.name} (${d.department})`)
   };
 }
 
@@ -475,9 +581,7 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
  * caller can decide what to say.
  */
 async function lookupTokenStatus(tokenNumber, text) {
-  const token = await Token.findOne({ tokenNumber })
-    .populate('patient')
-    .populate('doctor');
+  const token = await Token.findOne({ tokenNumber }).populate('patient').populate('doctor');
 
   // token.doctor/token.patient can be null if the referenced Doctor or Patient
   // document was deleted after the token was created — treat that the same as
@@ -490,19 +594,23 @@ async function lookupTokenStatus(tokenNumber, text) {
     if (queue.currentToken && queue.currentToken.toString() === token._id.toString()) {
       position = 0; // In cabin
     } else {
-      position = queue.activeQueue.findIndex(id => id.toString() === token._id.toString()) + 1;
+      position = queue.activeQueue.findIndex((id) => id.toString() === token._id.toString()) + 1;
     }
   }
 
-  const statusText = position === 0
-    ? text.statusInCabin
-    : position > 0
-      ? text.statusWaiting(position, token.estimatedWaitTime)
-      : text.statusCompleted(token.status);
+  const statusText =
+    position === 0
+      ? text.statusInCabin
+      : position > 0
+        ? text.statusWaiting(position, token.estimatedWaitTime)
+        : text.statusCompleted(token.status);
 
   return [
     { sender: 'bot', text: text.tokenDetailsHeader(token.tokenNumber) },
-    { sender: 'bot', text: text.tokenDetailsBody(token.patient.name, token.doctor.name, token.doctor.department, statusText) }
+    {
+      sender: 'bot',
+      text: text.tokenDetailsBody(token.patient.name, token.doctor.name, token.doctor.department, statusText)
+    }
   ];
 }
 
@@ -512,16 +620,21 @@ async function lookupTokenStatus(tokenNumber, text) {
  */
 async function optionsForState(session, text, currentHospId) {
   switch (session.currentState) {
-    case 'LANGUAGE': return ['English', 'हिन्दी', 'Facility Info'];
-    case 'AWAITING_GENDER': return text.genderOptions;
-    case 'AWAITING_TRIAGE_CONFIRM': return text.triageConfirmOptions;
+    case 'LANGUAGE':
+      return ['English', 'हिन्दी', 'Facility Info'];
+    case 'AWAITING_GENDER':
+      return text.genderOptions;
+    case 'AWAITING_TRIAGE_CONFIRM':
+      return text.triageConfirmOptions;
     case 'AWAITING_DOCTOR_CHOICE': {
       const doctors = await loadFacilityDoctors(currentHospId);
-      return doctors.map(d => `${d.name} (${d.department})`);
+      return doctors.map((d) => `${d.name} (${d.department})`);
     }
     case 'WELCOME':
-    case 'COMPLETED': return text.options;
-    default: return [];
+    case 'COMPLETED':
+      return text.options;
+    default:
+      return [];
   }
 }
 
@@ -554,13 +667,20 @@ async function handleRefill({ session, phone, currentHospId, text, lang, socketI
     // so a plain `patient: id` query would miss it.
     const pid = String(patient._id);
     const toks = await Token.find({ hospital: currentHospId }).populate('doctor', '-passwordHash');
-    lastRx = (toks || [])
-      .filter(t => {
-        const tp = t.patient && (t.patient._id || t.patient);
-        return String(tp) === pid
-          && t.prescription && Array.isArray(t.prescription.medicines) && t.prescription.medicines.length > 0;
-      })
-      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))[0] || null;
+    lastRx =
+      (toks || [])
+        .filter((t) => {
+          const tp = t.patient && (t.patient._id || t.patient);
+          return (
+            String(tp) === pid &&
+            t.prescription &&
+            Array.isArray(t.prescription.medicines) &&
+            t.prescription.medicines.length > 0
+          );
+        })
+        .sort(
+          (a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)
+        )[0] || null;
   }
 
   if (!patient || !lastRx || !lastRx.doctor) {
@@ -575,8 +695,11 @@ async function handleRefill({ session, phone, currentHospId, text, lang, socketI
   }
 
   const RefillRequest = require('../models/RefillRequest');
-  const medsSnapshot = lastRx.prescription.medicines.map(m => ({
-    name: m.name, dosage: m.dosage, duration: m.duration, instructions: m.instructions
+  const medsSnapshot = lastRx.prescription.medicines.map((m) => ({
+    name: m.name,
+    dosage: m.dosage,
+    duration: m.duration,
+    instructions: m.instructions
   }));
   await new RefillRequest({
     hospital: currentHospId,
@@ -593,15 +716,24 @@ async function handleRefill({ session, phone, currentHospId, text, lang, socketI
     await pushHelper.notifyByRole('Doctor', {
       title: '💊 New Medicine Refill Request',
       body: `${patient.name} has requested a repeat prescription. Tap to review.`,
-      icon: '/icon.svg', url: '/'
+      icon: '/icon.svg',
+      url: '/'
     });
-  } catch (_) { /* best-effort */ }
-
-  if (socketIo) {
-    try { socketIo.to(`doctor:${lastRx.doctor._id}`).emit('refill-request'); } catch (_) {}
+  } catch (_) {
+    /* best-effort */
   }
 
-  const medsList = medsSnapshot.map(m => m.name).filter(Boolean).join(', ') || 'previous medicines';
+  if (socketIo) {
+    try {
+      socketIo.to(`doctor:${lastRx.doctor._id}`).emit('refill-request');
+    } catch (_) {}
+  }
+
+  const medsList =
+    medsSnapshot
+      .map((m) => m.name)
+      .filter(Boolean)
+      .join(', ') || 'previous medicines';
   session.currentState = 'COMPLETED';
   session.tempData = { language: lang, hospitalId: currentHospId };
   session.markModified && session.markModified('tempData');
@@ -621,9 +753,8 @@ async function handleRefill({ session, phone, currentHospId, text, lang, socketI
  */
 async function afterPhoneKnown({ session, phone, currentHospId, text, lang, socketIo, leadMessages = [] }) {
   // Look up with the raw input (tolerant), but STORE the canonical form.
-  const patient = session.tempData && session.tempData.refillMode
-    ? null
-    : await findPatientByPhone(currentHospId, phone);
+  const patient =
+    session.tempData && session.tempData.refillMode ? null : await findPatientByPhone(currentHospId, phone);
 
   session.tempData = { ...session.tempData, phone: patient ? patient.phone : normalizePhone(phone) };
 
@@ -645,7 +776,11 @@ async function afterPhoneKnown({ session, phone, currentHospId, text, lang, sock
 
     if (session.tempData.pendingSymptoms) {
       return await routeSymptoms({
-        session, symptoms: session.tempData.pendingSymptoms, currentHospId, text, preMessages: lead
+        session,
+        symptoms: session.tempData.pendingSymptoms,
+        currentHospId,
+        text,
+        preMessages: lead
       });
     }
 
@@ -686,7 +821,12 @@ async function beginFlow({ session, intent, text, currentHospId, lang, waPhone, 
 
   if (waPhone) {
     return await afterPhoneKnown({
-      session, phone: waPhone, currentHospId, text, lang, socketIo,
+      session,
+      phone: waPhone,
+      currentHospId,
+      text,
+      lang,
+      socketIo,
       leadMessages: [{ sender: 'bot', text: text.usingWhatsAppNumber(waPhone) }]
     });
   }
@@ -695,10 +835,14 @@ async function beginFlow({ session, intent, text, currentHospId, lang, waPhone, 
   session.markModified && session.markModified('tempData');
   await session.save();
 
-  const prompt = intent === 'refill' ? text.refillPhone
-    : intent === 'emergency' ? text.emergencyPhone
-      : intent === 'revisit' ? text.welcomeBackPhone
-        : text.enterPhone;
+  const prompt =
+    intent === 'refill'
+      ? text.refillPhone
+      : intent === 'emergency'
+        ? text.emergencyPhone
+        : intent === 'revisit'
+          ? text.welcomeBackPhone
+          : text.enterPhone;
 
   return { messages: [{ sender: 'bot', text: prompt }], options: [] };
 }
@@ -754,9 +898,9 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
     return {
       messages: [
-        { 
-          sender: 'bot', 
-          text: `🏥 *Welcome to ${qrHospital.name}!*\n📍 ${qrHospital.address}, ${qrHospital.city}\n📞 Phone: ${qrHospital.phone}\n\nPlease select your preferred language / अपनी पसंदीदा भाषा चुनें:\n• English\n• हिन्दी\n\n(Tip: Reply "Info" for facility photos & services)` 
+        {
+          sender: 'bot',
+          text: `🏥 *Welcome to ${qrHospital.name}!*\n📍 ${qrHospital.address}, ${qrHospital.city}\n📞 Phone: ${qrHospital.phone}\n\nPlease select your preferred language / अपनी पसंदीदा भाषा चुनें:\n• English\n• हिन्दी\n\n(Tip: Reply "Info" for facility photos & services)`
         }
       ],
       options: ['English', 'हिन्दी', 'Facility Info']
@@ -764,7 +908,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   }
 
   const currentHospId = (session.tempData && session.tempData.hospitalId) || hospitalId || 'general-hospital';
-  const hospital = await Hospital.findOne({ id: currentHospId }) || await Hospital.findOne({});
+  const hospital = (await Hospital.findOne({ id: currentHospId })) || (await Hospital.findOne({}));
 
   const lowerMsg = norm(cleanMsg);
   // WhatsApp sessions carry the patient's own number in the session id, so on
@@ -778,7 +922,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     const facilityName = hospital ? hospital.name : 'CareeAi';
     return {
       messages: [
-        { sender: 'bot', text: `Welcome to ${facilityName} AI Assistant! 🏥\n(WhatsApp: ${num})\n\nPlease select your preferred language / अपनी पसंदीदा भाषा चुनें:\n• English\n• हिन्दी\n\n(Tip: Reply "Info" for facility images, doctors count & services)` }
+        {
+          sender: 'bot',
+          text: `Welcome to ${facilityName} AI Assistant! 🏥\n(WhatsApp: ${num})\n\nPlease select your preferred language / अपनी पसंदीदा भाषा चुनें:\n• English\n• हिन्दी\n\n(Tip: Reply "Info" for facility images, doctors count & services)`
+        }
       ],
       options: ['English', 'हिन्दी', 'Facility Info']
     };
@@ -790,9 +937,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   if (RESET_TRIGGERS.includes(lowerMsg)) {
     if (knownLang && !HARD_RESET_TRIGGERS.includes(lowerMsg)) {
       const t0 = dictionary[knownLang];
-      return await backToMenu(session, t0, knownLang, currentHospId, [
-        { sender: 'bot', text: t0.welcome }
-      ]);
+      return await backToMenu(session, t0, knownLang, currentHospId, [{ sender: 'bot', text: t0.welcome }]);
     }
     session.currentState = 'LANGUAGE';
     session.tempData = { hospitalId: currentHospId };
@@ -833,18 +978,30 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   }
 
   // Facility Info inquiry trigger
-  const infoTriggers = ['info', 'facility info', 'doctor info', 'doctors', 'images', 'photos', 'gallery', 'services', 'facility'];
+  const infoTriggers = [
+    'info',
+    'facility info',
+    'doctor info',
+    'doctors',
+    'images',
+    'photos',
+    'gallery',
+    'services',
+    'facility'
+  ];
   if (infoTriggers.includes(cleanMsg.toLowerCase())) {
     if (hospital) {
-      const docCount = hospital.doctorCount || await Doctor.countDocuments({ hospital: hospital.id });
+      const docCount = hospital.doctorCount || (await Doctor.countDocuments({ hospital: hospital.id }));
       const logoStr = hospital.logoUrl ? `\n• Logo: ${hospital.logoUrl}` : '';
       const coverStr = hospital.coverImage ? `\n• Cover Photo: ${hospital.coverImage}` : '';
-      const galleryStr = (hospital.galleryImages && hospital.galleryImages.length > 0) 
-        ? `\n• Gallery Photos:\n  ${hospital.galleryImages.join('\n  ')}` 
-        : '';
-      const servicesStr = (hospital.customServices && hospital.customServices.length > 0) 
-        ? `\n• Key Services: ${hospital.customServices.map(s => s.title).join(', ')}` 
-        : '';
+      const galleryStr =
+        hospital.galleryImages && hospital.galleryImages.length > 0
+          ? `\n• Gallery Photos:\n  ${hospital.galleryImages.join('\n  ')}`
+          : '';
+      const servicesStr =
+        hospital.customServices && hospital.customServices.length > 0
+          ? `\n• Key Services: ${hospital.customServices.map((s) => s.title).join(', ')}`
+          : '';
 
       const infoText = `🏥 *${hospital.name}* (${hospital.type || 'Hospital'})\n📍 ${hospital.address}, ${hospital.city}\n📞 Phone: ${hospital.phone}\n💬 WhatsApp: ${hospital.whatsappNumber}\n👨‍⚕️ Registered Doctors: ${docCount}${logoStr}${coverStr}${galleryStr}${servicesStr}`;
       return {
@@ -862,12 +1019,17 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     // as an unrecognised language and silently defaulting to English.
     if (lowerMsg === '3') {
       return {
-        messages: [{ sender: 'bot', text: 'Please type *Info* to see facility photos, doctors and services — or pick a language above.' }],
+        messages: [
+          {
+            sender: 'bot',
+            text: 'Please type *Info* to see facility photos, doctors and services — or pick a language above.'
+          }
+        ],
         options: ['English', 'हिन्दी', 'Facility Info']
       };
     }
 
-    const selectedLanguage = (lowerMsg === '2' || /हिन|hindi|hin$|^h$/.test(lowerMsg)) ? 'hi' : 'en';
+    const selectedLanguage = lowerMsg === '2' || /हिन|hindi|hin$|^h$/.test(lowerMsg) ? 'hi' : 'en';
     session.tempData = { ...session.tempData, language: selectedLanguage };
     session.currentState = 'WELCOME';
     session.markModified && session.markModified('tempData');
@@ -930,7 +1092,11 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       return await beginFlow({
         session,
         intent: triageGuess.urgency === 'Emergency' ? 'emergency' : 'book',
-        text, currentHospId, lang, waPhone, socketIo,
+        text,
+        currentHospId,
+        lang,
+        waPhone,
+        socketIo,
         pendingSymptoms: cleanMsg
       });
     }
@@ -1025,7 +1191,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     // details, don't ask for it a second time — go straight to the doctor.
     if (session.tempData.pendingSymptoms) {
       return await routeSymptoms({
-        session, symptoms: session.tempData.pendingSymptoms, currentHospId, text,
+        session,
+        symptoms: session.tempData.pendingSymptoms,
+        currentHospId,
+        text,
         preMessages: [{ sender: 'bot', text: text.symptomsNoted(session.tempData.pendingSymptoms) }]
       });
     }
@@ -1062,10 +1231,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       return { messages: [{ sender: 'bot', text: text.noDoctors }], options: [] };
     }
 
-    const docNames = doctors.map(d => `${d.name} (${d.department})`);
+    const docNames = doctors.map((d) => `${d.name} (${d.department})`);
 
     // Exact label, then option number, then a loose name match ("dr sarah").
-    let selectedDoc = doctors.find(d => `${d.name} (${d.department})` === cleanMsg);
+    let selectedDoc = doctors.find((d) => `${d.name} (${d.department})` === cleanMsg);
 
     const docIdx = parseInt(cleanMsg, 10) - 1;
     if (!selectedDoc && !isNaN(docIdx) && doctors[docIdx]) {
@@ -1074,7 +1243,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
     if (!selectedDoc && cleanMsg.length >= 3) {
       const needle = lowerMsg.replace(/^dr\.?\s*/, '');
-      selectedDoc = doctors.find(d => {
+      selectedDoc = doctors.find((d) => {
         const dn = d.name.toLowerCase().replace(/^dr\.?\s*/, '');
         return dn.includes(needle) || needle.includes(dn);
       });
@@ -1082,7 +1251,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
     // Still nothing? Maybe they named a DEPARTMENT instead ("skin doctor").
     if (!selectedDoc && cleanMsg.length >= 3) {
-      selectedDoc = doctors.find(d => d.department && lowerMsg.includes(d.department.toLowerCase()));
+      selectedDoc = doctors.find((d) => d.department && lowerMsg.includes(d.department.toLowerCase()));
     }
 
     if (!selectedDoc) {
@@ -1100,12 +1269,14 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   // "Yes" books the suggested least-busy doctor in one tap; "Choose Another"
   // falls back to the full manual doctor list.
   if (state === 'AWAITING_TRIAGE_CONFIRM') {
-    const isConfirm = cleanMsg === '1'
-      || cleanMsg === text.triageConfirmOptions[0]
-      || /^(yes|y|ok|okay|confirm|book|haan|हाँ|हां| हा|ठीक)/i.test(cleanMsg);
-    const isChange = cleanMsg === '2'
-      || cleanMsg === text.triageConfirmOptions[1]
-      || /^(no|n|change|other|another|दूसरा|बदल)/i.test(cleanMsg);
+    const isConfirm =
+      cleanMsg === '1' ||
+      cleanMsg === text.triageConfirmOptions[0] ||
+      /^(yes|y|ok|okay|confirm|book|haan|हाँ|हां| हा|ठीक)/i.test(cleanMsg);
+    const isChange =
+      cleanMsg === '2' ||
+      cleanMsg === text.triageConfirmOptions[1] ||
+      /^(no|n|change|other|another|दूसरा|बदल)/i.test(cleanMsg);
 
     // Load doctors for this facility once (tenant-safe) — needed for both paths.
     const doctors = await loadFacilityDoctors(currentHospId);
@@ -1115,7 +1286,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
     if (isConfirm) {
       const suggestedId = session.tempData && session.tempData.suggestedDoctorId;
-      const selectedDoc = doctors.find(d => String(d._id) === String(suggestedId)) || doctors[0];
+      const selectedDoc = doctors.find((d) => String(d._id) === String(suggestedId)) || doctors[0];
       return await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
     }
 
@@ -1125,7 +1296,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       if (session.tempData) delete session.tempData.suggestedDoctorId;
       session.markModified && session.markModified('tempData');
       await session.save();
-      const docNames = doctors.map(d => `${d.name} (${d.department})`);
+      const docNames = doctors.map((d) => `${d.name} (${d.department})`);
       return {
         messages: [{ sender: 'bot', text: text.selectDoctorPrompt }],
         options: docNames
@@ -1140,9 +1311,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   }
 
   // Unknown / stale state — never dead-end the patient, put them back on the menu.
-  return await backToMenu(session, text, lang, currentHospId, [
-    { sender: 'bot', text: text.notUnderstood }
-  ]);
+  return await backToMenu(session, text, lang, currentHospId, [{ sender: 'bot', text: text.notUnderstood }]);
 }
 
 router.post('/message', async (req, res) => {
@@ -1150,7 +1319,8 @@ router.post('/message', async (req, res) => {
     const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1 && process.env.USE_MOCK_DB !== 'true') {
       return res.status(503).json({
-        message: 'Database connection is offline. Please verify you have whitelisted all IP addresses (0.0.0.0/0) in your MongoDB Atlas Network Access panel.'
+        message:
+          'Database connection is offline. Please verify you have whitelisted all IP addresses (0.0.0.0/0) in your MongoDB Atlas Network Access panel.'
       });
     }
 
@@ -1174,8 +1344,8 @@ router.post('/message', async (req, res) => {
 
     res.json(result);
   } catch (error) {
-    console.error('Chat error details:', error);
-    res.status(500).json({ 
+    logger.error('Chat error details', { err: error });
+    res.status(500).json({
       message: error.message || 'Server error in chatbot'
     });
   }
@@ -1204,9 +1374,9 @@ router.post('/whatsapp', async (req, res) => {
     const toDigits = cleanTo.replace(/\D/g, '');
     if (toDigits) {
       const allHospitals = await Hospital.find({});
-      hospital = allHospitals.find(
-        h => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === toDigits
-      ) || null;
+      hospital =
+        allHospitals.find((h) => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === toDigits) ||
+        null;
     }
 
     // Which facility does this chat belong to? A hospital the session ALREADY
@@ -1232,22 +1402,22 @@ router.post('/whatsapp', async (req, res) => {
       socketIo: req.io
     });
 
-    const replyText = result.messages.map(m => m.text).join('\n\n');
-    const optionsText = (result.options && result.options.length > 0)
-      ? `\n\nReply with option:\n` + result.options.map((o, idx) => `${idx + 1}. ${o}`).join('\n')
-      : '';
+    const replyText = result.messages.map((m) => m.text).join('\n\n');
+    const optionsText =
+      result.options && result.options.length > 0
+        ? `\n\nReply with option:\n` + result.options.map((o, idx) => `${idx + 1}. ${o}`).join('\n')
+        : '';
 
     const fullMessage = replyText + optionsText;
 
     // If incoming request is a Twilio form-encoded webhook, reply with TwiML XML
     const contentType = req.headers['content-type'] || '';
     if (contentType.includes('x-www-form-urlencoded')) {
-      const xmlEscaped = fullMessage
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+      const xmlEscaped = fullMessage.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       res.type('text/xml');
-      return res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${xmlEscaped}</Message></Response>`);
+      return res.send(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${xmlEscaped}</Message></Response>`
+      );
     }
 
     // Standard JSON response
@@ -1258,7 +1428,7 @@ router.post('/whatsapp', async (req, res) => {
       details: result
     });
   } catch (err) {
-    console.error('WhatsApp webhook error:', err);
+    logger.error('WhatsApp webhook error', { err: err });
     res.status(500).json({ message: 'Server error processing WhatsApp webhook' });
   }
 });
@@ -1267,41 +1437,43 @@ router.post('/whatsapp', async (req, res) => {
 router.get('/queues/public-status', async (req, res) => {
   try {
     const { hospitalId } = req.query;
-    
+
     const filter = {};
     if (hospitalId) {
       const doctors = await Doctor.find({ hospital: hospitalId });
-      const docIds = doctors.map(d => d._id);
+      const docIds = doctors.map((d) => d._id);
       filter.doctor = { $in: docIds };
     }
 
     const queues = await Queue.find(filter).populate('doctor');
     const deptTimes = {
-      'Emergency': 15,
+      Emergency: 15,
       'General Practice': 15,
-      'Pediatrics': 10
+      Pediatrics: 10
     };
 
-    queues.forEach(q => {
+    queues.forEach((q) => {
       if (!q.doctor) return;
       const dept = q.doctor.department;
       const count = q.activeQueue ? q.activeQueue.length : 0;
       const avgCheckup = q.doctor.averageCheckupTime || 10;
       const buffer = q.bufferDelay || 0;
-      const wait = (count * avgCheckup) + buffer;
+      const wait = count * avgCheckup + buffer;
 
       let frontendDept = dept;
       if (dept === 'General Medicine' || dept === 'Cardiology') {
         frontendDept = 'General Practice';
       }
-      
-      deptTimes[frontendDept] = wait > 0 ? wait : (frontendDept === 'Pediatrics' ? 10 : 15);
+
+      deptTimes[frontendDept] = wait > 0 ? wait : frontendDept === 'Pediatrics' ? 10 : 15;
     });
 
     const activeHospId = hospitalId || 'general-hospital';
-    const hospital = await Hospital.findOne({ id: activeHospId }) || await Hospital.findOne({});
+    const hospital = (await Hospital.findOne({ id: activeHospId })) || (await Hospital.findOne({}));
     const rawWhatsapp = hospital
-      ? (hospital.id === 'general-hospital' ? getPrimaryWhatsAppNumber() : hospital.whatsappNumber)
+      ? hospital.id === 'general-hospital'
+        ? getPrimaryWhatsAppNumber()
+        : hospital.whatsappNumber
       : getPrimaryWhatsAppNumber();
     const cleanWhatsapp = rawWhatsapp.replace(/^whatsapp:/i, '');
 
@@ -1310,7 +1482,7 @@ router.get('/queues/public-status', async (req, res) => {
       whatsappNumber: cleanWhatsapp
     });
   } catch (error) {
-    console.error('Error fetching public status:', error);
+    logger.error('Error fetching public status', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1325,7 +1497,7 @@ router.get('/public-tv-queues', async (req, res) => {
     const filter = {};
     if (hospitalId) {
       const doctors = await Doctor.find({ hospital: hospitalId });
-      filter.doctor = { $in: doctors.map(d => d._id) };
+      filter.doctor = { $in: doctors.map((d) => d._id) };
     }
 
     const queues = await Queue.find(filter)
@@ -1341,7 +1513,7 @@ router.get('/public-tv-queues', async (req, res) => {
 
     res.json(queues);
   } catch (error) {
-    console.error('Error fetching public TV queues:', error);
+    logger.error('Error fetching public TV queues', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1362,7 +1534,7 @@ router.get('/token/:tokenId', async (req, res) => {
         position = 0; // Currently inside the cabin
       } else {
         // Find position index in the active queue array
-        position = queue.activeQueue.findIndex(id => id.toString() === token._id.toString()) + 1;
+        position = queue.activeQueue.findIndex((id) => id.toString() === token._id.toString()) + 1;
       }
     }
 
@@ -1379,15 +1551,15 @@ router.get('/token/:tokenId', async (req, res) => {
         stage,
         message: stageMessage(stage),
         history: token.stageHistory || [],
-        labPending: labTests.filter(t => t.status !== 'Completed').length,
-        labReady: labTests.filter(t => t.status === 'Completed').length,
-        hasAbnormal: labTests.some(t => t.abnormal),
+        labPending: labTests.filter((t) => t.status !== 'Completed').length,
+        labReady: labTests.filter((t) => t.status === 'Completed').length,
+        hasAbnormal: labTests.some((t) => t.abnormal),
         medicinesReady: Boolean(token.prescription && (token.prescription.medicines || []).length > 0),
         medicinesCollected: Boolean(token.prescription && token.prescription.dispensed)
       }
     });
   } catch (err) {
-    console.error('Error fetching token details:', err);
+    logger.error('Error fetching token details', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1396,11 +1568,9 @@ router.get('/token/:tokenId', async (req, res) => {
 router.get('/hospitals', async (req, res) => {
   try {
     const dbHospitals = await Hospital.find({});
-    const formattedHospitals = dbHospitals.map(h => {
+    const formattedHospitals = dbHospitals.map((h) => {
       const obj = h.toObject();
-      const rawWhatsapp = h.id === 'general-hospital'
-        ? getPrimaryWhatsAppNumber()
-        : h.whatsappNumber;
+      const rawWhatsapp = h.id === 'general-hospital' ? getPrimaryWhatsAppNumber() : h.whatsappNumber;
       // Always expose a state + district (derived from city when not stored) so
       // the State → District discovery filter works for every facility.
       const loc = resolveLocation(obj);
@@ -1413,7 +1583,7 @@ router.get('/hospitals', async (req, res) => {
     });
     res.json(formattedHospitals);
   } catch (err) {
-    console.error('Error fetching hospitals:', err);
+    logger.error('Error fetching hospitals', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1426,9 +1596,8 @@ router.get('/hospital/:hospitalId', async (req, res) => {
     if (!hospital) {
       return res.status(404).json({ message: 'Hospital not found' });
     }
-    const rawWhatsapp = hospital.id === 'general-hospital'
-      ? getPrimaryWhatsAppNumber()
-      : hospital.whatsappNumber;
+    const rawWhatsapp =
+      hospital.id === 'general-hospital' ? getPrimaryWhatsAppNumber() : hospital.whatsappNumber;
     const hObj = hospital.toObject();
     const loc = resolveLocation(hObj);
     res.json({
@@ -1438,7 +1607,7 @@ router.get('/hospital/:hospitalId', async (req, res) => {
       whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
     });
   } catch (err) {
-    console.error('Error fetching hospital details:', err);
+    logger.error('Error fetching hospital details', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1450,7 +1619,7 @@ router.get('/hospital/:hospitalId/doctors', async (req, res) => {
     const doctors = await Doctor.find({ hospital: hospitalId }, '-passwordHash');
     res.json(doctors);
   } catch (err) {
-    console.error('Error fetching hospital doctors:', err);
+    logger.error('Error fetching hospital doctors', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1474,7 +1643,7 @@ router.post('/token/delay', async (req, res) => {
       return res.status(404).json({ message: 'Queue not found for this facility/doctor' });
     }
 
-    const index = queue.activeQueue.findIndex(id => id.toString() === tokenId);
+    const index = queue.activeQueue.findIndex((id) => id.toString() === tokenId);
     if (index === -1) {
       return res.status(400).json({ message: 'Token is not active or waiting in queue' });
     }
@@ -1496,7 +1665,7 @@ router.post('/token/delay', async (req, res) => {
 
     res.json({ message: 'Token successfully delayed by 3 places!', token });
   } catch (error) {
-    console.error('Token delay error:', error);
+    logger.error('Token delay error', { err: error });
     res.status(500).json({ message: 'Server error delaying token' });
   }
 });
@@ -1507,7 +1676,7 @@ router.get('/whatsapp/config', (req, res) => {
     const config = getWhatsAppConfig();
     res.json(config);
   } catch (err) {
-    console.error('Error fetching WhatsApp config:', err);
+    logger.error('Error fetching WhatsApp config', { err: err });
     res.status(500).json({ message: 'Failed to fetch WhatsApp API configuration' });
   }
 });
@@ -1524,13 +1693,13 @@ router.post('/whatsapp/config', async (req, res) => {
 
     // Also sync default hospital whatsappNumber in DB if exists
     try {
-      let hospital = await Hospital.findOne({ id: 'general-hospital' });
+      const hospital = await Hospital.findOne({ id: 'general-hospital' });
       if (hospital) {
         hospital.whatsappNumber = updatedConfig.whatsappNumber;
         await hospital.save();
       }
     } catch (hErr) {
-      console.warn('Could not update hospital DB record for WhatsApp number:', hErr.message);
+      logger.warn('Could not update hospital DB record for WhatsApp number', { err: hErr.message });
     }
 
     res.json({
@@ -1538,7 +1707,7 @@ router.post('/whatsapp/config', async (req, res) => {
       config: updatedConfig
     });
   } catch (err) {
-    console.error('Error updating WhatsApp config:', err);
+    logger.error('Error updating WhatsApp config', { err: err });
     res.status(500).json({ message: 'Failed to update WhatsApp API configuration' });
   }
 });
@@ -1570,7 +1739,7 @@ router.post('/whatsapp/send-test', async (req, res) => {
       result
     });
   } catch (err) {
-    console.error('Error sending test WhatsApp message:', err);
+    logger.error('Error sending test WhatsApp message', { err: err });
     res.status(500).json({ message: 'Failed to send WhatsApp message', error: err.message });
   }
 });
@@ -1579,9 +1748,10 @@ router.post('/whatsapp/send-test', async (req, res) => {
 router.get('/whatsapp/qr/:hospitalId', async (req, res) => {
   try {
     const { hospitalId } = req.params;
-    let hospital = await Hospital.findOne({ 
-      $or: [{ id: hospitalId }, { slug: hospitalId }] 
-    }) || await Hospital.findOne({});
+    let hospital =
+      (await Hospital.findOne({
+        $or: [{ id: hospitalId }, { slug: hospitalId }]
+      })) || (await Hospital.findOne({}));
 
     if (!hospital) {
       hospital = {
@@ -1608,7 +1778,7 @@ router.get('/whatsapp/qr/:hospitalId', async (req, res) => {
       qrImageUrl: qrImageUrl
     });
   } catch (err) {
-    console.error('Error generating hospital QR:', err);
+    logger.error('Error generating hospital QR', { err: err });
     res.status(500).json({ message: 'Failed to generate hospital WhatsApp QR Code' });
   }
 });
@@ -1622,7 +1792,7 @@ router.get('/whatsapp/health', async (req, res) => {
     const health = await checkMetaToken();
     res.status(health.ok ? 200 : 503).json(health);
   } catch (err) {
-    console.error('WhatsApp health check error:', err);
+    logger.error('WhatsApp health check error', { err: err });
     res.status(500).json({ ok: false, message: 'Health check failed', error: err.message });
   }
 });
@@ -1633,7 +1803,7 @@ router.get('/whatsapp/history', (req, res) => {
     const history = getWhatsAppHistory(30);
     res.json(history);
   } catch (err) {
-    console.error('Error fetching WhatsApp history:', err);
+    logger.error('Error fetching WhatsApp history', { err: err });
     res.status(500).json({ message: 'Failed to fetch WhatsApp history' });
   }
 });
@@ -1660,10 +1830,12 @@ router.get('/whatsapp/webhook/meta', (req, res) => {
       return res.status(200).send(challenge);
     }
 
-    console.warn('[META WEBHOOK VERIFICATION FAILED] hub.mode or hub.verify_token did not match META_VERIFY_TOKEN.');
+    console.warn(
+      '[META WEBHOOK VERIFICATION FAILED] hub.mode or hub.verify_token did not match META_VERIFY_TOKEN.'
+    );
     return res.status(403).send('Forbidden: verify token mismatch');
   } catch (err) {
-    console.error('Error in Meta GET webhook:', err);
+    logger.error('Error in Meta GET webhook', { err: err });
     return res.status(500).send('Server error');
   }
 });
@@ -1705,7 +1877,7 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                   // Appointment / Generate Token") never match. Extract the
                   // number from the id instead — every step accepts "1", "2", …
                   const idMatch = (reply.id || '').match(/^(?:btn|opt)_(\d+)/);
-                  textContent = idMatch ? idMatch[1] : (reply.title || reply.id || '');
+                  textContent = idMatch ? idMatch[1] : reply.title || reply.id || '';
                 }
               } else if (msg.type === 'button' && msg.button) {
                 textContent = msg.button.text || msg.button.payload;
@@ -1730,12 +1902,14 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                   const rxDigits = receivingDisplayNumber.replace(/\D/g, '');
                   const allHosp = await Hospital.find({});
                   const matched = allHosp.find(
-                    h => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === rxDigits
+                    (h) => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === rxDigits
                   );
                   seedHospitalId = matched ? matched.id : undefined;
                 }
 
-                console.log(`[META INCOMING WHATSAPP] From: ${formattedPhone} | To(phone_number_id): ${receivingPhoneNumberId} | RxNumber: ${receivingDisplayNumber || '-'} | Facility: ${seedHospitalId || (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) || 'default'} | Session: ${sessionId} | Text: "${textContent}"`);
+                console.log(
+                  `[META INCOMING WHATSAPP] From: ${formattedPhone} | To(phone_number_id): ${receivingPhoneNumberId} | RxNumber: ${receivingDisplayNumber || '-'} | Facility: ${seedHospitalId || (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) || 'default'} | Session: ${sessionId} | Text: "${textContent}"`
+                );
 
                 // Feed input into CareeAi patient appointment state engine
                 const botResponse = await processChatMessage({
@@ -1751,8 +1925,9 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                 // spam and pushes the option buttons off screen. Merge the lines
                 // into a single bubble and attach the choices to it.
                 if (botResponse && botResponse.messages && botResponse.messages.length > 0) {
-                  const opts = (botResponse.options && botResponse.options.length > 0) ? botResponse.options : [];
-                  const lines = botResponse.messages.map(m => m.text).filter(Boolean);
+                  const opts =
+                    botResponse.options && botResponse.options.length > 0 ? botResponse.options : [];
+                  const lines = botResponse.messages.map((m) => m.text).filter(Boolean);
                   const combined = lines.join('\n\n');
 
                   // Meta caps an interactive message body at 1024 chars. If the
@@ -1762,10 +1937,28 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                   if (opts.length > 0 && combined.length > INTERACTIVE_BODY_LIMIT && lines.length > 1) {
                     const head = lines.slice(0, -1).join('\n\n');
                     const tail = lines[lines.length - 1];
-                    await sendWhatsAppNotification(formattedPhone, head, [], req.io || global.io, receivingPhoneNumberId);
-                    await sendWhatsAppNotification(formattedPhone, tail, opts, req.io || global.io, receivingPhoneNumberId);
+                    await sendWhatsAppNotification(
+                      formattedPhone,
+                      head,
+                      [],
+                      req.io || global.io,
+                      receivingPhoneNumberId
+                    );
+                    await sendWhatsAppNotification(
+                      formattedPhone,
+                      tail,
+                      opts,
+                      req.io || global.io,
+                      receivingPhoneNumberId
+                    );
                   } else {
-                    await sendWhatsAppNotification(formattedPhone, combined, opts, req.io || global.io, receivingPhoneNumberId);
+                    await sendWhatsAppNotification(
+                      formattedPhone,
+                      combined,
+                      opts,
+                      req.io || global.io,
+                      receivingPhoneNumberId
+                    );
                   }
                 }
               }
@@ -1775,12 +1968,17 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
       }
     }
   } catch (err) {
-    console.error('Error processing Meta POST webhook:', err);
+    logger.error('Error processing Meta POST webhook', { err: err });
   }
 });
 
 module.exports = router;
 // Exposed for offline testing of the conversation engine (no HTTP/DB round-trip).
 module.exports._internals = {
-  processChatMessage, detectMenuIntent, parseTokenNumber, normalizePhone, phoneVariants, isLikelyPhone
+  processChatMessage,
+  detectMenuIntent,
+  parseTokenNumber,
+  normalizePhone,
+  phoneVariants,
+  isLikelyPhone
 };
