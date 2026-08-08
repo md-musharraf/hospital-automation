@@ -5,6 +5,7 @@ import InternalChatBox from './InternalChatBox';
 import LiveActivityFeed from './LiveActivityFeed';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
+import HelpPanel from './HelpPanel';
 
 export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
   const [username, setUsername] = useState('alice_staff');
@@ -734,6 +735,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           {/* TAB 1: DASHBOARD OVERVIEW */}
           {activeSidebarTab === 'dashboard' && (
             <div className="space-y-8 animate-fade-in">
+              <HelpPanel
+                id="staff"
+                title="How the reception desk works"
+                steps={[
+                  "Register a walk-in without picking a doctor — the system reads the symptoms and assigns the right department's least-busy doctor.",
+                  'The Live Floor View below shows where every patient in the building is: waiting, in a cabin, at the lab or at the pharmacy.',
+                  'Cabin Load tells you who is free right now, so you can steer the next patient instead of guessing.',
+                  'The activity feed on the right is the whole hospital talking — doctors, lab and pharmacy — as it happens.'
+                ]}
+                tip="Patients do not need to queue at your counter: they get a WhatsApp when their turn is near, and can book themselves on WhatsApp too."
+              />
+
               {/* LIVE FLOOR VIEW — where every patient in the building is right
                   now, and which department is the bottleneck. */}
               {overview && (
