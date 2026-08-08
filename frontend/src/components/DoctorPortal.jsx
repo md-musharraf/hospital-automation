@@ -3,6 +3,7 @@ import { BACKEND_URL, socket } from '../App';
 import InternalChatBox from './InternalChatBox';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
+import HelpPanel from './HelpPanel';
 
 export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
   const [email, setEmail] = useState('sarah.jenkins@hospital.com');
@@ -776,6 +777,17 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
       <div className="flex-1 p-4 md:p-6 overflow-y-auto flex flex-col space-y-6 bg-[var(--bg-color)]">
         <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
           Active Cabin Workstation
+          <HelpPanel
+            id="doctor"
+            title="How your cabin console works"
+            steps={[
+              'Press "Call Next Patient" — the patient is alerted by WhatsApp and the waiting-room screen shows their token.',
+              'Need tests? Order them here; the lab sees the request instantly and the patient is told to go to the lab counter.',
+              'Reports coming back appear under "Reports Ready" on the left, abnormal values first — the patient walks straight back to you.',
+              'On "Complete Checkup" you can prescribe; each medicine shows live pharmacy stock so you can avoid one they are out of.'
+            ]}
+            tip="Running late? Add a buffer delay — every waiting patient's estimated time updates and reception can see why."
+          />
         </h3>
 
         {/* Live cross-department alerts: a report landed, a value is abnormal, or

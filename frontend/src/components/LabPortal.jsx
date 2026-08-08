@@ -4,6 +4,8 @@ import createApi from '../lib/api';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
 import LiveActivityFeed from './LiveActivityFeed';
+import HelpPanel from './HelpPanel';
+import EmptyState from './EmptyState';
 
 export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
   const [username, setUsername] = useState('lab_assistant');
@@ -281,9 +283,11 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
           {loading ? (
             <div className="text-xs text-[var(--text-secondary)] italic">Loading active test orders...</div>
           ) : tokens.length === 0 ? (
-            <div className="text-xs text-[var(--text-secondary)]/50 italic py-4">
-              No pending lab test requests.
-            </div>
+            <EmptyState
+              icon="science"
+              title="No tests waiting"
+              hint="When a doctor orders a test it appears here within a second — you do not need to refresh. Urgent orders show first, in red."
+            />
           ) : (
             <div className="space-y-2">
               {tokens.map((tok) => {
@@ -358,6 +362,18 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
             </button>
           </div>
         )}
+
+        <HelpPanel
+          id="lab"
+          title="How the lab console works"
+          steps={[
+            'Doctors order tests from their cabin — the patient appears in the list on the left automatically.',
+            'When the patient hands over their sample, press "Log sample collected" so the doctor can see it is in progress.',
+            'Enter the result value, its unit and the normal range, then press "Send to doctor".',
+            'Tick "Abnormal" if the value is outside the normal range — the doctor sees it highlighted in red immediately.'
+          ]}
+          tip="Once every test for a patient is filed, the doctor is notified and the patient is told by WhatsApp to walk straight back to the cabin — they do not need a new token."
+        />
 
         {selectedToken ? (
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] space-y-6">
@@ -540,9 +556,9 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
             <span className="material-symbols-outlined text-[48px] mb-3 text-[var(--text-secondary)]/30">
               science
             </span>
-            <p className="text-sm font-bold text-[var(--text-color)]">Testing Station is Idle</p>
+            <p className="text-sm font-bold text-[var(--text-color)]">Pick a patient to start</p>
             <p className="text-xs text-[var(--text-secondary)] max-w-xs mt-1.5 font-medium">
-              Select a patient queue ticket on the left rail to register and upload diagnostic remarks.
+              Tap a patient in the list on the left to log their sample and enter results.
             </p>
           </div>
         )}

@@ -98,12 +98,24 @@ const dictionary = {
     notUnderstood:
       'Sorry, I didn\'t quite get that. Tap an option below, reply with its number, or just type your problem (e.g. "fever since 2 days").',
     helpText:
-      '🆘 *How to use this assistant*\n\n• Just type your problem — e.g. "fever and cough" — and I will pick the right department & doctor for you.\n• Reply with a number (1-5) or tap an option to use the menu.\n• Type your token number (e.g. T-101) anytime to see your live queue position.\n• Type *MENU* to go back • *HELP* for this help • *CHANGE* to use a different phone number.\n\n✅ You never need to stand in line — we WhatsApp you when your turn is near.',
+      '🆘 *How to use this assistant*\n\n• Just type your problem — e.g. "fever and cough" — and I will pick the right department & doctor for you.\n• Reply with a number (1-5) or tap an option to use the menu.\n• Type your token number (e.g. T-101) anytime to see your live queue position.\n• Type *MENU* to go back • *HELP* for this help • *HOSPITAL* to pick a different hospital • *CHANGE* to use a different phone number.\n\n✅ You never need to stand in line — we WhatsApp you when your turn is near.',
     usingWhatsAppNumber: (num) =>
       `📱 Using your WhatsApp number ${num} — no need to type it. (Reply *CHANGE* to use a different number.)`,
     changeNumberPrompt: 'Sure — please enter the phone number you would like to use:',
     symptomsNoted: (s) => `Got it — "${s}". Let me find the right doctor for you.`,
-    tipTypeProblem: 'Tip: you can also just type your problem (e.g. "chest pain") and I will do the rest.'
+    tipTypeProblem: 'Tip: you can also just type your problem (e.g. "chest pain") and I will do the rest.',
+    // --- Facility selection (book at ANY registered hospital) -------------------
+    chooseFacility:
+      '🏥 Which hospital or clinic do you want?\n\nTap one below, reply with its number, or type a name/city to search (e.g. "Patna" or "dental").',
+    facilityLine: (index, h) =>
+      `${index}. ${h.name} — ${h.city}${h.type && h.type !== 'Hospital' ? ` (${h.type})` : ''}`,
+    facilityNotFound: (q) =>
+      `I couldn't find a facility matching "${q}". Try a city name, or reply *LIST* to see all facilities.`,
+    facilityChosen: (h) =>
+      `✅ ${h.name}\n📍 ${h.address}, ${h.city}\n📞 ${h.phone}\n\nYou are now booking at this facility. (Reply *HOSPITAL* anytime to switch.)`,
+    facilityMore: 'Reply *MORE* to see more facilities, or type a city/name to search.',
+    lastVisited: (h) => `🕘 Last time you visited ${h.name}. Reply *1* to use it again.`,
+    bookingAtFooter: (h) => `You are booking at *${h.name}*. Reply *HOSPITAL* to change.`
   },
   hi: {
     welcome:
@@ -178,13 +190,25 @@ const dictionary = {
     notUnderstood:
       'माफ़ कीजिए, मैं समझ नहीं पाया। नीचे कोई विकल्प चुनें, उसका नंबर भेजें, या सीधे अपनी तकलीफ़ लिखें (जैसे "2 दिन से बुखार")।',
     helpText:
-      '🆘 *इस असिस्टेंट का उपयोग कैसे करें*\n\n• बस अपनी तकलीफ़ लिखें — जैसे "बुखार और खांसी" — मैं सही विभाग और डॉक्टर चुन दूँगा।\n• मेनू के लिए नंबर (1-5) भेजें या विकल्प पर टैप करें।\n• अपना टोकन नंबर (जैसे T-101) कभी भी भेजें और लाइव स्थिति देखें।\n• *MENU* लिखें — मेनू पर वापस • *HELP* — यह मदद • *CHANGE* — दूसरा मोबाइल नंबर।\n\n✅ लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।',
+      '🆘 *इस असिस्टेंट का उपयोग कैसे करें*\n\n• बस अपनी तकलीफ़ लिखें — जैसे "बुखार और खांसी" — मैं सही विभाग और डॉक्टर चुन दूँगा।\n• मेनू के लिए नंबर (1-5) भेजें या विकल्प पर टैप करें।\n• अपना टोकन नंबर (जैसे T-101) कभी भी भेजें और लाइव स्थिति देखें।\n• *MENU* लिखें — मेनू पर वापस • *HELP* — यह मदद • *HOSPITAL* — दूसरा अस्पताल • *CHANGE* — दूसरा मोबाइल नंबर।\n\n✅ लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।',
     usingWhatsAppNumber: (num) =>
       `📱 आपका WhatsApp नंबर ${num} इस्तेमाल कर रहे हैं — टाइप करने की ज़रूरत नहीं। (दूसरा नंबर देने के लिए *CHANGE* लिखें।)`,
     changeNumberPrompt: 'ठीक है — कृपया वह मोबाइल नंबर दर्ज करें जिसे आप उपयोग करना चाहते हैं:',
     symptomsNoted: (s) => `समझ गया — "${s}"। मैं आपके लिए सही डॉक्टर ढूँढता हूँ।`,
     tipTypeProblem:
-      'सुझाव: आप सीधे अपनी तकलीफ़ भी लिख सकते हैं (जैसे "सीने में दर्द") — बाकी मैं संभाल लूँगा।'
+      'सुझाव: आप सीधे अपनी तकलीफ़ भी लिख सकते हैं (जैसे "सीने में दर्द") — बाकी मैं संभाल लूँगा।',
+    // --- Facility selection (book at ANY registered hospital) -------------------
+    chooseFacility:
+      '🏥 आप किस अस्पताल या क्लिनिक में दिखाना चाहते हैं?\n\nनीचे से चुनें, उसका नंबर भेजें, या नाम/शहर लिखकर खोजें (जैसे "पटना" या "dental")।',
+    facilityLine: (index, h) =>
+      `${index}. ${h.name} — ${h.city}${h.type && h.type !== 'Hospital' ? ` (${h.type})` : ''}`,
+    facilityNotFound: (q) =>
+      `"${q}" से मेल खाती कोई सुविधा नहीं मिली। कृपया शहर का नाम लिखें, या सभी सुविधाएँ देखने के लिए *LIST* भेजें।`,
+    facilityChosen: (h) =>
+      `✅ ${h.name}\n📍 ${h.address}, ${h.city}\n📞 ${h.phone}\n\nअब आपकी बुकिंग यहीं होगी। (बदलने के लिए कभी भी *HOSPITAL* लिखें।)`,
+    facilityMore: 'और सुविधाएँ देखने के लिए *MORE* भेजें, या शहर/नाम लिखकर खोजें।',
+    lastVisited: (h) => `🕘 पिछली बार आप ${h.name} गए थे। दोबारा वही चुनने के लिए *1* भेजें।`,
+    bookingAtFooter: (h) => `आपकी बुकिंग *${h.name}* में हो रही है। बदलने के लिए *HOSPITAL* लिखें।`
   }
 };
 
@@ -214,6 +238,19 @@ const MENU_TRIGGERS = [
   'बंद'
 ];
 const HELP_TRIGGERS = ['help', '?', 'help me', 'commands', 'options', 'मदद', 'सहायता'];
+const CHANGE_FACILITY_TRIGGERS = [
+  'hospital',
+  'change hospital',
+  'other hospital',
+  'facility',
+  'change facility',
+  'clinic',
+  'change clinic',
+  'अस्पताल',
+  'अस्पताल बदलें',
+  'दूसरा अस्पताल',
+  'क्लिनिक'
+];
 const CHANGE_PHONE_TRIGGERS = [
   'change',
   'change number',
@@ -481,6 +518,76 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   };
 }
 
+// ---------------------------------------------------------------------------
+// Facility selection.
+//
+// Until now a WhatsApp patient could only reach a facility whose OWN number they
+// messaged, or whose QR they scanned. Everyone else silently landed on
+// 'general-hospital' — so a hospital added to the system was simply unreachable
+// over the shared WhatsApp number. These helpers let one number serve every
+// registered facility.
+// ---------------------------------------------------------------------------
+
+/** How many facilities are shown at once — WhatsApp interactive lists cap at 10. */
+const FACILITY_PAGE_SIZE = 8;
+
+/**
+ * Facilities matching a free-text query across the fields a patient would
+ * actually type: name, city, district, state, and the facility type
+ * ("dental", "clinic"). An empty query returns everything.
+ */
+async function searchFacilities(query) {
+  const all = (await Hospital.find({})) || [];
+  const needle = norm(query);
+  if (!needle) return all;
+
+  return all.filter((h) =>
+    [h.name, h.city, h.district, h.state, h.type, h.address, h.clinicSubtype]
+      .filter(Boolean)
+      .some((field) => norm(field).includes(needle))
+  );
+}
+
+/**
+ * Build the "which hospital?" prompt for a page of results.
+ * Returns the chat payload AND the id list, which is stored on the session so a
+ * numeric reply ("2") maps back to the exact facility the patient was shown.
+ */
+function facilityPrompt(text, facilities, { page = 0, query = '', lead = [] } = {}) {
+  const start = page * FACILITY_PAGE_SIZE;
+  const shown = facilities.slice(start, start + FACILITY_PAGE_SIZE);
+  const hasMore = facilities.length > start + shown.length;
+
+  const lines = shown.map((h, i) => text.facilityLine(start + i + 1, h)).join('\n');
+  const messages = [...lead, { sender: 'bot', text: `${query ? '' : text.chooseFacility + '\n\n'}${lines}` }];
+  if (hasMore) messages.push({ sender: 'bot', text: text.facilityMore });
+
+  return {
+    payload: {
+      messages,
+      // Quick-reply buttons carry the name; the numeric id mapping is what the
+      // handler actually resolves against.
+      options: shown.map((h) => h.name)
+    },
+    shownIds: shown.map((h) => h.id)
+  };
+}
+
+/** The facility this patient used last, so a returning patient can repeat it in one tap. */
+async function lastVisitedFacility(phone) {
+  if (!phone) return null;
+  const variants = phoneVariants(phone);
+  const patients = (await Patient.find({ $or: variants.map((p) => ({ phone: p })) })) || [];
+  if (patients.length === 0) return null;
+
+  // Most recently updated patient record wins — that is the last facility they
+  // actually interacted with.
+  const newest = patients.sort(
+    (a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)
+  )[0];
+  return newest && newest.hospital ? await Hospital.findOne({ id: newest.hospital }) : null;
+}
+
 /**
  * TENANT ISOLATION: only ever return doctors that belong to THIS facility.
  * Never fall back to Doctor.find({}) across all facilities — that would book
@@ -622,6 +729,10 @@ async function optionsForState(session, text, currentHospId) {
   switch (session.currentState) {
     case 'LANGUAGE':
       return ['English', 'हिन्दी', 'Facility Info'];
+    case 'AWAITING_FACILITY': {
+      const facilities = await searchFacilities('');
+      return facilities.slice(0, FACILITY_PAGE_SIZE).map((h) => h.name);
+    }
     case 'AWAITING_GENDER':
       return text.genderOptions;
     case 'AWAITING_TRIAGE_CONFIRM':
@@ -641,11 +752,16 @@ async function optionsForState(session, text, currentHospId) {
 /** Reset the conversation back to a clean main menu, keeping language + facility. */
 async function backToMenu(session, text, lang, currentHospId, leadMessages = []) {
   session.currentState = 'WELCOME';
-  session.tempData = { language: lang, hospitalId: currentHospId };
+  session.tempData = { language: lang, hospitalId: currentHospId, facilityChosen: true };
   session.markModified && session.markModified('tempData');
   await session.save();
+  const facility = await Hospital.findOne({ id: currentHospId });
   return {
-    messages: [...leadMessages, { sender: 'bot', text: text.menuTitle }],
+    messages: [
+      ...leadMessages,
+      { sender: 'bot', text: text.menuTitle },
+      ...(facility ? [{ sender: 'bot', text: text.bookingAtFooter(facility) }] : [])
+    ],
     options: text.options
   };
 }
@@ -685,7 +801,7 @@ async function handleRefill({ session, phone, currentHospId, text, lang, socketI
 
   if (!patient || !lastRx || !lastRx.doctor) {
     session.currentState = 'COMPLETED';
-    session.tempData = { language: lang, hospitalId: currentHospId };
+    session.tempData = { language: lang, hospitalId: currentHospId, facilityChosen: true };
     session.markModified && session.markModified('tempData');
     await session.save();
     return {
@@ -735,7 +851,7 @@ async function handleRefill({ session, phone, currentHospId, text, lang, socketI
       .filter(Boolean)
       .join(', ') || 'previous medicines';
   session.currentState = 'COMPLETED';
-  session.tempData = { language: lang, hospitalId: currentHospId };
+  session.tempData = { language: lang, hospitalId: currentHospId, facilityChosen: true };
   session.markModified && session.markModified('tempData');
   await session.save();
   return {
@@ -864,7 +980,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   }
 
   if (hospitalId) {
-    session.tempData = { ...session.tempData, hospitalId };
+    // The web widget always runs on a facility's own page, and a WhatsApp number
+    // that maps to a facility is equally unambiguous — either way the patient has
+    // effectively already chosen, so skip the picker.
+    session.tempData = { ...session.tempData, hospitalId, facilityChosen: true };
     session.markModified && session.markModified('tempData');
     await session.save();
   }
@@ -889,7 +1008,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   // If message is a Hospital QR Code trigger scan
   if (qrHospital) {
     session.currentState = 'LANGUAGE';
-    session.tempData = { hospitalId: qrHospital.id };
+    session.tempData = { hospitalId: qrHospital.id, facilityChosen: true };
     session.markModified && session.markModified('tempData');
     await session.save();
 
@@ -968,6 +1087,25 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     };
   }
 
+  // Switch facility at any point — the patient may have picked the wrong one, or
+  // simply want a different clinic today.
+  if (CHANGE_FACILITY_TRIGGERS.includes(lowerMsg)) {
+    const t0 = dictionary[knownLang || 'en'];
+    const all = await searchFacilities('');
+    const { payload, shownIds } = facilityPrompt(t0, all);
+
+    session.currentState = 'AWAITING_FACILITY';
+    session.tempData = {
+      ...session.tempData,
+      facilityChosen: false,
+      facilityPage: 0,
+      facilityShown: shownIds
+    };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return payload;
+  }
+
   if (CHANGE_PHONE_TRIGGERS.includes(lowerMsg) && session.tempData && session.tempData.phone) {
     const t0 = dictionary[knownLang || 'en'];
     session.currentState = 'AWAITING_PHONE';
@@ -1036,6 +1174,29 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     await session.save();
 
     const langText = dictionary[selectedLanguage];
+
+    // If we do not already know WHICH facility this patient wants, ask before
+    // the menu — otherwise a shared WhatsApp number silently books everyone into
+    // the default hospital and every other facility is unreachable.
+    const facilities = await searchFacilities('');
+    if (!session.tempData.facilityChosen && facilities.length > 1) {
+      const previous = await lastVisitedFacility(waPhone);
+      // Put the patient's own last-used facility first: for a returning patient
+      // that turns the whole step into a single tap.
+      const ordered = previous ? [previous, ...facilities.filter((h) => h.id !== previous.id)] : facilities;
+
+      const { payload, shownIds } = facilityPrompt(langText, ordered, {
+        lead: previous ? [{ sender: 'bot', text: langText.lastVisited(previous) }] : []
+      });
+
+      session.currentState = 'AWAITING_FACILITY';
+      session.tempData.facilityPage = 0;
+      session.tempData.facilityShown = shownIds;
+      session.markModified && session.markModified('tempData');
+      await session.save();
+      return payload;
+    }
+
     return {
       messages: [
         { sender: 'bot', text: langText.welcome },
@@ -1043,6 +1204,77 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
         { sender: 'bot', text: langText.tipTypeProblem }
       ],
       options: langText.options
+    };
+  }
+
+  // AWAITING_FACILITY — the patient picks which hospital/clinic they want.
+  // Accepts the option number, the facility name, or a free-text search by city,
+  // district or type ("dental", "Patna").
+  if (session.currentState === 'AWAITING_FACILITY') {
+    const t0 = dictionary[knownLang || 'en'];
+    const shownIds = (session.tempData && session.tempData.facilityShown) || [];
+
+    // 1. A number refers to the numbered list we just showed.
+    const picked = parseInt(cleanMsg, 10);
+    let chosen = null;
+    if (!isNaN(picked) && picked >= 1 && picked <= shownIds.length) {
+      chosen = await Hospital.findOne({ id: shownIds[picked - 1] });
+    }
+
+    // 2. Otherwise treat it as a name/city search.
+    if (!chosen && cleanMsg) {
+      if (['more', 'next', 'aur', 'और'].includes(lowerMsg)) {
+        const all = await searchFacilities('');
+        const page = ((session.tempData && session.tempData.facilityPage) || 0) + 1;
+        const { payload, shownIds: nextIds } = facilityPrompt(t0, all, { page });
+        session.tempData.facilityPage = page;
+        session.tempData.facilityShown = nextIds;
+        session.markModified && session.markModified('tempData');
+        await session.save();
+        return payload;
+      }
+
+      const matches = await searchFacilities(lowerMsg === 'list' ? '' : cleanMsg);
+      if (matches.length === 1) {
+        chosen = matches[0];
+      } else if (matches.length > 1) {
+        const { payload, shownIds: nextIds } = facilityPrompt(t0, matches, { query: cleanMsg });
+        session.tempData.facilityPage = 0;
+        session.tempData.facilityShown = nextIds;
+        session.markModified && session.markModified('tempData');
+        await session.save();
+        return payload;
+      }
+    }
+
+    if (!chosen) {
+      const all = await searchFacilities('');
+      const { payload, shownIds: nextIds } = facilityPrompt(t0, all, {
+        lead: [{ sender: 'bot', text: t0.facilityNotFound(cleanMsg) }]
+      });
+      session.tempData.facilityShown = nextIds;
+      session.markModified && session.markModified('tempData');
+      await session.save();
+      return payload;
+    }
+
+    // Locked in: every later turn books at this facility.
+    session.currentState = 'WELCOME';
+    session.tempData = {
+      language: knownLang || 'en',
+      hospitalId: chosen.id,
+      facilityChosen: true
+    };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+
+    return {
+      messages: [
+        { sender: 'bot', text: t0.facilityChosen(chosen) },
+        { sender: 'bot', text: t0.selectOption },
+        { sender: 'bot', text: t0.tipTypeProblem }
+      ],
+      options: t0.options
     };
   }
 
@@ -1115,7 +1347,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       return { messages: [{ sender: 'bot', text: text.tokenNotFound }], options: [] };
     }
     session.currentState = 'WELCOME';
-    session.tempData = { language: lang, hospitalId: currentHospId };
+    session.tempData = { language: lang, hospitalId: currentHospId, facilityChosen: true };
     session.markModified && session.markModified('tempData');
     await session.save();
     return { messages: statusMsgs, options: text.options };

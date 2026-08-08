@@ -150,6 +150,89 @@ async function say(sessionId, message) {
   reply = await say(session, 'मुझे साँस लेने में तकलीफ है');
   check('Hindi red flag starts the emergency path', /मोबाइल नंबर/.test(reply.flat), reply.flat);
 
+  section('WhatsApp can book at ANY registered facility');
+  // A second facility, reachable only through the shared WhatsApp number.
+  new models.Hospital({
+    id: 'bright-dental',
+    name: 'BrightDental Clinic',
+    address: 'Station Road',
+    city: 'Gaya',
+    phone: '+910001',
+    type: 'Clinic',
+    whatsappNumber: '+917484043690'
+  }).save();
+  new models.Doctor({
+    _id: 'docD',
+    name: 'Dr. Neha Rao',
+    department: 'Dental',
+    currentRoom: 'Room 1',
+    averageCheckupTime: 10,
+    availabilityStatus: 'Available',
+    hospital: 'bright-dental'
+  }).save();
+
+  // No hospitalId is passed — exactly what the shared WhatsApp number does.
+  const waSay = async (sessionId, message) => {
+    const result = await processChatMessage({ sessionId, message });
+    return { ...result, flat: result.messages.map((m) => m.text).join(' | ') };
+  };
+
+  session = 'wa_919000000001';
+  await waSay(session, 'hi');
+  reply = await waSay(session, 'English');
+  check('patient is asked which hospital', /Which hospital or clinic/i.test(reply.flat), reply.flat);
+  check(
+    'both facilities are listed',
+    /City General/.test(reply.flat) && /BrightDental/.test(reply.flat),
+    reply.flat
+  );
+
+  reply = await waSay(session, 'gaya');
+  check('search by city selects the facility', /BrightDental Clinic/.test(reply.flat), reply.flat);
+  check('and the menu follows', /select an option/i.test(reply.flat), reply.flat);
+
+  // New patient at this facility, so registration runs; the WhatsApp number is
+  // taken automatically as always.
+  reply = await waSay(session, 'daant me dard');
+  check(
+    'uses the WhatsApp number without asking',
+    /Using your WhatsApp number/i.test(reply.flat),
+    reply.flat
+  );
+  await waSay(session, 'Anil Kumar');
+  await waSay(session, '30');
+  reply = await waSay(session, 'male');
+  check("routed to the CHOSEN facility's own doctor", /Neha Rao/.test(reply.flat), reply.flat);
+  check('and to the right department', /Dental/.test(reply.flat), reply.flat);
+
+  reply = await waSay(session, 'yes');
+  check('token booked at the chosen facility', /Booking Complete/i.test(reply.flat), reply.flat);
+  const dentalToken = models.Token._rows.find((t) => t.hospital === 'bright-dental');
+  check(
+    'token is stored against that facility',
+    Boolean(dentalToken),
+    models.Token._rows.map((t) => t.hospital)
+  );
+
+  session = 'wa_919000000002';
+  await waSay(session, 'hi');
+  await waSay(session, 'English');
+  reply = await waSay(session, '2');
+  check('numeric pick works', /BrightDental|City General/.test(reply.flat), reply.flat);
+
+  reply = await waSay(session, 'hospital');
+  check('HOSPITAL command reopens the picker', /Which hospital or clinic/i.test(reply.flat), reply.flat);
+
+  section('The web widget never sees the picker');
+  session = 'web_facility';
+  await say(session, 'hi');
+  reply = await say(session, 'English');
+  check(
+    'a facility-scoped page goes straight to the menu',
+    !/Which hospital/i.test(reply.flat) && /select an option/i.test(reply.flat),
+    reply.flat
+  );
+
   section('Unknown token is handled');
   session = 'web5';
   await say(session, 'hi');

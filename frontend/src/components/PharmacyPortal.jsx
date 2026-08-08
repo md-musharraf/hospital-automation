@@ -4,6 +4,8 @@ import createApi from '../lib/api';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
 import LiveActivityFeed from './LiveActivityFeed';
+import HelpPanel from './HelpPanel';
+import EmptyState from './EmptyState';
 
 export function PharmacyLogin({ setPharmacyToken, setPharmacyUser, onSuccess }) {
   const [username, setUsername] = useState('');
@@ -364,9 +366,11 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
           {loading ? (
             <div className="text-xs text-[var(--text-secondary)] italic">Loading prescriptions...</div>
           ) : visibleTokens.length === 0 ? (
-            <div className="text-xs text-[var(--text-secondary)]/50 italic py-4">
-              No prescriptions to dispense.
-            </div>
+            <EmptyState
+              icon="local_pharmacy"
+              title="Nothing to dispense"
+              hint="A prescription lands here the moment a doctor finishes a checkup. Anything you are out of is flagged SHORT before you call the patient forward."
+            />
           ) : (
             <div className="space-y-2">
               {visibleTokens.map((tok) => (
@@ -502,10 +506,13 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
 
             <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl overflow-hidden divide-y divide-[var(--border-color)]/20">
               {inventory.length === 0 ? (
-                <p className="p-6 text-xs text-[var(--text-secondary)] text-center font-medium">
-                  No medicines in stock yet. Add the ones you keep at the counter so doctors can see
-                  availability while prescribing.
-                </p>
+                <div className="p-4">
+                  <EmptyState
+                    icon="inventory_2"
+                    title="Your stock list is empty"
+                    hint="Add the medicines you keep at the counter using the form above. Doctors then see live availability while prescribing, so they can pick something you actually have."
+                  />
+                </div>
               ) : (
                 inventory.map((m) => (
                   <div key={m._id} className="p-4 flex items-center justify-between gap-3 flex-wrap">
