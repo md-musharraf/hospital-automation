@@ -89,6 +89,19 @@ function createModel(name, prefix, registry) {
       sort() {
         return query;
       },
+      // Field projection does not change what the tests assert on, but it must
+      // exist: `tokenHelper.generateUniqueTokenNumber` chains `.select()`, and
+      // without it every token fell into the helper's catch-and-fallback path.
+      // The new structured logging is what made that visible.
+      select() {
+        return query;
+      },
+      lean() {
+        return query;
+      },
+      limit() {
+        return query;
+      },
       then(onResolve, onReject) {
         return Promise.resolve(result).then(onResolve, onReject);
       }
