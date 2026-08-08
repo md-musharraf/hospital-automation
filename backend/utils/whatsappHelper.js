@@ -1,15 +1,14 @@
 // Single source of truth for the hospital's public WhatsApp number.
+const log = require('./logger').child({ module: 'whatsapp' });
 // Everything (welcome text, QR deep links, hospital records, webhook matching)
 // must derive from THIS one number so the patient always sees, and always
 // replies to, the exact same number — no more "do alag-alag number" mismatch
 // between a Twilio placeholder and the real registered number.
 const DEFAULT_WHATSAPP_NUMBER =
-  process.env.META_DISPLAY_NUMBER ||
-  process.env.TWILIO_WHATSAPP_NUMBER ||
-  '+917484043690';
+  process.env.META_DISPLAY_NUMBER || process.env.TWILIO_WHATSAPP_NUMBER || '+917484043690';
 
 // In-Memory Dynamic Config Store for WhatsApp API Engine
-let dynamicConfig = {
+const dynamicConfig = {
   whatsappNumber: DEFAULT_WHATSAPP_NUMBER,
   isAutoWorking: true,
   activeTriggers: [
@@ -104,7 +103,9 @@ async function checkMetaToken() {
   const metaPhoneId = process.env.META_PHONE_NUMBER_ID;
   if (!metaToken || !metaPhoneId || metaToken.includes('your_meta_access_token')) {
     return {
-      ok: false, configured: false, classification: 'not_configured',
+      ok: false,
+      configured: false,
+      classification: 'not_configured',
       message: 'Meta credentials are not set (META_WHATSAPP_ACCESS_TOKEN / META_PHONE_NUMBER_ID).'
     };
   }
@@ -114,23 +115,32 @@ async function checkMetaToken() {
     const data = await res.json();
     if (res.ok && !data.error) {
       return {
-        ok: true, configured: true, classification: 'healthy',
-        displayNumber: data.display_phone_number, verifiedName: data.verified_name,
-        qualityRating: data.quality_rating, numberStatus: data.status,
+        ok: true,
+        configured: true,
+        classification: 'healthy',
+        displayNumber: data.display_phone_number,
+        verifiedName: data.verified_name,
+        qualityRating: data.quality_rating,
+        numberStatus: data.status,
         message: 'Meta WhatsApp token is valid and the number is reachable.'
       };
     }
     const mErr = data.error || {};
     const classification = classifyMetaError(mErr);
-    const hint = classification === 'token_expired_or_invalid'
-      ? 'Generate a fresh token (prefer a permanent System User token) and update META_WHATSAPP_ACCESS_TOKEN on the server.'
-      : classification === 'api_access_blocked'
-        ? 'Meta has blocked this app/token API access — check the app for restriction banners and Business verification, or create a new app + token.'
-        : 'See the Meta error message for details.';
+    const hint =
+      classification === 'token_expired_or_invalid'
+        ? 'Generate a fresh token (prefer a permanent System User token) and update META_WHATSAPP_ACCESS_TOKEN on the server.'
+        : classification === 'api_access_blocked'
+          ? 'Meta has blocked this app/token API access — check the app for restriction banners and Business verification, or create a new app + token.'
+          : 'See the Meta error message for details.';
     return {
-      ok: false, configured: true, classification,
-      code: mErr.code, subcode: mErr.error_subcode,
-      message: mErr.message || 'Unknown Meta error', hint
+      ok: false,
+      configured: true,
+      classification,
+      code: mErr.code,
+      subcode: mErr.error_subcode,
+      message: mErr.message || 'Unknown Meta error',
+      hint
     };
   } catch (err) {
     return { ok: false, configured: true, classification: 'network_error', message: err.message };
@@ -141,7 +151,7 @@ async function checkMetaToken() {
  * Sends a WhatsApp notification to a patient using Meta WhatsApp Cloud API v20.0.
  * Supports text messages and interactive quick reply buttons / list options.
  * Falls back cleanly to Auto-Gateway mode if Meta credentials are not configured.
- * 
+ *
  * @param {string} phone Patient's phone number
  * @param {string} message Message body
  * @param {Array<string>} [options] Optional button/list options for interactive messaging
@@ -181,7 +191,7 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
   // 'sent' anyway, which would mask a real data problem (patient has no
   // phone on file) as a successful delivery.
   if (!cleanPhone) {
-    console.warn('[WHATSAPP SKIPPED] No phone number provided — message not dispatched:', message);
+    log.warn('No phone number provided — message not dispatched:', message);
     return { status: 'skipped', provider: 'none', reason: 'missing_phone' };
   }
 
@@ -203,7 +213,7 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
     try {
       const recipientDigits = cleanPhone.replace(/\D/g, '');
       const metaUrl = `https://graph.facebook.com/v20.0/${metaPhoneId}/messages`;
-      
+
       let payload;
 
       // 1. Interactive Quick Reply Buttons (1 to 3 options, e.g. Male / Female / Other)
@@ -227,7 +237,7 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
             }
           }
         };
-      } 
+      }
       // 2. Interactive List Menu (> 3 options, up to 10 items)
       else if (options && Array.isArray(options) && options.length > 3 && options.length <= 10) {
         payload = {
@@ -253,7 +263,7 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
             }
           }
         };
-      } 
+      }
       // 3. Plain Text Message
       else {
         let fullText = message;
@@ -272,7 +282,7 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
       const res = await (global.fetch || require('node-fetch'))(metaUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${metaToken}`,
+          Authorization: `Bearer ${metaToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
@@ -282,7 +292,7 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
 
       if (res.ok && data.messages && data.messages.length > 0) {
         const msgId = data.messages[0].id;
-        console.log(`[META WHATSAPP SENT] Message ID: ${msgId} to ${cleanPhone}`);
+        log.info(`Message ID: ${msgId} to ${cleanPhone}`);
         dispatchRecord.sid = msgId;
         dispatchRecord.provider = 'meta';
         sentHistory.push(dispatchRecord);
@@ -300,14 +310,16 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
         //  - code 200 "API access blocked" => Meta BLOCKED the app's API access (account/app level)
         //  - code 10 / 131030      => recipient not in the dev-mode allowed-numbers list
         const classification = classifyMetaError(mErr);
-        console.error(`[META WHATSAPP FAILED] code=${mErr.code} subcode=${mErr.error_subcode || '-'} (${classification}): ${errDetail} | Falling back...`);
+        log.error(
+          `code=${mErr.code} subcode=${mErr.error_subcode || '-'} (${classification}): ${errDetail} | Falling back...`
+        );
         dispatchRecord.metaError = errDetail;
         dispatchRecord.metaErrorCode = mErr.code;
         dispatchRecord.metaErrorSubcode = mErr.error_subcode;
         dispatchRecord.metaErrorClass = classification;
       }
     } catch (err) {
-      console.error('[META WHATSAPP FAILED] Exception:', err.message, '| Falling back...');
+      log.error('Exception:', err.message, '| Falling back...');
       dispatchRecord.metaError = err.message;
     }
   }
@@ -318,7 +330,7 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
   // failure so it's visible in the history/UI instead of silently swallowed,
   // which is exactly what masks an expired-token problem from the operator.
   if (metaConfigured) {
-    console.error(`[META WHATSAPP UNDELIVERED] To: ${cleanPhone} | Reason: ${dispatchRecord.metaError || 'unknown'}`);
+    log.error(`To: ${cleanPhone} | Reason: ${dispatchRecord.metaError || 'unknown'}`);
     dispatchRecord.status = 'failed';
     dispatchRecord.provider = 'meta';
     sentHistory.push(dispatchRecord);
@@ -343,7 +355,7 @@ async function sendWhatsAppNotification(phone, message, options = [], socketIo, 
     autoText += '\n\n' + options.map((opt, idx) => `${idx + 1}. ${opt}`).join('\n');
   }
 
-  console.log(`[WHATSAPP AUTO-GATEWAY DISPATCH] From: whatsapp:${cleanSender} -> To: whatsapp:${cleanPhone} | Msg: "${autoText}"`);
+  log.info(`From: whatsapp:${cleanSender} -> To: whatsapp:${cleanPhone} | Msg: "${autoText}"`);
   dispatchRecord.provider = 'auto_gateway';
   dispatchRecord.note = 'Dispatched via Meta WhatsApp Cloud API Auto-Gateway';
   sentHistory.push(dispatchRecord);

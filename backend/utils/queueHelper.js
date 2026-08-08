@@ -1,6 +1,7 @@
 const Queue = require('../models/Queue');
 const Doctor = require('../models/Doctor');
 const Token = require('../models/Token');
+const logger = require('./logger');
 
 // How many front positions get a "your turn is near — please come now" ping.
 // Positions 1 and 2 in the waiting line, so a patient can wait at home / outside
@@ -14,7 +15,8 @@ function formatApptTime(minsFromNow) {
   let h = d.getHours();
   const m = d.getMinutes().toString().padStart(2, '0');
   const ampm = h >= 12 ? 'PM' : 'AM';
-  h = h % 12; if (h === 0) h = 12;
+  h = h % 12;
+  if (h === 0) h = 12;
   return `${h}:${m} ${ampm}`;
 }
 
@@ -24,28 +26,28 @@ async function recalculateQueueTimes(doctorId) {
     if (!queue || !queue.activeQueue) return;
 
     const doctor = await Doctor.findById(doctorId);
-    const avgTime = doctor ? (doctor.averageCheckupTime || 10) : 10;
+    const avgTime = doctor ? doctor.averageCheckupTime || 10 : 10;
     const buffer = queue.bufferDelay || 0;
 
     let pos = 0;
     for (let i = 0; i < queue.activeQueue.length; i++) {
       const token = queue.activeQueue[i];
       if (token && typeof token.save === 'function') {
-        token.estimatedWaitTime = (pos * avgTime) + buffer;
+        token.estimatedWaitTime = pos * avgTime + buffer;
         await token.save();
         pos++;
       } else if (token && (token._id || typeof token === 'string')) {
         const tokenId = token._id || token;
         const realToken = await Token.findById(tokenId);
         if (realToken) {
-          realToken.estimatedWaitTime = (pos * avgTime) + buffer;
+          realToken.estimatedWaitTime = pos * avgTime + buffer;
           await realToken.save();
           pos++;
         }
       }
     }
   } catch (err) {
-    console.error('Error in recalculateQueueTimes:', err);
+    logger.error('Error in recalculateQueueTimes', { err: err });
   }
 }
 
@@ -76,9 +78,7 @@ async function notifyUpcomingPatients(doctorId, io) {
       if (!patient || !patient.phone) continue;
 
       const ahead = i; // 0 => next, 1 => one person ahead
-      const aheadLine = ahead === 0
-        ? 'You are NEXT.'
-        : `Only ${ahead} patient ahead of you.`;
+      const aheadLine = ahead === 0 ? 'You are NEXT.' : `Only ${ahead} patient ahead of you.`;
       const msg =
         `🔔 ${aheadLine} Please reach ${room} now, token ${token.tokenNumber}.\n` +
         `🔔 अब आपकी बारी पास है — कृपया अभी ${room} पहुँच जाएँ (टोकन ${token.tokenNumber})।`;
@@ -86,7 +86,7 @@ async function notifyUpcomingPatients(doctorId, io) {
       try {
         await sendWhatsAppNotification(patient.phone, msg);
       } catch (waErr) {
-        console.error('Arrival alert WhatsApp error:', waErr);
+        logger.error('Arrival alert WhatsApp error', { err: waErr });
       }
 
       // Mark once so the patient is never pinged twice as the line shifts.
@@ -94,15 +94,17 @@ async function notifyUpcomingPatients(doctorId, io) {
       try {
         await Token.findByIdAndUpdate(token._id, { arrivalAlerted: true });
       } catch (uErr) {
-        console.error('Arrival alert flag update error:', uErr);
+        logger.error('Arrival alert flag update error', { err: uErr });
       }
 
       if (io) {
-        try { io.to(`patient:${token._id}`).emit('arrival-alert', { tokenNumber: token.tokenNumber, ahead }); } catch (_) {}
+        try {
+          io.to(`patient:${token._id}`).emit('arrival-alert', { tokenNumber: token.tokenNumber, ahead });
+        } catch (_) {}
       }
     }
   } catch (err) {
-    console.error('Error in notifyUpcomingPatients:', err);
+    logger.error('Error in notifyUpcomingPatients', { err: err });
   }
 }
 
@@ -128,10 +130,12 @@ async function insertTokenByPriority(queue, token) {
   let tierById = new Map();
   try {
     const existing = await Token.find({ _id: { $in: queue.activeQueue } });
-    tierById = new Map(existing.map(e => [String(e._id), tokenTier(e)]));
-  } catch (_) { /* fall back to append on any lookup issue */ }
+    tierById = new Map(existing.map((e) => [String(e._id), tokenTier(e)]));
+  } catch (_) {
+    /* fall back to append on any lookup issue */
+  }
 
-  let idx = queue.activeQueue.findIndex(id => {
+  let idx = queue.activeQueue.findIndex((id) => {
     const t = tierById.has(String(id)) ? tierById.get(String(id)) : 2;
     return t > tier;
   });
@@ -156,7 +160,7 @@ async function getTodayTokenCount(doctorId) {
     // string, which breaks a raw `{ createdAt: { $gte: Date } }` comparison.
     const start = startOfToday().getTime();
     const toks = await Token.find({ doctor: doctorId, status: { $ne: 'Absent' } });
-    return (toks || []).filter(t => t.createdAt && new Date(t.createdAt).getTime() >= start).length;
+    return (toks || []).filter((t) => t.createdAt && new Date(t.createdAt).getTime() >= start).length;
   } catch (_) {
     return 0;
   }

@@ -3,52 +3,36 @@ const router = express.Router();
 const Token = require('../models/Token');
 const Doctor = require('../models/Doctor');
 const Patient = require('../models/Patient');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, ensureRole } = require('../middleware/auth');
+const { startOfToday } = require('../utils/dates');
+const { toId } = require('../utils/ids');
+const { facilityOf, facilityTokens } = require('../utils/tenancy');
 const { toRole, toDoctor, toFacility, logActivity, announceJourney } = require('../utils/realtime');
 const { setStage, allTestsComplete } = require('../utils/journeyHelper');
+const logger = require('../utils/logger');
 
-// Middleware to ensure the user is a lab assistant
-const ensureLab = (req, res, next) => {
-  if (req.user.role !== 'lab') {
-    return res.status(403).json({ message: 'Access denied: Lab Assistants only' });
-  }
-  next();
-};
-
-const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
-
-/** Tenant-scoped: only tokens whose doctor belongs to this lab's facility. */
-async function facilityTokens(hospital) {
-  const doctors = await Doctor.find({ hospital });
-  const docIds = doctors.map(d => String(d._id));
-  const tokens = await Token.find({ hospital })
-    .populate('patient')
-    .populate('doctor', '-passwordHash');
-  return (tokens || []).filter(t => {
-    const did = t.doctor && (t.doctor._id || t.doctor);
-    return docIds.includes(String(did));
-  });
-}
+// Role guard for this router (see middleware/auth.js).
+const ensureLab = ensureRole('lab');
 
 // GET the lab worklist: every token with tests that are not finished yet.
 // Urgent tests first, then oldest request first — the order a bench actually works in.
 router.get('/queues/pending-tests', authenticateToken, ensureLab, async (req, res) => {
   try {
-    const hospital = req.user.hospital || 'general-hospital';
+    const hospital = facilityOf(req);
     const tokens = await facilityTokens(hospital);
 
     const pending = tokens
-      .filter(t => (t.labTests || []).some(x => x.status !== 'Completed'))
+      .filter((t) => (t.labTests || []).some((x) => x.status !== 'Completed'))
       .sort((a, b) => {
-        const au = (a.labTests || []).some(x => x.status !== 'Completed' && x.urgency === 'Urgent') ? 0 : 1;
-        const bu = (b.labTests || []).some(x => x.status !== 'Completed' && x.urgency === 'Urgent') ? 0 : 1;
+        const au = (a.labTests || []).some((x) => x.status !== 'Completed' && x.urgency === 'Urgent') ? 0 : 1;
+        const bu = (b.labTests || []).some((x) => x.status !== 'Completed' && x.urgency === 'Urgent') ? 0 : 1;
         if (au !== bu) return au - bu;
         return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
       });
 
     res.json(pending);
   } catch (err) {
-    console.error('Error fetching pending tests:', err);
+    logger.error('Error fetching pending tests', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -57,18 +41,21 @@ router.get('/queues/pending-tests', authenticateToken, ensureLab, async (req, re
 // arriving on the other side.
 router.get('/completed-today', authenticateToken, ensureLab, async (req, res) => {
   try {
-    const hospital = req.user.hospital || 'general-hospital';
+    const hospital = facilityOf(req);
     const start = startOfToday().getTime();
     const tokens = await facilityTokens(hospital);
 
     const done = tokens
-      .filter(t => (t.labTests || []).some(x =>
-        x.status === 'Completed' && x.completedAt && new Date(x.completedAt).getTime() >= start))
+      .filter((t) =>
+        (t.labTests || []).some(
+          (x) => x.status === 'Completed' && x.completedAt && new Date(x.completedAt).getTime() >= start
+        )
+      )
       .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 
     res.json(done);
   } catch (err) {
-    console.error('Error fetching completed tests:', err);
+    logger.error('Error fetching completed tests', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -76,12 +63,17 @@ router.get('/completed-today', authenticateToken, ensureLab, async (req, res) =>
 // GET the lab's live workload numbers for the dashboard header.
 router.get('/stats', authenticateToken, ensureLab, async (req, res) => {
   try {
-    const hospital = req.user.hospital || 'general-hospital';
+    const hospital = facilityOf(req);
     const start = startOfToday().getTime();
     const tokens = await facilityTokens(hospital);
 
-    let pending = 0, collected = 0, completedToday = 0, urgentPending = 0, abnormalToday = 0;
-    let turnaroundTotal = 0, turnaroundCount = 0;
+    let pending = 0,
+      collected = 0,
+      completedToday = 0,
+      urgentPending = 0,
+      abnormalToday = 0;
+    let turnaroundTotal = 0,
+      turnaroundCount = 0;
 
     for (const t of tokens) {
       for (const test of t.labTests || []) {
@@ -106,12 +98,16 @@ router.get('/stats', authenticateToken, ensureLab, async (req, res) => {
     }
 
     res.json({
-      pending, collected, completedToday, urgentPending, abnormalToday,
+      pending,
+      collected,
+      completedToday,
+      urgentPending,
+      abnormalToday,
       avgTurnaroundMins: turnaroundCount > 0 ? Math.round(turnaroundTotal / turnaroundCount) : 0,
-      patientsWaiting: tokens.filter(t => (t.labTests || []).some(x => x.status !== 'Completed')).length
+      patientsWaiting: tokens.filter((t) => (t.labTests || []).some((x) => x.status !== 'Completed')).length
     });
   } catch (err) {
-    console.error('Error building lab stats:', err);
+    logger.error('Error building lab stats', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -123,17 +119,19 @@ router.post('/tests/:tokenId/collect', authenticateToken, ensureLab, async (req,
   try {
     const { testName } = req.body;
     if (!testName || typeof testName !== 'string' || testName.length > 100) {
-      return res.status(400).json({ message: 'testName is required and must be a string up to 100 characters' });
+      return res
+        .status(400)
+        .json({ message: 'testName is required and must be a string up to 100 characters' });
     }
 
-    const hospital = req.user.hospital || 'general-hospital';
+    const hospital = facilityOf(req);
     const token = await Token.findById(req.params.tokenId);
     if (!token) return res.status(404).json({ message: 'Token not found' });
     if (token.hospital !== hospital) {
       return res.status(403).json({ message: 'This token belongs to another facility' });
     }
 
-    const test = (token.labTests || []).find(t => t.testName.toLowerCase() === testName.toLowerCase());
+    const test = (token.labTests || []).find((t) => t.testName.toLowerCase() === testName.toLowerCase());
     if (!test) return res.status(404).json({ message: `Test "${testName}" not found on this token` });
     if (test.status === 'Completed') {
       return res.status(400).json({ message: `Test "${testName}" is already completed` });
@@ -145,17 +143,25 @@ router.post('/tests/:tokenId/collect', authenticateToken, ensureLab, async (req,
     await token.save();
 
     const io = req.io;
-    toDoctor(io, String((token.doctor && token.doctor._id) || token.doctor), 'lab-updated', { tokenId: String(token._id), testName, status: 'Collected' });
+    toDoctor(io, toId(token.doctor), 'lab-updated', {
+      tokenId: String(token._id),
+      testName,
+      status: 'Collected'
+    });
     toRole(io, 'lab', hospital, 'lab-updated', { tokenId: String(token._id), testName, status: 'Collected' });
     await logActivity(io, {
-      hospital, type: 'lab-collected', role: 'lab', actor: req.user.username || 'Lab',
+      hospital,
+      type: 'lab-collected',
+      role: 'lab',
+      actor: req.user.username || 'Lab',
       message: `Sample collected for ${testName} (${token.tokenNumber}).`,
-      tokenNumber: token.tokenNumber, refId: token._id
+      tokenNumber: token.tokenNumber,
+      refId: token._id
     });
 
     res.json({ message: `Sample for "${testName}" marked as collected.`, token });
   } catch (err) {
-    console.error('Error marking sample collected:', err);
+    logger.error('Error marking sample collected', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -170,18 +176,24 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
     const { testName, remarks, resultValue, unit, normalRange, abnormal } = req.body;
 
     if (!testName || typeof testName !== 'string' || testName.trim().length === 0 || testName.length > 100) {
-      return res.status(400).json({ message: 'testName is required and must be a string up to 100 characters' });
+      return res
+        .status(400)
+        .json({ message: 'testName is required and must be a string up to 100 characters' });
     }
     if (remarks && (typeof remarks !== 'string' || remarks.length > 500)) {
       return res.status(400).json({ message: 'Remarks must be a valid string up to 500 characters' });
     }
-    for (const [field, val] of [['resultValue', resultValue], ['unit', unit], ['normalRange', normalRange]]) {
+    for (const [field, val] of [
+      ['resultValue', resultValue],
+      ['unit', unit],
+      ['normalRange', normalRange]
+    ]) {
       if (val !== undefined && val !== null && (typeof val !== 'string' || val.length > 100)) {
         return res.status(400).json({ message: `${field} must be a string up to 100 characters` });
       }
     }
 
-    const hospital = req.user.hospital || 'general-hospital';
+    const hospital = facilityOf(req);
     // Load WITHOUT populate: saving a populated document writes the nested
     // objects back in place of the ObjectIds, which then breaks every later
     // `{ doctor: <id> }` lookup — including the doctor's own "results ready"
@@ -194,11 +206,11 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
       return res.status(403).json({ message: 'This token belongs to another facility' });
     }
     const [tokenPatient, tokenDoctor] = await Promise.all([
-      token.patient ? Patient.findById(token.patient._id || token.patient) : null,
-      token.doctor ? Doctor.findById(token.doctor._id || token.doctor) : null
+      token.patient ? Patient.findById(toId(token.patient)) : null,
+      token.doctor ? Doctor.findById(toId(token.doctor)) : null
     ]);
 
-    const test = (token.labTests || []).find(t => t.testName.toLowerCase() === testName.toLowerCase());
+    const test = (token.labTests || []).find((t) => t.testName.toLowerCase() === testName.toLowerCase());
     if (!test) {
       return res.status(404).json({ message: `Test "${testName}" not found on this token` });
     }
@@ -224,7 +236,7 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
     await token.save();
 
     const io = req.io;
-    const doctorId = token.doctor && String(token.doctor._id || token.doctor);
+    const doctorId = toId(token.doctor);
     const resultLine = test.resultValue
       ? `${test.resultValue}${test.unit ? ' ' + test.unit : ''}${test.normalRange ? ` (normal ${test.normalRange})` : ''}`
       : test.remarks;
@@ -232,24 +244,42 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
     // The doctor who ordered it gets a targeted event — their "results ready"
     // panel updates without them refreshing anything.
     toDoctor(io, doctorId, 'lab-result-ready', {
-      tokenId: String(token._id), tokenNumber: token.tokenNumber,
+      tokenId: String(token._id),
+      tokenNumber: token.tokenNumber,
       patientName: tokenPatient && tokenPatient.name,
-      testName, result: resultLine, abnormal: test.abnormal, allComplete: everythingDone
+      testName,
+      result: resultLine,
+      abnormal: test.abnormal,
+      allComplete: everythingDone
     });
     toRole(io, 'lab', hospital, 'lab-updated', { tokenId: String(token._id), testName, status: 'Completed' });
-    toFacility(io, hospital, 'lab-updated', { tokenId: String(token._id), testName, status: 'Completed' }, { alsoLegacy: true });
+    toFacility(
+      io,
+      hospital,
+      'lab-updated',
+      { tokenId: String(token._id), testName, status: 'Completed' },
+      { alsoLegacy: true }
+    );
 
     await logActivity(io, {
-      hospital, type: 'lab-completed', role: 'lab', actor: req.user.username || 'Lab',
+      hospital,
+      type: 'lab-completed',
+      role: 'lab',
+      actor: req.user.username || 'Lab',
       message: `${testName} result for ${token.tokenNumber}: ${resultLine}${test.abnormal ? ' — ABNORMAL' : ''}.`,
-      tokenNumber: token.tokenNumber, refId: token._id,
+      tokenNumber: token.tokenNumber,
+      refId: token._id,
       severity: test.abnormal ? 'critical' : 'success'
     });
 
     if (everythingDone) {
       await announceJourney(io, {
-        hospital, token, stage: 'Lab Complete', role: 'lab',
-        actor: req.user.username || 'Lab', type: 'lab-completed',
+        hospital,
+        token,
+        stage: 'Lab Complete',
+        role: 'lab',
+        actor: req.user.username || 'Lab',
+        type: 'lab-completed',
         message: `All reports ready for ${token.tokenNumber} — patient can return to ${tokenDoctor ? tokenDoctor.name : 'the doctor'}.`,
         severity: 'success'
       });
@@ -267,7 +297,7 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
         url: `/prescription/${token._id}`
       });
     } catch (err) {
-      console.error('Push notification failed on lab complete:', err);
+      logger.error('Push notification failed on lab complete', { err: err });
     }
 
     // Trigger WhatsApp notification to patient
@@ -281,10 +311,11 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
         const alertMsg =
           `Hello ${tokenPatient.name}, your lab report for "${testName}" is ready.\n` +
           `🧪 Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range — please show it to your doctor.' : ''}\n` +
-          `View online: https://hospital-automation-wine.vercel.app/prescription/${token._id}` + backToDoctor;
+          `View online: https://hospital-automation-wine.vercel.app/prescription/${token._id}` +
+          backToDoctor;
         await sendWhatsAppNotification(tokenPatient.phone, alertMsg);
       } catch (waErr) {
-        console.error('Lab WhatsApp notify failed:', waErr);
+        logger.error('Lab WhatsApp notify failed', { err: waErr });
       }
     }
 
@@ -294,7 +325,7 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
       token
     });
   } catch (err) {
-    console.error('Error completing test:', err);
+    logger.error('Error completing test', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });

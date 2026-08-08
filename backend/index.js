@@ -35,6 +35,9 @@ const pharmacyRoutes = require('./routes/pharmacy');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
 const opsRoutes = require('./routes/ops');
+const logger = require('./utils/logger');
+const { requestObservability, metricsSnapshot } = require('./middleware/observability');
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 const Token = require('./models/Token');
 const Queue = require('./models/Queue');
@@ -92,15 +95,15 @@ const checkOrigin = (origin, callback) => {
 
   // Allow any localhost or 127.0.0.1 origin (including any port) in development
   if (
-    cleanOrigin.startsWith('http://localhost:') || 
-    cleanOrigin.startsWith('http://127.0.0.1:') || 
-    cleanOrigin === 'http://localhost' || 
+    cleanOrigin.startsWith('http://localhost:') ||
+    cleanOrigin.startsWith('http://127.0.0.1:') ||
+    cleanOrigin === 'http://localhost' ||
     cleanOrigin === 'http://127.0.0.1'
   ) {
     return callback(null, true);
   }
 
-  const isAllowed = allowedOrigins.some(o => o.replace(/\/+$/, '') === cleanOrigin);
+  const isAllowed = allowedOrigins.some((o) => o.replace(/\/+$/, '') === cleanOrigin);
   if (isAllowed) {
     return callback(null, true);
   }
@@ -110,23 +113,32 @@ const checkOrigin = (origin, callback) => {
 };
 
 // CORS configuration
-app.use(cors({
-  origin: checkOrigin,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Secret'],
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: checkOrigin,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Secret'],
+    credentials: true
+  })
+);
 
 // Security middleware
-app.use(helmet({
-  contentSecurityPolicy: false, // Disabled to allow inline styles/scripts from frontend
-  crossOriginEmbedderPolicy: false
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // Disabled to allow inline styles/scripts from frontend
+    crossOriginEmbedderPolicy: false
+  })
+);
 app.use(mongoSanitize()); // Prevent NoSQL query injection
 app.use(xss()); // Prevent XSS attacks (inputs)
 app.use(hpp()); // Prevent HTTP Parameter Pollution
 app.use(express.json({ limit: '1mb' })); // Prevent payload bomb / DoS attacks
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Observability: tag every request with an id, time it, and record metrics.
+// Mounted after body parsing but BEFORE the routes, so every handler's logs
+// inherit the request id and every response is timed.
+app.use(requestObservability);
 
 // Database connection check middleware (except health check, and only if not using mock DB)
 app.use((req, res, next) => {
@@ -135,7 +147,8 @@ app.use((req, res, next) => {
   }
   if (process.env.USE_MOCK_DB !== 'true' && mongoose.connection.readyState !== 1) {
     return res.status(503).json({
-      message: 'Database connection is offline. Please verify you have whitelisted all IP addresses (0.0.0.0/0) in your MongoDB Atlas Network Access panel, or set USE_MOCK_DB=true in backend/.env to run in-memory.'
+      message:
+        'Database connection is offline. Please verify you have whitelisted all IP addresses (0.0.0.0/0) in your MongoDB Atlas Network Access panel, or set USE_MOCK_DB=true in backend/.env to run in-memory.'
     });
   }
   next();
@@ -167,13 +180,36 @@ app.use('/api/v1/messages', messageRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/ops', opsRoutes);
 
-// Health check endpoint
+// Health check endpoint.
+//
+// Used by uptime monitors AND by a human diagnosing "the system is slow", so it
+// reports more than a heartbeat: process uptime, memory, the database link, and
+// live request metrics (volume, status mix, slowest routes). `?verbose=false`
+// gives just the heartbeat for cheap polling.
 app.get('/api/v1/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
+  const dbConnected = process.env.USE_MOCK_DB === 'true' || mongoose.connection.readyState === 1;
+  const memory = process.memoryUsage();
+
+  const body = {
+    status: dbConnected ? 'healthy' : 'degraded',
     timestamp: new Date(),
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-  });
+    database: dbConnected ? 'connected' : 'disconnected',
+    mode: process.env.USE_MOCK_DB === 'true' ? 'in-memory' : 'mongodb'
+  };
+
+  if (req.query.verbose !== 'false') {
+    body.process = {
+      uptimeSeconds: Math.round(process.uptime()),
+      nodeVersion: process.version,
+      environment: process.env.NODE_ENV || 'development',
+      heapUsedMb: Math.round(memory.heapUsed / 1048576),
+      rssMb: Math.round(memory.rss / 1048576)
+    };
+    body.requests = metricsSnapshot();
+  }
+
+  // A monitor should treat a lost database as DOWN, not as a healthy 200.
+  res.status(dbConnected ? 200 : 503).json(body);
 });
 
 // Socket.io Connection Logic
@@ -216,23 +252,27 @@ cron.schedule('0 0 * * *', async () => {
   try {
     // Find all active tokens to archive
     const activeTokens = await Token.find().populate('patient').populate('doctor');
-    
-    const archiveRecords = activeTokens.map(token => {
+
+    const archiveRecords = activeTokens.map((token) => {
       return {
         tokenNumber: token.tokenNumber,
         status: token.status,
         tokenType: token.tokenType,
-        patientDetails: token.patient ? {
-          name: token.patient.name,
-          age: token.patient.age,
-          gender: token.patient.gender,
-          phone: token.patient.phone
-        } : { name: 'Unknown' },
-        doctorDetails: token.doctor ? {
-          name: token.doctor.name,
-          department: token.doctor.department,
-          currentRoom: token.doctor.currentRoom
-        } : { name: 'Unknown' },
+        patientDetails: token.patient
+          ? {
+              name: token.patient.name,
+              age: token.patient.age,
+              gender: token.patient.gender,
+              phone: token.patient.phone
+            }
+          : { name: 'Unknown' },
+        doctorDetails: token.doctor
+          ? {
+              name: token.doctor.name,
+              department: token.doctor.department,
+              currentRoom: token.doctor.currentRoom
+            }
+          : { name: 'Unknown' },
         symptoms: token.symptoms,
         calledAt: token.calledAt,
         completedAt: token.completedAt
@@ -249,11 +289,14 @@ cron.schedule('0 0 * * *', async () => {
     console.log(`Cleared ${deleteResult.deletedCount} active tokens from database.`);
 
     // Reset Doctor Queues
-    await Queue.updateMany({}, {
-      currentToken: null,
-      activeQueue: [],
-      bufferDelay: 0
-    });
+    await Queue.updateMany(
+      {},
+      {
+        currentToken: null,
+        activeQueue: [],
+        bufferDelay: 0
+      }
+    );
     console.log('Reset all doctor active queues and buffer times to 0.');
 
     // Clear stale Chat sessions
@@ -264,7 +307,6 @@ cron.schedule('0 0 * * *', async () => {
     io.emit('queue-reset');
     console.log('Broadcasted queue-reset event to all dashboards.');
     console.log('Midnight maintenance completed successfully. ✅');
-
   } catch (error) {
     console.error('Midnight archival cron failed:', error);
   }
@@ -284,17 +326,22 @@ cron.schedule('0 9 * * *', async () => {
 });
 
 // Periodic auto follow-up notifications checker (runs every 5 minutes)
-setInterval(async () => {
-  try {
-    const { processPendingReminders } = require('./utils/reminderHelper');
-    const processed = await processPendingReminders();
-    if (processed.length > 0) {
-      console.log(`[AUTO-REMINDERS] Automatically processed and sent ${processed.length} pending follow-up notifications.`);
+setInterval(
+  async () => {
+    try {
+      const { processPendingReminders } = require('./utils/reminderHelper');
+      const processed = await processPendingReminders();
+      if (processed.length > 0) {
+        console.log(
+          `[AUTO-REMINDERS] Automatically processed and sent ${processed.length} pending follow-up notifications.`
+        );
+      }
+    } catch (error) {
+      console.error('[AUTO-REMINDERS] Background auto follow-up process encountered an error:', error);
     }
-  } catch (error) {
-    console.error('[AUTO-REMINDERS] Background auto follow-up process encountered an error:', error);
-  }
-}, 5 * 60 * 1000); // 5 minutes
+  },
+  5 * 60 * 1000
+); // 5 minutes
 
 // Serve frontend build in production
 if (process.env.NODE_ENV === 'production') {
@@ -307,6 +354,25 @@ if (process.env.NODE_ENV === 'production') {
     res.json({ message: 'Hospital Queue Backend is running. Launch Frontend using Vite!' });
   });
 }
+
+// Error handling must be mounted LAST, after every route: an unknown path falls
+// through to the 404, and anything a handler throws (or an asyncHandler forwards)
+// lands in one place that logs it with the request id and returns a consistent
+// body — instead of ~50 handlers each inventing their own 500.
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+// Any bug that escapes the request lifecycle entirely must still be recorded —
+// an unlogged crash in a hospital system is the worst possible failure mode.
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandled promise rejection', {
+    err: reason instanceof Error ? reason : new Error(String(reason))
+  });
+});
+process.on('uncaughtException', (err) => {
+  logger.error('uncaught exception — process will exit', { err, stack: err.stack });
+  process.exit(1);
+});
 
 // Database Connection and Server Startup
 const PORT = process.env.PORT || 5000;
@@ -335,20 +401,38 @@ const seedMockData = async () => {
           address: '123 Healthcare Blvd, Medical District',
           phone: '+1 (555) 123-4567',
           whatsappNumber: require('./utils/whatsappHelper').getPrimaryWhatsAppNumber(),
-          coverImage: 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
-          description: 'Full-service tertiary care facility specializing in cardiology, internal medicine, and emergency care.',
+          coverImage:
+            'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
+          description:
+            'Full-service tertiary care facility specializing in cardiology, internal medicine, and emergency care.',
           city: 'Delhi',
           state: 'Delhi',
           district: 'New Delhi',
-          coordinates: { lat: 28.6139, lng: 77.2090 },
+          coordinates: { lat: 28.6139, lng: 77.209 },
           type: 'Hospital',
           clinicSubtype: 'General',
           customServices: [
-            { title: 'Emergency Room', description: '24/7 fully equipped Emergency Room staffed by trauma specialists.', icon: 'local_hospital' },
-            { title: 'Cardiology Unit', description: 'Advanced ECG, stress tests, echo screenings, and heart therapies.', icon: 'medical_services' },
-            { title: 'Advanced Intensive Care', description: 'High-dependency patient care modules with critical monitoring.', icon: 'settings_accessibility' }
+            {
+              title: 'Emergency Room',
+              description: '24/7 fully equipped Emergency Room staffed by trauma specialists.',
+              icon: 'local_hospital'
+            },
+            {
+              title: 'Cardiology Unit',
+              description: 'Advanced ECG, stress tests, echo screenings, and heart therapies.',
+              icon: 'medical_services'
+            },
+            {
+              title: 'Advanced Intensive Care',
+              description: 'High-dependency patient care modules with critical monitoring.',
+              icon: 'settings_accessibility'
+            }
           ],
-          features: ["24/7 Trauma Care Center", "Advanced ICU Ventilation Support", "Cashless Insurance Billing"]
+          features: [
+            '24/7 Trauma Care Center',
+            'Advanced ICU Ventilation Support',
+            'Cashless Insurance Billing'
+          ]
         },
         {
           id: 'bright-dental-clinic',
@@ -357,20 +441,38 @@ const seedMockData = async () => {
           address: '456 Kids Care Way, Suite B',
           phone: '+1 (555) 987-6543',
           whatsappNumber: '+15550199999',
-          coverImage: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?q=80&w=800&auto=format&fit=crop',
-          description: 'Dedicated children and adult dental health center providing laser surgery, cosmetic aligners, and cleanings.',
+          coverImage:
+            'https://images.unsplash.com/photo-1629909613654-28e377c37b09?q=80&w=800&auto=format&fit=crop',
+          description:
+            'Dedicated children and adult dental health center providing laser surgery, cosmetic aligners, and cleanings.',
           city: 'Mumbai',
           state: 'Maharashtra',
           district: 'Mumbai',
-          coordinates: { lat: 19.0760, lng: 72.8777 },
+          coordinates: { lat: 19.076, lng: 72.8777 },
           type: 'Clinic',
           clinicSubtype: 'Dental',
           customServices: [
-            { title: 'Cosmetic Dentistry', description: 'Porcelain veneers, cosmetic bonding, and premium smile-designing.', icon: 'dentistry' },
-            { title: 'Laser Root Canal', description: 'High-precision micro-endodontic root canal treatments with laser sterilization.', icon: 'dentistry' },
-            { title: 'Orthodontics & Aligners', description: 'Invisible aligners, ceramic braces, and dental alignment correction.', icon: 'settings_accessibility' }
+            {
+              title: 'Cosmetic Dentistry',
+              description: 'Porcelain veneers, cosmetic bonding, and premium smile-designing.',
+              icon: 'dentistry'
+            },
+            {
+              title: 'Laser Root Canal',
+              description: 'High-precision micro-endodontic root canal treatments with laser sterilization.',
+              icon: 'dentistry'
+            },
+            {
+              title: 'Orthodontics & Aligners',
+              description: 'Invisible aligners, ceramic braces, and dental alignment correction.',
+              icon: 'settings_accessibility'
+            }
           ],
-          features: ["Pain-Free Laser Technology", "Sterilized Zero-Infection Zone", "Experienced Oral Surgeon team"]
+          features: [
+            'Pain-Free Laser Technology',
+            'Sterilized Zero-Infection Zone',
+            'Experienced Oral Surgeon team'
+          ]
         },
         {
           id: 'care-diagnostics',
@@ -379,8 +481,10 @@ const seedMockData = async () => {
           address: '789 Science Park East, Lab Block',
           phone: '+1 (555) 321-7654',
           whatsappNumber: '+15550288888',
-          coverImage: 'https://images.unsplash.com/photo-1579154204601-01588f351167?q=80&w=800&auto=format&fit=crop',
-          description: 'State of the art medical diagnostics laboratory, specialized hormone assays, radiography and health check packages.',
+          coverImage:
+            'https://images.unsplash.com/photo-1579154204601-01588f351167?q=80&w=800&auto=format&fit=crop',
+          description:
+            'State of the art medical diagnostics laboratory, specialized hormone assays, radiography and health check packages.',
           city: 'Kolkata',
           state: 'West Bengal',
           district: 'Kolkata',
@@ -388,11 +492,27 @@ const seedMockData = async () => {
           type: 'Lab',
           clinicSubtype: 'General',
           customServices: [
-            { title: 'Blood & Chemistry Profiling', description: 'Automated blood draws, CBC checkups, and standard metabolic panels.', icon: 'bloodtype' },
-            { title: 'Biotech Pathology Tests', description: 'PCR testing, specialized hormone analysis, and micro-organism checks.', icon: 'biotech' },
-            { title: 'Radiology & X-Ray Scans', description: 'High-resolution digital chest x-rays, ultrasound screenings, and scans.', icon: 'settings_accessibility' }
+            {
+              title: 'Blood & Chemistry Profiling',
+              description: 'Automated blood draws, CBC checkups, and standard metabolic panels.',
+              icon: 'bloodtype'
+            },
+            {
+              title: 'Biotech Pathology Tests',
+              description: 'PCR testing, specialized hormone analysis, and micro-organism checks.',
+              icon: 'biotech'
+            },
+            {
+              title: 'Radiology & X-Ray Scans',
+              description: 'High-resolution digital chest x-rays, ultrasound screenings, and scans.',
+              icon: 'settings_accessibility'
+            }
           ],
-          features: ["NABL Certified Laboratory", "Home Sample Collection Support", "Barcoded Sample Tracking Systems"]
+          features: [
+            'NABL Certified Laboratory',
+            'Home Sample Collection Support',
+            'Barcoded Sample Tracking Systems'
+          ]
         },
         {
           id: 'apex-pharmacy',
@@ -401,20 +521,38 @@ const seedMockData = async () => {
           address: '55 Station Road, Chemist Market',
           phone: '+1 (555) 765-4321',
           whatsappNumber: '+15550377777',
-          coverImage: 'https://images.unsplash.com/photo-1607619056574-7b8d304a3b6f?q=80&w=800&auto=format&fit=crop',
-          description: 'A genuine medical store and pharmacy supply center offering prescription refills, baby care, and surgical aids.',
+          coverImage:
+            'https://images.unsplash.com/photo-1607619056574-7b8d304a3b6f?q=80&w=800&auto=format&fit=crop',
+          description:
+            'A genuine medical store and pharmacy supply center offering prescription refills, baby care, and surgical aids.',
           city: 'Delhi',
           state: 'Delhi',
           district: 'Central Delhi',
-          coordinates: { lat: 28.6250, lng: 77.2150 },
+          coordinates: { lat: 28.625, lng: 77.215 },
           type: 'Medical',
           clinicSubtype: 'Pharmacy',
           customServices: [
-            { title: 'Genuine Prescription Dispensing', description: 'Accurate dispensing of cardiac, diabetic, and general prescription drugs.', icon: 'medical_services' },
-            { title: 'Vitamins & Wellness Supplies', description: 'Top-tier immunity supplements, baby wellness, and natural protein foods.', icon: 'bloodtype' },
-            { title: 'Elder Care & Surgical Supplies', description: 'Wheelchairs, walking aids, blood sugar monitors, and knee supports.', icon: 'settings_accessibility' }
+            {
+              title: 'Genuine Prescription Dispensing',
+              description: 'Accurate dispensing of cardiac, diabetic, and general prescription drugs.',
+              icon: 'medical_services'
+            },
+            {
+              title: 'Vitamins & Wellness Supplies',
+              description: 'Top-tier immunity supplements, baby wellness, and natural protein foods.',
+              icon: 'bloodtype'
+            },
+            {
+              title: 'Elder Care & Surgical Supplies',
+              description: 'Wheelchairs, walking aids, blood sugar monitors, and knee supports.',
+              icon: 'settings_accessibility'
+            }
           ],
-          features: ["100% Genuine Branded Medicines", "Cold-Chain Insulin Storage Control", "Neighborhood Home Delivery Support"]
+          features: [
+            '100% Genuine Branded Medicines',
+            'Cold-Chain Insulin Storage Control',
+            'Neighborhood Home Delivery Support'
+          ]
         }
       ]);
       console.log('[Mock DB] Hospitals seeded successfully.');
@@ -562,10 +700,12 @@ const repairDatabaseIndexes = async () => {
     if (mongoose.connection && mongoose.connection.db) {
       const collection = mongoose.connection.db.collection('tokens');
       const indexes = await collection.indexes();
-      const legacyIndex = indexes.find(idx => idx.name === 'tokenNumber_1');
+      const legacyIndex = indexes.find((idx) => idx.name === 'tokenNumber_1');
       if (legacyIndex) {
         await collection.dropIndex('tokenNumber_1');
-        console.log('[DB REPAIR] Successfully dropped legacy single tokenNumber_1 index to prevent duplicate key collisions.');
+        console.log(
+          '[DB REPAIR] Successfully dropped legacy single tokenNumber_1 index to prevent duplicate key collisions.'
+        );
       }
     }
   } catch (idxErr) {
@@ -603,7 +743,7 @@ const connectWithFallback = async (uri) => {
           });
 
           if (srvRecords && srvRecords.length > 0) {
-            const hostList = srvRecords.map(r => `${r.name}:${r.port}`).join(',');
+            const hostList = srvRecords.map((r) => `${r.name}:${r.port}`).join(',');
             const fallbackUri = `mongodb://${username}:${password}@${hostList}/${dbName}?ssl=true&authSource=admin`;
 
             console.log('Connecting to replica set hosts directly (bypassing SRV)...');

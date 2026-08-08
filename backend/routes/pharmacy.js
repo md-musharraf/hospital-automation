@@ -4,20 +4,15 @@ const Token = require('../models/Token');
 const Doctor = require('../models/Doctor');
 const Patient = require('../models/Patient');
 const Medicine = require('../models/Medicine');
-const { authenticateToken } = require('../middleware/auth');
+const { startOfToday, onlyToday } = require('../utils/dates');
+const { authenticateToken, ensureRole } = require('../middleware/auth');
+
+// Role guard for this router (see middleware/auth.js).
+const ensurePharmacy = ensureRole('pharmacy');
 const { toRole, toDoctor, toFacility, logActivity, announceJourney } = require('../utils/realtime');
 const { setStage, deriveStage } = require('../utils/journeyHelper');
 const { checkAvailability, consumeStock, stockAlerts, levelOf, expiryFlag } = require('../utils/stockHelper');
-
-// Middleware to ensure the user is a pharmacist / medical-store operator
-const ensurePharmacy = (req, res, next) => {
-  if (req.user.role !== 'pharmacy') {
-    return res.status(403).json({ message: 'Access denied: Pharmacy / Medical staff only' });
-  }
-  next();
-};
-
-const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+const logger = require('../utils/logger');
 
 // GET all tokens with a doctor's prescription in the pharmacist's facility.
 // Scoped strictly to the pharmacist's own facility (via that facility's doctors),
@@ -28,7 +23,7 @@ router.get('/prescriptions', authenticateToken, ensurePharmacy, async (req, res)
   try {
     const hospital = req.user.hospital || 'general-hospital';
     const doctors = await Doctor.find({ hospital });
-    const docIds = doctors.map(d => d._id);
+    const docIds = doctors.map((d) => d._id);
 
     // Fetch this facility's tokens then keep only those that actually carry a
     // prescription. We filter in JS (not a `prescription.medicines.0 $exists`
@@ -38,7 +33,10 @@ router.get('/prescriptions', authenticateToken, ensurePharmacy, async (req, res)
       .populate('doctor', '-passwordHash');
 
     const tokens = all
-      .filter(t => t.prescription && Array.isArray(t.prescription.medicines) && t.prescription.medicines.length > 0)
+      .filter(
+        (t) =>
+          t.prescription && Array.isArray(t.prescription.medicines) && t.prescription.medicines.length > 0
+      )
       .sort((a, b) => {
         const ad = a.prescription.dispensed ? 1 : 0;
         const bd = b.prescription.dispensed ? 1 : 0;
@@ -48,17 +46,19 @@ router.get('/prescriptions', authenticateToken, ensurePharmacy, async (req, res)
 
     // Annotate with live availability (read-only view — never saved back).
     const inventory = await Medicine.find({ hospital });
-    const enriched = await Promise.all(tokens.map(async (t) => {
-      const obj = t.toObject ? t.toObject() : { ...t };
-      const names = (obj.prescription.medicines || []).map(m => m.name).filter(Boolean);
-      obj.stock = inventory.length > 0 ? await checkAvailability(hospital, names) : [];
-      obj.hasShortage = obj.stock.some(s => s.level === 'out' || s.level === 'unknown');
-      return obj;
-    }));
+    const enriched = await Promise.all(
+      tokens.map(async (t) => {
+        const obj = t.toObject ? t.toObject() : { ...t };
+        const names = (obj.prescription.medicines || []).map((m) => m.name).filter(Boolean);
+        obj.stock = inventory.length > 0 ? await checkAvailability(hospital, names) : [];
+        obj.hasShortage = obj.stock.some((s) => s.level === 'out' || s.level === 'unknown');
+        return obj;
+      })
+    );
 
     res.json(enriched);
   } catch (err) {
-    console.error('Error fetching pharmacy prescriptions:', err);
+    logger.error('Error fetching pharmacy prescriptions', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -69,21 +69,24 @@ router.get('/stats', authenticateToken, ensurePharmacy, async (req, res) => {
     const hospital = req.user.hospital || 'general-hospital';
     const start = startOfToday().getTime();
     const doctors = await Doctor.find({ hospital });
-    const docIds = doctors.map(d => String(d._id));
+    const docIds = doctors.map((d) => String(d._id));
 
     const all = await Token.find({ hospital });
-    const withRx = (all || []).filter(t => {
+    const withRx = (all || []).filter((t) => {
       const did = t.doctor && (t.doctor._id || t.doctor);
-      return docIds.includes(String(did))
-        && t.prescription && (t.prescription.medicines || []).length > 0;
+      return docIds.includes(String(did)) && t.prescription && (t.prescription.medicines || []).length > 0;
     });
 
     const alerts = await stockAlerts(hospital);
 
     res.json({
-      pending: withRx.filter(t => !t.prescription.dispensed).length,
-      dispensedToday: withRx.filter(t => t.prescription.dispensed && t.prescription.dispensedAt
-        && new Date(t.prescription.dispensedAt).getTime() >= start).length,
+      pending: withRx.filter((t) => !t.prescription.dispensed).length,
+      dispensedToday: withRx.filter(
+        (t) =>
+          t.prescription.dispensed &&
+          t.prescription.dispensedAt &&
+          new Date(t.prescription.dispensedAt).getTime() >= start
+      ).length,
       totalPrescriptions: withRx.length,
       inventoryCount: alerts.total,
       outOfStock: alerts.out.length,
@@ -91,7 +94,7 @@ router.get('/stats', authenticateToken, ensurePharmacy, async (req, res) => {
       expiringSoon: alerts.expiring.length
     });
   } catch (err) {
-    console.error('Error building pharmacy stats:', err);
+    logger.error('Error building pharmacy stats', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -109,29 +112,30 @@ router.get('/inventory', authenticateToken, ensurePharmacy, async (req, res) => 
     let rows = await Medicine.find({ hospital });
     if (q && typeof q === 'string') {
       const needle = q.toLowerCase();
-      rows = rows.filter(m =>
-        (m.name || '').toLowerCase().includes(needle) ||
-        (m.genericName || '').toLowerCase().includes(needle));
+      rows = rows.filter(
+        (m) =>
+          (m.name || '').toLowerCase().includes(needle) ||
+          (m.genericName || '').toLowerCase().includes(needle)
+      );
     }
 
-    const decorated = rows.map(m => {
+    const decorated = rows.map((m) => {
       const obj = m.toObject ? m.toObject() : { ...m };
       obj.level = levelOf(m);
       obj.expiry = expiryFlag(m);
       return obj;
     });
 
-    const filtered = alertsOnly === 'true'
-      ? decorated.filter(m => m.level !== 'in-stock' || m.expiry)
-      : decorated;
+    const filtered =
+      alertsOnly === 'true' ? decorated.filter((m) => m.level !== 'in-stock' || m.expiry) : decorated;
 
     // Problems first, then alphabetical — the order a storekeeper works in.
     const rank = { out: 0, low: 1, unknown: 2, 'in-stock': 3 };
-    filtered.sort((a, b) => (rank[a.level] - rank[b.level]) || a.name.localeCompare(b.name));
+    filtered.sort((a, b) => rank[a.level] - rank[b.level] || a.name.localeCompare(b.name));
 
     res.json(filtered);
   } catch (err) {
-    console.error('Error fetching inventory:', err);
+    logger.error('Error fetching inventory', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -142,7 +146,7 @@ router.get('/inventory/alerts', authenticateToken, ensurePharmacy, async (req, r
     const hospital = req.user.hospital || 'general-hospital';
     res.json(await stockAlerts(hospital));
   } catch (err) {
-    console.error('Error fetching stock alerts:', err);
+    logger.error('Error fetching stock alerts', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -153,7 +157,8 @@ router.get('/inventory/alerts', authenticateToken, ensurePharmacy, async (req, r
 router.post('/inventory', authenticateToken, ensurePharmacy, async (req, res) => {
   try {
     const hospital = req.user.hospital || 'general-hospital';
-    const { name, genericName, form, strength, stockQty, unit, reorderLevel, pricePerUnit, expiryDate } = req.body;
+    const { name, genericName, form, strength, stockQty, unit, reorderLevel, pricePerUnit, expiryDate } =
+      req.body;
 
     if (!name || typeof name !== 'string' || name.trim().length === 0 || name.length > 120) {
       return res.status(400).json({ message: 'Medicine name is required (up to 120 characters)' });
@@ -167,8 +172,9 @@ router.post('/inventory', authenticateToken, ensurePharmacy, async (req, res) =>
       return res.status(400).json({ message: 'reorderLevel must be a number between 0 and 100,000' });
     }
 
-    const existing = (await Medicine.find({ hospital }))
-      .find(m => (m.name || '').toLowerCase() === name.trim().toLowerCase());
+    const existing = (await Medicine.find({ hospital })).find(
+      (m) => (m.name || '').toLowerCase() === name.trim().toLowerCase()
+    );
 
     let med;
     if (existing) {
@@ -178,7 +184,8 @@ router.post('/inventory', authenticateToken, ensurePharmacy, async (req, res) =>
       if (strength) existing.strength = strength;
       if (unit) existing.unit = unit;
       if (!isNaN(reorder)) existing.reorderLevel = reorder;
-      if (pricePerUnit !== undefined && !isNaN(Number(pricePerUnit))) existing.pricePerUnit = Number(pricePerUnit);
+      if (pricePerUnit !== undefined && !isNaN(Number(pricePerUnit)))
+        existing.pricePerUnit = Number(pricePerUnit);
       if (expiryDate) existing.expiryDate = new Date(expiryDate);
       existing.lastRestockedAt = new Date();
       existing.updatedBy = req.user.username || 'Pharmacy';
@@ -187,7 +194,9 @@ router.post('/inventory', authenticateToken, ensurePharmacy, async (req, res) =>
       med = await new Medicine({
         hospital,
         name: name.trim(),
-        genericName, form, strength,
+        genericName,
+        form,
+        strength,
         stockQty: isNaN(qty) ? 0 : qty,
         unit: unit || 'strip',
         reorderLevel: isNaN(reorder) ? 10 : reorder,
@@ -199,13 +208,21 @@ router.post('/inventory', authenticateToken, ensurePharmacy, async (req, res) =>
     }
 
     const io = req.io;
-    toFacility(io, hospital, 'inventory-updated', { medicineId: String(med._id), name: med.name, stockQty: med.stockQty });
+    toFacility(io, hospital, 'inventory-updated', {
+      medicineId: String(med._id),
+      name: med.name,
+      stockQty: med.stockQty
+    });
     await logActivity(io, {
-      hospital, type: 'stock-updated', role: 'pharmacy', actor: req.user.username || 'Pharmacy',
+      hospital,
+      type: 'stock-updated',
+      role: 'pharmacy',
+      actor: req.user.username || 'Pharmacy',
       message: existing
         ? `Restocked ${med.name} — now ${med.stockQty} ${med.unit}.`
         : `Added ${med.name} to inventory (${med.stockQty} ${med.unit}).`,
-      refId: med._id, severity: 'success'
+      refId: med._id,
+      severity: 'success'
     });
 
     res.status(existing ? 200 : 201).json({
@@ -213,7 +230,7 @@ router.post('/inventory', authenticateToken, ensurePharmacy, async (req, res) =>
       medicine: med
     });
   } catch (err) {
-    console.error('Error saving medicine:', err);
+    logger.error('Error saving medicine', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -244,16 +261,23 @@ router.patch('/inventory/:id', authenticateToken, ensurePharmacy, async (req, re
     await med.save();
 
     const io = req.io;
-    toFacility(io, hospital, 'inventory-updated', { medicineId: String(med._id), name: med.name, stockQty: med.stockQty });
+    toFacility(io, hospital, 'inventory-updated', {
+      medicineId: String(med._id),
+      name: med.name,
+      stockQty: med.stockQty
+    });
     await logActivity(io, {
-      hospital, type: 'stock-updated', role: 'pharmacy', actor: req.user.username || 'Pharmacy',
+      hospital,
+      type: 'stock-updated',
+      role: 'pharmacy',
+      actor: req.user.username || 'Pharmacy',
       message: `Stock corrected: ${med.name} set to ${med.stockQty} ${med.unit}.`,
       refId: med._id
     });
 
     res.json({ message: `${med.name} updated.`, medicine: med });
   } catch (err) {
-    console.error('Error updating medicine:', err);
+    logger.error('Error updating medicine', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -272,7 +296,7 @@ router.delete('/inventory/:id', authenticateToken, ensurePharmacy, async (req, r
     toFacility(req.io, hospital, 'inventory-updated', { removed: String(med._id) });
     res.json({ message: `${med.name} removed from inventory.` });
   } catch (err) {
-    console.error('Error deleting medicine:', err);
+    logger.error('Error deleting medicine', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -313,15 +337,17 @@ router.post('/prescriptions/:tokenId/dispense', authenticateToken, ensurePharmac
     // Take the medicines out of stock. Shortages are reported, never blocking:
     // a store may hold items off-system, and the patient is standing there.
     const { deducted, shortages } = await consumeStock(io, {
-      hospital, medicines: token.prescription.medicines, by, tokenNumber: token.tokenNumber
+      hospital,
+      medicines: token.prescription.medicines,
+      by,
+      tokenNumber: token.tokenNumber
     });
 
     token.prescription.dispensed = true;
     token.prescription.dispensedAt = new Date();
     token.prescription.dispensedBy = by;
     if (shortages.length > 0) {
-      token.prescription.partialNote =
-        `Not handed over (unavailable): ${shortages.map(s => s.requested).join(', ')}`;
+      token.prescription.partialNote = `Not handed over (unavailable): ${shortages.map((s) => s.requested).join(', ')}`;
     }
     token.markModified && token.markModified('prescription');
 
@@ -337,28 +363,35 @@ router.post('/prescriptions/:tokenId/dispense', authenticateToken, ensurePharmac
         const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
         let msg = `Hello ${patient.name}, your medicines for token ${token.tokenNumber} have been handed over at our pharmacy counter.`;
         if (shortages.length > 0) {
-          msg += `\n\n⚠️ Currently unavailable: ${shortages.map(s => s.requested).join(', ')}. Please check back or ask the counter for an alternative.`;
-          msg += `\n⚠️ अभी उपलब्ध नहीं: ${shortages.map(s => s.requested).join(', ')}। कृपया काउंटर पर विकल्प पूछें।`;
+          msg += `\n\n⚠️ Currently unavailable: ${shortages.map((s) => s.requested).join(', ')}. Please check back or ask the counter for an alternative.`;
+          msg += `\n⚠️ अभी उपलब्ध नहीं: ${shortages.map((s) => s.requested).join(', ')}। कृपया काउंटर पर विकल्प पूछें।`;
         }
         await sendWhatsAppNotification(patient.phone, msg);
       } catch (waErr) {
-        console.error('Pharmacy WhatsApp notify failed:', waErr);
+        logger.error('Pharmacy WhatsApp notify failed', { err: waErr });
       }
     }
 
     // Live: the doctor sees their patient actually got the medicines, and a
     // shortage reaches them immediately so they can prescribe an alternative.
     toDoctor(io, String(doctor._id), 'rx-dispensed', {
-      tokenId: String(token._id), tokenNumber: token.tokenNumber, shortages
+      tokenId: String(token._id),
+      tokenNumber: token.tokenNumber,
+      shortages
     });
     toRole(io, 'pharmacy', hospital, 'pharmacy-updated', { tokenId: String(token._id) });
 
     await announceJourney(io, {
-      hospital, token, stage: token.journeyStage, role: 'pharmacy', actor: by,
+      hospital,
+      token,
+      stage: token.journeyStage,
+      role: 'pharmacy',
+      actor: by,
       type: 'rx-dispensed',
-      message: shortages.length > 0
-        ? `Medicines dispensed for ${token.tokenNumber} — ${shortages.length} item(s) unavailable: ${shortages.map(s => s.requested).join(', ')}.`
-        : `Medicines dispensed for ${token.tokenNumber}${deducted.length ? ` (${deducted.length} item(s) stock-adjusted)` : ''}.`,
+      message:
+        shortages.length > 0
+          ? `Medicines dispensed for ${token.tokenNumber} — ${shortages.length} item(s) unavailable: ${shortages.map((s) => s.requested).join(', ')}.`
+          : `Medicines dispensed for ${token.tokenNumber}${deducted.length ? ` (${deducted.length} item(s) stock-adjusted)` : ''}.`,
       severity: shortages.length > 0 ? 'warning' : 'success'
     });
 
@@ -371,7 +404,7 @@ router.post('/prescriptions/:tokenId/dispense', authenticateToken, ensurePharmac
       shortages
     });
   } catch (err) {
-    console.error('Error dispensing prescription:', err);
+    logger.error('Error dispensing prescription', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });

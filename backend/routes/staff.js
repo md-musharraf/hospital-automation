@@ -6,27 +6,28 @@ const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Reminder = require('../models/Reminder');
 const { processPendingReminders } = require('../utils/reminderHelper');
-const { authenticateToken } = require('../middleware/auth');
-const { recalculateQueueTimes, formatApptTime, insertTokenByPriority, isDoctorFull } = require('../utils/queueHelper');
+const { authenticateToken, ensureRole } = require('../middleware/auth');
+
+// Role guard for this router (see middleware/auth.js).
+const ensureStaff = ensureRole('staff');
+const {
+  recalculateQueueTimes,
+  formatApptTime,
+  insertTokenByPriority,
+  isDoctorFull
+} = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
 const { logActivity, announceJourney } = require('../utils/realtime');
 const { setStage, deriveStage } = require('../utils/journeyHelper');
-
-// Middleware to ensure the user is staff
-const ensureStaff = (req, res, next) => {
-  if (req.user.role !== 'staff') {
-    return res.status(403).json({ message: 'Access denied: Staff only' });
-  }
-  next();
-};
+const logger = require('../utils/logger');
 
 // GET all live queues for doctors in the staff member's hospital (Staff Overview)
 router.get('/queues', authenticateToken, ensureStaff, async (req, res) => {
   try {
     const doctors = await Doctor.find({ hospital: req.user.hospital });
-    const docIds = doctors.map(d => d._id);
+    const docIds = doctors.map((d) => d._id);
 
     const queues = await Queue.find({ doctor: { $in: docIds } })
       .populate('doctor', '-passwordHash')
@@ -37,7 +38,7 @@ router.get('/queues', authenticateToken, ensureStaff, async (req, res) => {
       });
     res.json(queues);
   } catch (error) {
-    console.error('Error fetching queues:', error);
+    logger.error('Error fetching queues', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -104,7 +105,10 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       }
     } else {
       // TENANT ISOLATION: only ever consider THIS facility's own doctors.
-      let facilityDoctors = await Doctor.find({ hospital: staffHosp, availabilityStatus: { $ne: 'Unavailable' } });
+      let facilityDoctors = await Doctor.find({
+        hospital: staffHosp,
+        availabilityStatus: { $ne: 'Unavailable' }
+      });
       if (!facilityDoctors || facilityDoctors.length === 0) {
         facilityDoctors = await Doctor.find({ hospital: staffHosp });
       }
@@ -121,14 +125,16 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
         return res.status(404).json({ message: 'Could not auto-assign a doctor for these symptoms' });
       }
       autoTriaged = true;
-      triagedDepartment = picked.matchedDepartment ? triage.department : (doctor.department || triage.department);
+      triagedDepartment = picked.matchedDepartment
+        ? triage.department
+        : doctor.department || triage.department;
     }
     const resolvedDoctorId = doctor._id;
 
     // OPD capacity cutoff — block a Regular/Re-visit walk-in once the doctor hits the
     // daily token limit (Emergencies always bypass). Reception is told immediately so
     // the patient can be redirected instead of joining a line for a token that's gone.
-    if (effectiveTokenType !== 'Emergency' && await isDoctorFull(doctor)) {
+    if (effectiveTokenType !== 'Emergency' && (await isDoctorFull(doctor))) {
       return res.status(409).json({
         message: `Today's OPD token limit is full for ${doctor.name}. Please book for tomorrow or route to another doctor/facility.`,
         opdFull: true
@@ -136,9 +142,10 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     }
 
     // Vulnerable-group priority: explicit reception choice, else auto Senior/Pregnant.
-    const resolvedPriority = (priorityCategory && priorityCategory !== 'None')
-      ? priorityCategory
-      : detectPriorityCategory({ age: parsedAge, symptoms });
+    const resolvedPriority =
+      priorityCategory && priorityCategory !== 'None'
+        ? priorityCategory
+        : detectPriorityCategory({ age: parsedAge, symptoms });
 
     // Generate unique token number (collision-free)
     const tokenNumber = await generateUniqueTokenNumber(staffHosp);
@@ -186,7 +193,7 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
         });
       }
     } catch (err) {
-      console.error('Push notification failed to doctor:', err);
+      logger.error('Push notification failed to doctor', { err: err });
     }
 
     // Broadcast update
@@ -204,13 +211,13 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     let whatsapp = { status: 'skipped', reason: 'no_phone_on_file' };
     if (createdToken.patient && createdToken.patient.phone) {
       const docName = createdToken.doctor ? createdToken.doctor.name : 'Doctor';
-      const roomName = createdToken.doctor ? (createdToken.doctor.currentRoom || 'Cabin A') : 'Cabin A';
+      const roomName = createdToken.doctor ? createdToken.doctor.currentRoom || 'Cabin A' : 'Cabin A';
       const apptTime = formatApptTime(createdToken.estimatedWaitTime || 0);
       const walkInMsg = `Hello ${createdToken.patient.name}, your token ${createdToken.tokenNumber} is generated for ${docName} in ${roomName}. Your approx. turn: ${apptTime} (~${createdToken.estimatedWaitTime || 0} min).\n\n✅ No need to wait in line — we will WhatsApp you when your turn is near.\n🔔 लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।`;
       try {
         whatsapp = await sendWhatsAppNotification(createdToken.patient.phone, walkInMsg);
       } catch (waErr) {
-        console.error('Walk-in WhatsApp dispatch error:', waErr);
+        logger.error('Walk-in WhatsApp dispatch error', { err: waErr });
         whatsapp = { status: 'failed', error: waErr.message };
       }
     }
@@ -219,15 +226,27 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
     // the lab's screen and the manager's overview all pick it up without polling.
     await logActivity(req.io, {
       hospital: req.user.hospital || 'general-hospital',
-      type: 'token-created', role: 'staff', actor: req.user.username || 'Reception',
+      type: 'token-created',
+      role: 'staff',
+      actor: req.user.username || 'Reception',
       message: `Walk-in ${createdToken.tokenNumber} registered for ${createdToken.doctor ? createdToken.doctor.name : 'a doctor'}${autoTriaged ? ` (auto-triaged → ${triagedDepartment})` : ''}${resolvedPriority && resolvedPriority !== 'None' ? ` — ${resolvedPriority} priority` : ''}.`,
-      tokenNumber: createdToken.tokenNumber, refId: createdToken._id,
+      tokenNumber: createdToken.tokenNumber,
+      refId: createdToken._id,
       severity: createdToken.tokenType === 'Emergency' ? 'critical' : 'info'
     });
 
-    res.status(201).json({ message: 'Walk-in token generated successfully', token: createdToken, whatsapp, autoTriaged, triagedDepartment, priorityCategory: resolvedPriority || 'None' });
+    res
+      .status(201)
+      .json({
+        message: 'Walk-in token generated successfully',
+        token: createdToken,
+        whatsapp,
+        autoTriaged,
+        triagedDepartment,
+        priorityCategory: resolvedPriority || 'None'
+      });
   } catch (error) {
-    console.error('Error booking walk-in:', error);
+    logger.error('Error booking walk-in', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -255,11 +274,13 @@ router.put('/tokens/:tokenId/override', authenticateToken, ensureStaff, async (r
     if (queue) {
       // Verify token is in activeQueue and not currentToken in cabin
       if (queue.currentToken && queue.currentToken.toString() === tokenId) {
-        return res.status(400).json({ message: 'Token is already currently inside the cabin and cannot be overridden' });
+        return res
+          .status(400)
+          .json({ message: 'Token is already currently inside the cabin and cannot be overridden' });
       }
 
       // Remove from its current position in activeQueue
-      queue.activeQueue = queue.activeQueue.filter(id => id.toString() !== tokenId);
+      queue.activeQueue = queue.activeQueue.filter((id) => id.toString() !== tokenId);
       // Insert emergency token at index 0
       queue.activeQueue.unshift(token._id);
       await queue.save();
@@ -274,7 +295,7 @@ router.put('/tokens/:tokenId/override', authenticateToken, ensureStaff, async (r
           url: '/'
         });
       } catch (err) {
-        console.error('Push notification failed to doctor:', err);
+        logger.error('Push notification failed to doctor', { err: err });
       }
 
       // Recalculate wait times
@@ -289,7 +310,7 @@ router.put('/tokens/:tokenId/override', authenticateToken, ensureStaff, async (r
 
     res.json({ message: 'Token successfully upgraded to Emergency SOS', token });
   } catch (error) {
-    console.error('Error promoting emergency:', error);
+    logger.error('Error promoting emergency', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -312,7 +333,11 @@ router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req
 
     const previousStatus = token.status;
     token.status = status;
-    if (status === 'Completed' || status === 'Absent' || (status === 'Delayed' && previousStatus === 'Active')) {
+    if (
+      status === 'Completed' ||
+      status === 'Absent' ||
+      (status === 'Delayed' && previousStatus === 'Active')
+    ) {
       // Reset timestamps if needed
       if (status === 'Completed') token.completedAt = new Date();
     }
@@ -328,12 +353,12 @@ router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req
       if (queue.currentToken && queue.currentToken.toString() === tokenId && status !== 'Active') {
         queue.currentToken = null;
       }
-      
+
       // If status is final (Completed, Absent), remove from activeQueue
       if (['Completed', 'Absent'].includes(status)) {
-        queue.activeQueue = queue.activeQueue.filter(id => id.toString() !== tokenId);
+        queue.activeQueue = queue.activeQueue.filter((id) => id.toString() !== tokenId);
       }
-      
+
       await queue.save();
       await recalculateQueueTimes(token.doctor);
 
@@ -346,15 +371,19 @@ router.put('/tokens/:tokenId/status', authenticateToken, ensureStaff, async (req
     }
 
     await announceJourney(req.io, {
-      hospital: staffHosp, token, stage: token.journeyStage, role: 'staff',
-      actor: req.user.username || 'Reception', type: 'system',
+      hospital: staffHosp,
+      token,
+      stage: token.journeyStage,
+      role: 'staff',
+      actor: req.user.username || 'Reception',
+      type: 'system',
       message: `${token.tokenNumber} set to ${status} by reception (was ${previousStatus}).`,
       severity: status === 'Absent' ? 'warning' : 'info'
     });
 
     res.json({ message: `Token status updated to ${status}`, token });
   } catch (error) {
-    console.error('Error updating token status:', error);
+    logger.error('Error updating token status', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -370,7 +399,7 @@ router.get('/reminders', authenticateToken, ensureStaff, async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(reminders);
   } catch (error) {
-    console.error('Error fetching reminders:', error);
+    logger.error('Error fetching reminders', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -381,7 +410,7 @@ router.post('/reminders/trigger', authenticateToken, ensureStaff, async (req, re
     const processed = await processPendingReminders();
     res.json({ message: `Triggered reminders check successfully.`, sentReminders: processed });
   } catch (error) {
-    console.error('Error triggering reminders:', error);
+    logger.error('Error triggering reminders', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -393,7 +422,7 @@ router.get('/patients', authenticateToken, ensureStaff, async (req, res) => {
     const patients = await Patient.find({ hospital: staffHosp }).sort({ createdAt: -1 });
     res.json(patients);
   } catch (error) {
-    console.error('Error fetching patients:', error);
+    logger.error('Error fetching patients', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -420,11 +449,13 @@ router.post('/patients', authenticateToken, ensureStaff, async (req, res) => {
     if (typeof phone !== 'string' || phone.trim().length < 7 || phone.length > 20) {
       return res.status(400).json({ message: 'Invalid phone number' });
     }
-    
+
     // Check if phone number already exists in this hospital tenant
     const existingPatient = await Patient.findOne({ phone, hospital: staffHosp });
     if (existingPatient) {
-      return res.status(400).json({ message: 'Patient with this phone number already exists in this hospital tenant' });
+      return res
+        .status(400)
+        .json({ message: 'Patient with this phone number already exists in this hospital tenant' });
     }
 
     const patient = new Patient({
@@ -438,7 +469,7 @@ router.post('/patients', authenticateToken, ensureStaff, async (req, res) => {
 
     res.status(201).json({ message: 'Patient registered successfully', patient });
   } catch (error) {
-    console.error('Error creating patient:', error);
+    logger.error('Error creating patient', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -476,7 +507,11 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
     if (phone && phone !== patient.phone) {
       const phoneConflict = await Patient.findOne({ phone, hospital: staffHosp });
       if (phoneConflict) {
-        return res.status(400).json({ message: 'Phone number is already associated with another patient in this hospital tenant' });
+        return res
+          .status(400)
+          .json({
+            message: 'Phone number is already associated with another patient in this hospital tenant'
+          });
       }
       patient.phone = phone;
     }
@@ -488,7 +523,7 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
     await patient.save();
     res.json({ message: 'Patient details updated successfully', patient });
   } catch (error) {
-    console.error('Error updating patient:', error);
+    logger.error('Error updating patient', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });

@@ -34,15 +34,16 @@ function checkUniqueConstraints(modelName, candidate) {
   if (!schema) return;
   const existing = store[modelName];
 
-  const isDup = (fields) => existing.some(doc => {
-    if (doc._id && candidate._id && doc._id.toString() === candidate._id.toString()) return false;
-    return fields.every(f => {
-      const a = doc[f];
-      const b = candidate[f];
-      if (a === undefined || a === null || b === undefined || b === null) return false;
-      return a.toString() === b.toString();
+  const isDup = (fields) =>
+    existing.some((doc) => {
+      if (doc._id && candidate._id && doc._id.toString() === candidate._id.toString()) return false;
+      return fields.every((f) => {
+        const a = doc[f];
+        const b = candidate[f];
+        if (a === undefined || a === null || b === undefined || b === null) return false;
+        return a.toString() === b.toString();
+      });
     });
-  });
 
   for (const field of schema.uniqueFields || []) {
     if (isDup([field])) {
@@ -95,7 +96,7 @@ class Schema {
     this.compoundUniqueIndexes = [];
     // Pick up inline `{ unique: true }` field definitions (e.g. Hospital.id, Queue.doctor)
     this.uniqueFields = Object.keys(definition || {}).filter(
-      key => definition[key] && typeof definition[key] === 'object' && definition[key].unique === true
+      (key) => definition[key] && typeof definition[key] === 'object' && definition[key].unique === true
     );
   }
   index(fields, options) {
@@ -149,9 +150,13 @@ class Query {
 
     // Apply sort (supports { field: 1|-1 } or 'field'/'-field' shorthand)
     if (this._sort && Array.isArray(result)) {
-      const sortEntries = typeof this._sort === 'string'
-        ? this._sort.split(/\s+/).filter(Boolean).map(f => f.startsWith('-') ? [f.slice(1), -1] : [f, 1])
-        : Object.entries(this._sort);
+      const sortEntries =
+        typeof this._sort === 'string'
+          ? this._sort
+              .split(/\s+/)
+              .filter(Boolean)
+              .map((f) => (f.startsWith('-') ? [f.slice(1), -1] : [f, 1]))
+          : Object.entries(this._sort);
 
       result = [...result].sort((a, b) => {
         for (const [field, dir] of sortEntries) {
@@ -169,7 +174,7 @@ class Query {
     // Process populate
     if (result) {
       if (Array.isArray(result)) {
-        for (let doc of result) {
+        for (const doc of result) {
           await this._populateDoc(doc);
         }
         // Apply limit if set
@@ -189,12 +194,12 @@ class Query {
 
   async _populateDoc(doc) {
     if (!doc || typeof doc !== 'object') return;
-    
-    for (let p of this.populatePaths) {
-      let pathName = typeof p === 'string' ? p : p.path;
-      let subPopulate = typeof p === 'object' && p.populate ? p.populate : null;
-      
-      let val = doc[pathName];
+
+    for (const p of this.populatePaths) {
+      const pathName = typeof p === 'string' ? p : p.path;
+      const subPopulate = typeof p === 'object' && p.populate ? p.populate : null;
+
+      const val = doc[pathName];
       if (!val) continue;
 
       let refModelName = '';
@@ -208,18 +213,18 @@ class Query {
 
       const refCollection = store[refModelName];
       if (Array.isArray(val)) {
-        const populatedArr = val.map(id => {
-          const matched = refCollection.find(d => d._id.toString() === id.toString());
+        const populatedArr = val.map((id) => {
+          const matched = refCollection.find((d) => d._id.toString() === id.toString());
           return matched ? wrapDoc(refModelName, matched) : id;
         });
 
         if (subPopulate) {
-          for (let subDoc of populatedArr) {
+          for (const subDoc of populatedArr) {
             if (subDoc && typeof subDoc === 'object') {
-              let subPath = subPopulate.path;
-              let subRef = subPath === 'patient' ? 'Patient' : subPath === 'doctor' ? 'Doctor' : '';
+              const subPath = subPopulate.path;
+              const subRef = subPath === 'patient' ? 'Patient' : subPath === 'doctor' ? 'Doctor' : '';
               if (subRef && subDoc[subPath]) {
-                const matchedSub = store[subRef].find(d => d._id.toString() === subDoc[subPath].toString());
+                const matchedSub = store[subRef].find((d) => d._id.toString() === subDoc[subPath].toString());
                 if (matchedSub) subDoc[subPath] = wrapDoc(subRef, matchedSub);
               }
             }
@@ -227,15 +232,17 @@ class Query {
         }
         doc[pathName] = populatedArr;
       } else {
-        const matched = refCollection.find(d => d._id.toString() === val.toString());
+        const matched = refCollection.find((d) => d._id.toString() === val.toString());
         if (matched) {
           doc[pathName] = wrapDoc(refModelName, matched);
-          
+
           if (subPopulate && doc[pathName]) {
-            let subPath = subPopulate.path;
-            let subRef = subPath === 'patient' ? 'Patient' : subPath === 'doctor' ? 'Doctor' : '';
+            const subPath = subPopulate.path;
+            const subRef = subPath === 'patient' ? 'Patient' : subPath === 'doctor' ? 'Doctor' : '';
             if (subRef && doc[pathName][subPath]) {
-              const matchedSub = store[subRef].find(d => d._id.toString() === doc[pathName][subPath].toString());
+              const matchedSub = store[subRef].find(
+                (d) => d._id.toString() === doc[pathName][subPath].toString()
+              );
               if (matchedSub) doc[pathName][subPath] = wrapDoc(subRef, matchedSub);
             }
           }
@@ -257,8 +264,8 @@ function wrapDoc(modelName, data) {
   Object.defineProperty(doc, 'save', {
     enumerable: false,
     writable: true,
-    value: async function() {
-      const idx = store[modelName].findIndex(d => d._id.toString() === this._id.toString());
+    value: async function () {
+      const idx = store[modelName].findIndex((d) => d._id.toString() === this._id.toString());
       const rawData = { ...this };
       checkUniqueConstraints(modelName, rawData);
       if (idx >= 0) {
@@ -273,7 +280,7 @@ function wrapDoc(modelName, data) {
   Object.defineProperty(doc, 'toObject', {
     enumerable: false,
     writable: true,
-    value: function() {
+    value: function () {
       const raw = { ...this };
       delete raw.save;
       delete raw.toObject;
@@ -284,7 +291,7 @@ function wrapDoc(modelName, data) {
   Object.defineProperty(doc, 'markModified', {
     enumerable: false,
     writable: true,
-    value: function() {
+    value: function () {
       // Noop for mock - marks a path as modified for Mongoose change tracking
     }
   });
@@ -319,42 +326,40 @@ function resolvePath(item, path) {
 function matchesQuery(item, query) {
   if (!query || typeof query !== 'object') return true;
 
-  for (let key in query) {
+  for (const key in query) {
     if (key === '$or') {
       if (!Array.isArray(query.$or)) continue;
       // At least one condition in the $or array must match
-      const matched = query.$or.some(subQuery => matchesQuery(item, subQuery));
+      const matched = query.$or.some((subQuery) => matchesQuery(item, subQuery));
       if (!matched) return false;
     } else if (key === '$and') {
       if (!Array.isArray(query.$and)) continue;
-      const matched = query.$and.every(subQuery => matchesQuery(item, subQuery));
+      const matched = query.$and.every((subQuery) => matchesQuery(item, subQuery));
       if (!matched) return false;
     } else {
       const val = query[key];
       // Resolve dot-notated / array-of-subdocument paths (e.g. 'labTests.status')
-      const resolved = key.includes('.') || Array.isArray(item[key])
-        ? resolvePath(item, key)
-        : [item[key]];
+      const resolved = key.includes('.') || Array.isArray(item[key]) ? resolvePath(item, key) : [item[key]];
 
       if (val && typeof val === 'object' && !Array.isArray(val)) {
         if ('$ne' in val) {
-          if (resolved.some(v => v === val.$ne)) return false;
+          if (resolved.some((v) => v === val.$ne)) return false;
         } else if ('$in' in val) {
-          if (!Array.isArray(val.$in) || !resolved.some(v => val.$in.includes(v))) return false;
+          if (!Array.isArray(val.$in) || !resolved.some((v) => val.$in.includes(v))) return false;
         } else if ('$lte' in val) {
-          if (!resolved.some(v => v <= val.$lte)) return false;
+          if (!resolved.some((v) => v <= val.$lte)) return false;
         } else if ('$gte' in val) {
-          if (!resolved.some(v => v >= val.$gte)) return false;
+          if (!resolved.some((v) => v >= val.$gte)) return false;
         } else if ('$lt' in val) {
-          if (!resolved.some(v => v < val.$lt)) return false;
+          if (!resolved.some((v) => v < val.$lt)) return false;
         } else if ('$gt' in val) {
-          if (!resolved.some(v => v > val.$gt)) return false;
+          if (!resolved.some((v) => v > val.$gt)) return false;
         } else {
           // Deep or fallback comparison for other nested objects
-          if (!resolved.some(v => JSON.stringify(v) === JSON.stringify(val))) return false;
+          if (!resolved.some((v) => JSON.stringify(v) === JSON.stringify(val))) return false;
         }
       } else {
-        if (!resolved.some(v => v === val)) return false;
+        if (!resolved.some((v) => v === val)) return false;
       }
     }
   }
@@ -378,15 +383,15 @@ function model(name, schema) {
     static find(query = {}) {
       return new Query(name, async () => {
         let items = store[name];
-        items = items.filter(item => matchesQuery(item, query));
-        return items.map(d => wrapDoc(name, d));
+        items = items.filter((item) => matchesQuery(item, query));
+        return items.map((d) => wrapDoc(name, d));
       });
     }
 
     static findOne(query = {}) {
       return new Query(name, async () => {
         let items = store[name];
-        items = items.filter(item => matchesQuery(item, query));
+        items = items.filter((item) => matchesQuery(item, query));
         return items.length > 0 ? wrapDoc(name, items[0]) : null;
       });
     }
@@ -394,18 +399,18 @@ function model(name, schema) {
     static findById(id) {
       return new Query(name, async () => {
         if (!id) return null;
-        let matched = store[name].find(d => d._id.toString() === id.toString());
+        const matched = store[name].find((d) => d._id.toString() === id.toString());
         return matched ? wrapDoc(name, matched) : null;
       });
     }
 
     static async countDocuments(query = {}) {
-      return store[name].filter(item => matchesQuery(item, query)).length;
+      return store[name].filter((item) => matchesQuery(item, query)).length;
     }
 
     static async insertMany(docs) {
-      const wrapped = docs.map(d => wrapDoc(name, d));
-      for (let w of wrapped) {
+      const wrapped = docs.map((d) => wrapDoc(name, d));
+      for (const w of wrapped) {
         store[name].push({ ...w });
       }
       return wrapped;
@@ -413,13 +418,13 @@ function model(name, schema) {
 
     static async deleteMany(query = {}) {
       const initialCount = store[name].length;
-      store[name] = store[name].filter(item => !matchesQuery(item, query));
+      store[name] = store[name].filter((item) => !matchesQuery(item, query));
       return { deletedCount: initialCount - store[name].length };
     }
 
     static async updateMany(query = {}, update = {}) {
       let count = 0;
-      store[name] = store[name].map(item => {
+      store[name] = store[name].map((item) => {
         if (matchesQuery(item, query)) {
           count++;
           let updated = { ...item };
@@ -436,7 +441,7 @@ function model(name, schema) {
     }
 
     static async deleteOne(query = {}) {
-      const idx = store[name].findIndex(item => matchesQuery(item, query));
+      const idx = store[name].findIndex((item) => matchesQuery(item, query));
       if (idx >= 0) {
         store[name].splice(idx, 1);
         return { deletedCount: 1 };
@@ -445,7 +450,7 @@ function model(name, schema) {
     }
 
     static async findByIdAndUpdate(id, update) {
-      const idx = store[name].findIndex(d => d._id && d._id.toString() === id.toString());
+      const idx = store[name].findIndex((d) => d._id && d._id.toString() === id.toString());
       if (idx >= 0) {
         const updated = { ...store[name][idx], ...update };
         store[name][idx] = updated;

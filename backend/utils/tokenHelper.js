@@ -1,9 +1,10 @@
 const Token = require('../models/Token');
+const logger = require('./logger');
 
 /**
  * Generates a collision-free unique token number across ALL hospital tenants and legacy indexes.
  * Checks global max token number so numbers like T-101, T-102 never collide across hospitals or indexes.
- * 
+ *
  * @param {string} [hospitalId] Optional hospital tenant ID
  * @returns {Promise<string>} Unique token number, e.g. "T-104"
  */
@@ -13,7 +14,7 @@ async function generateUniqueTokenNumber(hospitalId) {
     const existingTokens = await Token.find({}).select('tokenNumber');
     let maxNum = 100;
 
-    for (let t of existingTokens) {
+    for (const t of existingTokens) {
       if (t && t.tokenNumber) {
         const match = t.tokenNumber.match(/T-(\d+)/i) || t.tokenNumber.match(/\d+/);
         if (match) {
@@ -38,7 +39,7 @@ async function generateUniqueTokenNumber(hospitalId) {
 
     return tokenNumber;
   } catch (err) {
-    console.error('Error generating unique token number:', err);
+    logger.error('Error generating unique token number', { err: err });
     // Fallback guaranteed unique string
     return `T-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
   }
@@ -46,7 +47,7 @@ async function generateUniqueTokenNumber(hospitalId) {
 
 /**
  * Saves a Token document with automatic retry & fallback handling for E11000 duplicate key errors.
- * 
+ *
  * @param {object} tokenDoc Mongoose Token document instance
  * @returns {Promise<object>} Saved token document
  */
@@ -63,7 +64,9 @@ async function saveTokenWithRetry(tokenDoc) {
         retryCount++;
         const newNum = await generateUniqueTokenNumber(tokenDoc.hospital);
         tokenDoc.tokenNumber = newNum;
-        console.warn(`[E11000 DUP KEY RESOLVED] Automatically regenerated token number to ${tokenDoc.tokenNumber} (Attempt ${retryCount})`);
+        console.warn(
+          `[E11000 DUP KEY RESOLVED] Automatically regenerated token number to ${tokenDoc.tokenNumber} (Attempt ${retryCount})`
+        );
       } else {
         throw err;
       }

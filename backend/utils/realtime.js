@@ -12,6 +12,7 @@
 // new events so nothing that listens for it today breaks.
 
 const ActivityLog = require('../models/ActivityLog');
+const logger = require('./logger');
 
 /** Room names. Every portal joins `hospital:<id>` and `role:<role>:<id>`. */
 const facilityRoom = (hospital) => `hospital:${hospital || 'general-hospital'}`;
@@ -75,8 +76,14 @@ function toPatient(io, tokenId, event, payload = {}) {
  */
 async function logActivity(io, entry = {}) {
   const {
-    hospital = 'general-hospital', type = 'system', role = 'system',
-    actor, message, tokenNumber, refId, severity = 'info'
+    hospital = 'general-hospital',
+    type = 'system',
+    role = 'system',
+    actor,
+    message,
+    tokenNumber,
+    refId,
+    severity = 'info'
   } = entry;
 
   if (!message) return null;
@@ -84,18 +91,29 @@ async function logActivity(io, entry = {}) {
   let saved = null;
   try {
     saved = await new ActivityLog({
-      hospital, type, role, actor, message, tokenNumber,
+      hospital,
+      type,
+      role,
+      actor,
+      message,
+      tokenNumber,
       refId: refId ? String(refId) : undefined,
       severity
     }).save();
   } catch (err) {
-    console.error('[ACTIVITY] persist failed:', err.message);
+    logger.error('[ACTIVITY] persist failed', { err: err.message });
   }
 
   // Push even if persistence failed — a live viewer still wants to see it.
   toFacility(io, hospital, 'activity', {
-    _id: saved && saved._id, type, role, actor, message, tokenNumber,
-    refId: refId ? String(refId) : undefined, severity,
+    _id: saved && saved._id,
+    type,
+    role,
+    actor,
+    message,
+    tokenNumber,
+    refId: refId ? String(refId) : undefined,
+    severity,
     createdAt: (saved && saved.createdAt) || new Date()
   });
 
@@ -107,12 +125,18 @@ async function logActivity(io, entry = {}) {
  * patient moved, keep legacy listeners alive, and (optionally) drop a feed line.
  */
 async function announceJourney(io, { hospital, token, stage, actor, role, message, type, severity }) {
-  toFacility(io, hospital, 'journey-updated', {
-    tokenId: token && String(token._id),
-    tokenNumber: token && token.tokenNumber,
-    stage,
-    doctorId: token && token.doctor && String(token.doctor._id || token.doctor)
-  }, { alsoLegacy: true });
+  toFacility(
+    io,
+    hospital,
+    'journey-updated',
+    {
+      tokenId: token && String(token._id),
+      tokenNumber: token && token.tokenNumber,
+      stage,
+      doctorId: token && token.doctor && String(token.doctor._id || token.doctor)
+    },
+    { alsoLegacy: true }
+  );
 
   if (token) {
     toPatient(io, String(token._id), 'journey-updated', { stage, tokenNumber: token.tokenNumber });
@@ -120,7 +144,11 @@ async function announceJourney(io, { hospital, token, stage, actor, role, messag
 
   if (message) {
     await logActivity(io, {
-      hospital, type: type || 'system', role, actor, message,
+      hospital,
+      type: type || 'system',
+      role,
+      actor,
+      message,
       tokenNumber: token && token.tokenNumber,
       refId: token && token._id,
       severity
@@ -129,7 +157,14 @@ async function announceJourney(io, { hospital, token, stage, actor, role, messag
 }
 
 module.exports = {
-  facilityRoom, roleRoom, doctorRoom, patientRoom,
-  toFacility, toRole, toDoctor, toPatient,
-  logActivity, announceJourney
+  facilityRoom,
+  roleRoom,
+  doctorRoom,
+  patientRoom,
+  toFacility,
+  toRole,
+  toDoctor,
+  toPatient,
+  logActivity,
+  announceJourney
 };
