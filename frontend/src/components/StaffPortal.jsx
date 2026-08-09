@@ -202,6 +202,165 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const [remindersLoading, setRemindersLoading] = useState(false);
   const [triggerLog, setTriggerLog] = useState(null);
 
+  // Billing & Discharge state
+  const [invoices, setInvoices] = useState([]);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [billingSearch, setBillingSearch] = useState('');
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [addItemCategory, setAddItemCategory] = useState('Medicine');
+  const [addItemName, setAddItemName] = useState('');
+  const [addItemQty, setAddItemQty] = useState('1');
+  const [addItemPrice, setAddItemPrice] = useState('');
+  const [addItemSuccess, setAddItemSuccess] = useState('');
+  const [addItemError, setAddItemError] = useState('');
+
+  const [showDischargeModal, setShowDischargeModal] = useState(false);
+  const [dischargeAmountPaid, setDischargeAmountPaid] = useState('');
+  const [dischargeMethod, setDischargeMethod] = useState('Cash');
+  const [dischargeDiscount, setDischargeDiscount] = useState('0');
+  const [dischargeNotes, setDischargeNotes] = useState('');
+  const [dischargeSuccess, setDischargeSuccess] = useState('');
+  const [dischargeError, setDischargeError] = useState('');
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+
+  const loadInvoices = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/invoices`, {
+        headers: { Authorization: `Bearer ${staffToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setInvoices(data);
+          if (selectedInvoice) {
+            const updatedSel = data.find((inv) => inv._id === selectedInvoice._id);
+            if (updatedSel) setSelectedInvoice(updatedSel);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error loading billing invoices:', err);
+    }
+  };
+
+  const handleAddInvoiceItem = async (e) => {
+    e.preventDefault();
+    if (!selectedInvoice?._id) return;
+    setAddItemError('');
+    setAddItemSuccess('');
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${selectedInvoice._id}/items`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${staffToken}`
+        },
+        body: JSON.stringify({
+          category: addItemCategory,
+          itemName: addItemName,
+          quantity: parseInt(addItemQty) || 1,
+          unitPrice: parseFloat(addItemPrice) || 0
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to add item');
+
+      setSelectedInvoice(data.invoice);
+      setAddItemName('');
+      setAddItemPrice('');
+      setAddItemQty('1');
+      setAddItemSuccess('Item added to bill!');
+      loadInvoices();
+      setTimeout(() => {
+        setShowAddItemModal(false);
+        setAddItemSuccess('');
+      }, 800);
+    } catch (err) {
+      setAddItemError(err.message);
+    }
+  };
+
+  const handleRemoveInvoiceItem = async (itemId) => {
+    if (!selectedInvoice?._id) return;
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/api/v1/billing/invoices/${selectedInvoice._id}/items/${itemId}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${staffToken}` }
+        }
+      );
+      const data = await res.json();
+      if (res.ok) {
+        setSelectedInvoice(data.invoice);
+        loadInvoices();
+      }
+    } catch (err) {
+      console.error('Error deleting item:', err);
+    }
+  };
+
+  const handleSyncPrescriptions = async () => {
+    if (!selectedInvoice?._id) return;
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/api/v1/billing/invoices/${selectedInvoice._id}/sync-prescriptions`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${staffToken}` }
+        }
+      );
+      const data = await res.json();
+      if (res.ok) {
+        setSelectedInvoice(data.invoice);
+        alert(data.message);
+        loadInvoices();
+      } else {
+        alert(data.message);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDischargePatient = async (e) => {
+    e.preventDefault();
+    if (!selectedInvoice?._id) return;
+    setDischargeError('');
+    setDischargeSuccess('');
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${selectedInvoice._id}/discharge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${staffToken}`
+        },
+        body: JSON.stringify({
+          amountPaid: parseFloat(dischargeAmountPaid) || selectedInvoice.totalAmount,
+          paymentMethod: dischargeMethod,
+          discount: parseFloat(dischargeDiscount) || 0,
+          notes: dischargeNotes
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Discharge failed');
+
+      setSelectedInvoice(data.invoice);
+      setDischargeSuccess(`Patient discharged successfully! Receipt generated.`);
+      loadInvoices();
+      loadData();
+      setTimeout(() => {
+        setShowDischargeModal(false);
+        setShowReceiptModal(true);
+        setDischargeSuccess('');
+      }, 1000);
+    } catch (err) {
+      setDischargeError(err.message);
+    }
+  };
+
   const loadData = async () => {
     try {
       const resQ = await fetch(`${BACKEND_URL}/api/v1/staff/queues`, {
@@ -276,6 +435,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   useEffect(() => {
     loadData();
     loadOverview();
+    loadInvoices();
 
     socket.emit('join-room', 'queue:global');
 
@@ -284,6 +444,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       loadOverview();
       if (activeSidebarTab === 'reminders') {
         loadReminders();
+      }
+      if (activeSidebarTab === 'billing') {
+        loadInvoices();
       }
     };
 
@@ -310,8 +473,10 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     loadData();
     loadOverview();
     if (activeSidebarTab === 'reminders') loadReminders();
+    if (activeSidebarTab === 'billing') loadInvoices();
   });
   useLiveRefresh(['journey-updated', 'lab-updated', 'doctor-status-update', 'stock-alert'], loadOverview);
+  useLiveRefresh(['billing-updated', 'patient-discharged'], loadInvoices);
 
   useEffect(() => {
     if (!stockAlert) return undefined;
@@ -559,6 +724,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       )
     : [];
 
+  // Filter invoices list
+  const filteredInvoices = Array.isArray(invoices)
+    ? invoices.filter((inv) => {
+        const q = billingSearch.toLowerCase();
+        const patName = inv.patient?.name ? inv.patient.name.toLowerCase() : '';
+        const patPhone = inv.patient?.phone || '';
+        const invNum = inv.invoiceNumber ? inv.invoiceNumber.toLowerCase() : '';
+        const tokNum = inv.token?.tokenNumber ? inv.token.tokenNumber.toLowerCase() : '';
+        return patName.includes(q) || patPhone.includes(q) || invNum.includes(q) || tokNum.includes(q);
+      })
+    : [];
+
   return (
     <div className="flex-1 flex overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] font-sans transition-colors duration-200">
       {/* 1. Left Sidebar Navigation Panel */}
@@ -583,6 +760,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           <div className="p-4 space-y-1">
             {[
               { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', tab: 'dashboard' },
+              { id: 'billing', label: 'Billing & Discharge', icon: 'payments', tab: 'billing' },
               { id: 'patients', label: 'Patients', icon: 'group', tab: 'patients' },
               { id: 'queues', label: 'Queues', icon: 'queue', tab: 'monitor' },
               { id: 'tokens', label: 'Tokens', icon: 'confirmation_number', tab: 'monitor' },
@@ -599,6 +777,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   onClick={() => {
                     setActiveSidebarTab(item.tab);
                     if (item.tab === 'reminders') loadReminders();
+                    if (item.tab === 'billing') loadInvoices();
                   }}
                   className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
                     isActive
@@ -651,7 +830,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 ? 'Queue Management Board'
                 : activeSidebarTab === 'reminders'
                   ? 'Follow-ups / Reminders'
-                  : activeSidebarTab + ' Workspace'}
+                  : activeSidebarTab === 'billing'
+                    ? 'Reception Patient Billing & Discharge Counter'
+                    : activeSidebarTab + ' Workspace'}
             </h2>
             <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
               {staffUser?.counterNumber || 'Reception Desk'}
@@ -674,6 +855,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         <div className="md:hidden flex items-center space-x-2 overflow-x-auto px-6 py-3 bg-[var(--card-bg)] border-b border-[var(--border-color)]/30 sticky top-[62px] z-20 no-scrollbar">
           {[
             { id: 'dashboard', label: 'Overview', tab: 'dashboard' },
+            { id: 'billing', label: 'Billing & Discharge', tab: 'billing' },
             { id: 'patients', label: 'Patients Directory', tab: 'patients' },
             { id: 'queues', label: 'Live Queue Monitor', tab: 'monitor' },
             { id: 'followups', label: 'SMS Reminders', tab: 'reminders' }
@@ -683,6 +865,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               onClick={() => {
                 setActiveSidebarTab(item.tab);
                 if (item.tab === 'reminders') loadReminders();
+                if (item.tab === 'billing') loadInvoices();
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
                 activeSidebarTab === item.tab
@@ -693,6 +876,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {item.label}
             </button>
           ))}
+
           <button
             onClick={onLogout}
             className="px-3 py-1.5 rounded-lg text-xs font-bold text-rose-500 bg-rose-500/10 border border-rose-500/20 whitespace-nowrap shrink-0 transition-all ml-auto"
@@ -1667,6 +1851,308 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </div>
             </div>
           )}
+
+          {/* TAB 5: RECEPTION PATIENT BILLING & DISCHARGE COUNTER */}
+          {activeSidebarTab === 'billing' && (
+            <div className="space-y-6 animate-fade-in text-left">
+              {/* Top Header & Search bar */}
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 shadow-sm">
+                <div>
+                  <h3 className="text-lg font-extrabold text-[var(--text-color)] tracking-tight flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[24px] text-teal-600">payments</span>
+                    <span>Reception Patient Billing & Discharge Counter</span>
+                  </h3>
+                  <p className="text-xs text-[var(--text-secondary)] font-medium mt-0.5">
+                    Track daily medicines (dawa), lab tests, bandages, room charges, and generate final
+                    discharge invoices.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                  <div className="relative flex-1 md:w-64">
+                    <span className="material-symbols-outlined absolute left-3 top-2.5 text-[18px] text-[var(--text-secondary)]">
+                      search
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Search patient, phone, token..."
+                      value={billingSearch}
+                      onChange={(e) => setBillingSearch(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl pl-9 pr-4 py-2 text-xs font-bold text-[var(--text-color)] outline-none focus:border-teal-500"
+                    />
+                  </div>
+                  <button
+                    onClick={loadInvoices}
+                    className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">refresh</span>
+                    <span>Refresh</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Split Screen Layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Left List Pane: Invoices / Patients */}
+                <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-4 shadow-sm flex flex-col space-y-3 max-h-[70vh] overflow-y-auto">
+                  <div className="flex justify-between items-center pb-2 border-b border-[var(--border-color)]/30">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Patient Bills ({filteredInvoices.length})
+                    </span>
+                    <span className="text-[10px] bg-teal-500/10 text-teal-600 px-2 py-0.5 rounded-full font-bold">
+                      Real-Time Live
+                    </span>
+                  </div>
+
+                  {filteredInvoices.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-[var(--text-secondary)] font-medium">
+                      No patient invoices found.
+                    </div>
+                  ) : (
+                    filteredInvoices.map((inv) => {
+                      const isSelected = selectedInvoice?._id === inv._id;
+                      return (
+                        <div
+                          key={inv._id}
+                          onClick={() => setSelectedInvoice(inv)}
+                          className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-teal-500/10 border-teal-500 text-teal-700 dark:text-teal-400 shadow-sm'
+                              : 'bg-[var(--bg-color)] border-[var(--border-color)]/40 hover:bg-[var(--border-color)]/20 text-[var(--text-color)]'
+                          }`}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className="text-[10px] font-black text-teal-600 uppercase tracking-widest block">
+                                {inv.invoiceNumber}
+                              </span>
+                              <h4 className="font-extrabold text-sm mt-0.5">
+                                {inv.patient?.name || 'Patient'}
+                              </h4>
+                              <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                                Phone: {inv.patient?.phone}{' '}
+                                {inv.token?.tokenNumber ? `| Token: ${inv.token.tokenNumber}` : ''}
+                              </p>
+                            </div>
+                            <span
+                              className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider ${
+                                inv.status === 'Discharged'
+                                  ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                                  : 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                              }`}
+                            >
+                              {inv.status}
+                            </span>
+                          </div>
+
+                          <div className="mt-3 pt-2 border-t border-[var(--border-color)]/20 flex justify-between items-center text-xs">
+                            <span className="text-[10px] text-[var(--text-secondary)]">
+                              Items: {(inv.items || []).length}
+                            </span>
+                            <div className="text-right">
+                              <span className="text-[10px] text-[var(--text-secondary)] font-medium">
+                                Total:{' '}
+                              </span>
+                              <span className="font-extrabold text-sm">₹{inv.totalAmount}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Right Main Pane: Active Invoice Details & Actions */}
+                <div className="lg:col-span-2 space-y-6">
+                  {selectedInvoice ? (
+                    <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-sm space-y-6">
+                      {/* Header details */}
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-[var(--border-color)]/30">
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs font-black uppercase text-teal-600 tracking-wider">
+                              {selectedInvoice.invoiceNumber}
+                            </span>
+                            <span className="text-xs text-[var(--text-secondary)]">•</span>
+                            <span className="text-xs font-bold text-[var(--text-secondary)]">
+                              {(selectedInvoice.hospital || 'GENERAL-HOSPITAL').toUpperCase()}
+                            </span>
+                          </div>
+                          <h2 className="text-2xl font-black text-[var(--text-color)] mt-1">
+                            {selectedInvoice.patient?.name || 'Patient'}
+                          </h2>
+                          <p className="text-xs text-[var(--text-secondary)] font-medium mt-0.5">
+                            Age: {selectedInvoice.patient?.age} | Gender: {selectedInvoice.patient?.gender} |
+                            Phone: {selectedInvoice.patient?.phone}
+                          </p>
+                        </div>
+
+                        {/* Action Toolbar */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            onClick={() => setShowAddItemModal(true)}
+                            disabled={selectedInvoice.status === 'Discharged'}
+                            className="px-3.5 py-2 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">add_circle</span>
+                            <span>Add Expense</span>
+                          </button>
+
+                          <button
+                            onClick={handleSyncPrescriptions}
+                            disabled={selectedInvoice.status === 'Discharged'}
+                            className="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                            title="Auto-pull doctor prescribed medicines and ordered tests"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">sync</span>
+                            <span>Pull Doctor Rx / Tests</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setDischargeAmountPaid(selectedInvoice.balanceDue.toString());
+                              setShowDischargeModal(true);
+                            }}
+                            disabled={selectedInvoice.status === 'Discharged'}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">task_alt</span>
+                            <span>Discharge & Pay</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Line Items Table */}
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
+                          Itemized Expenses Breakdown
+                        </h4>
+
+                        <div className="overflow-x-auto border border-[var(--border-color)]/30 rounded-xl">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-[var(--bg-color)] border-b border-[var(--border-color)]/30 text-[var(--text-secondary)] uppercase font-bold text-[10px]">
+                              <tr>
+                                <th className="p-3">Category</th>
+                                <th className="p-3">Item Description</th>
+                                <th className="p-3 text-center">Qty</th>
+                                <th className="p-3 text-right">Unit Price (₹)</th>
+                                <th className="p-3 text-right">Total (₹)</th>
+                                <th className="p-3 text-center">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[var(--border-color)]/20 font-medium">
+                              {(selectedInvoice.items || []).length === 0 ? (
+                                <tr>
+                                  <td
+                                    colSpan="6"
+                                    className="p-6 text-center text-[var(--text-secondary)] italic"
+                                  >
+                                    No charges added yet. Click "Add Expense" or "Pull Doctor Rx / Tests" to
+                                    begin.
+                                  </td>
+                                </tr>
+                              ) : (
+                                selectedInvoice.items.map((it) => (
+                                  <tr key={it._id} className="hover:bg-[var(--bg-color)]/50">
+                                    <td className="p-3">
+                                      <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase border bg-teal-500/10 text-teal-600 border-teal-500/20">
+                                        {it.category}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 font-bold text-[var(--text-color)]">{it.itemName}</td>
+                                    <td className="p-3 text-center font-bold">{it.quantity}</td>
+                                    <td className="p-3 text-right font-semibold">₹{it.unitPrice}</td>
+                                    <td className="p-3 text-right font-extrabold text-teal-600">
+                                      ₹{it.totalPrice}
+                                    </td>
+                                    <td className="p-3 text-center">
+                                      {selectedInvoice.status !== 'Discharged' && (
+                                        <button
+                                          onClick={() => handleRemoveInvoiceItem(it._id)}
+                                          className="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-500/10"
+                                          title="Remove item"
+                                        >
+                                          <span className="material-symbols-outlined text-[16px]">
+                                            delete
+                                          </span>
+                                        </button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Bill Totals & Summary Card */}
+                      <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs font-bold">
+                        <div className="space-y-1 text-left">
+                          <p className="text-[var(--text-secondary)]">
+                            Payment Status:{' '}
+                            <span className="font-extrabold text-[var(--text-color)]">
+                              {selectedInvoice.paymentMethod || 'Unpaid'}
+                            </span>
+                          </p>
+                          {selectedInvoice.dischargedAt && (
+                            <p className="text-[10px] text-emerald-600 font-bold">
+                              Discharged at: {new Date(selectedInvoice.dischargedAt).toLocaleString()} by{' '}
+                              {selectedInvoice.dischargedBy}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="w-full sm:w-64 space-y-1.5 border-t sm:border-t-0 sm:border-l border-[var(--border-color)]/30 pt-3 sm:pt-0 sm:pl-4 text-right">
+                          <div className="flex justify-between text-[var(--text-secondary)]">
+                            <span>Subtotal:</span>
+                            <span>₹{selectedInvoice.subtotal}</span>
+                          </div>
+                          {selectedInvoice.discount > 0 && (
+                            <div className="flex justify-between text-emerald-600">
+                              <span>Discount:</span>
+                              <span>-₹{selectedInvoice.discount}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between text-base font-black text-[var(--text-color)] pt-1 border-t border-[var(--border-color)]/30">
+                            <span>Total Amount:</span>
+                            <span className="text-teal-600">₹{selectedInvoice.totalAmount}</span>
+                          </div>
+                          <div className="flex justify-between text-xs font-bold pt-1">
+                            <span className="text-[var(--text-secondary)]">
+                              Amount Paid: ₹{selectedInvoice.amountPaid}
+                            </span>
+                            <span
+                              className={
+                                selectedInvoice.balanceDue > 0
+                                  ? 'text-amber-600 font-black'
+                                  : 'text-emerald-600 font-black'
+                              }
+                            >
+                              Due: ₹{selectedInvoice.balanceDue}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-[var(--card-bg)] border border-dashed border-[var(--border-color)] rounded-2xl p-16 text-center text-[var(--text-secondary)] space-y-3">
+                      <span className="material-symbols-outlined text-[48px] text-[var(--text-secondary)]/40">
+                        receipt_long
+                      </span>
+                      <h3 className="text-base font-extrabold text-[var(--text-color)]">
+                        No Invoice Selected
+                      </h3>
+                      <p className="text-xs max-w-sm mx-auto font-medium">
+                        Select a patient invoice from the list on the left, or search for a patient/token to
+                        manage expenses and discharge.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1848,6 +2334,353 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Add Expense / Charge Modal */}
+      {showAddItemModal && selectedInvoice && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-fade-in relative text-[var(--text-color)] text-left">
+            <h3 className="font-extrabold text-base mb-4 flex items-center space-x-2 border-b border-[var(--border-color)]/30 pb-2">
+              <span className="material-symbols-outlined text-teal-600">add_shopping_cart</span>
+              <span>Add Charge / Daily Expense</span>
+            </h3>
+
+            {addItemError && (
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl font-bold">
+                {addItemError}
+              </div>
+            )}
+            {addItemSuccess && (
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-xs rounded-xl font-bold">
+                {addItemSuccess}
+              </div>
+            )}
+
+            {/* Quick Presets */}
+            <div className="mb-4 space-y-1.5">
+              <label className="text-[10px] font-extrabold uppercase text-[var(--text-secondary)]">
+                Quick Presets:
+              </label>
+              <div className="flex flex-wrap gap-1.5 text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddItemCategory('Medicine');
+                    setAddItemName('Paracetamol 500mg');
+                    setAddItemPrice('20');
+                  }}
+                  className="px-2 py-1 bg-teal-500/10 text-teal-600 rounded-lg font-bold hover:bg-teal-500/20"
+                >
+                  💊 Dawa (Paracetamol ₹20)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddItemCategory('Lab Test');
+                    setAddItemName('CBC Blood Test');
+                    setAddItemPrice('350');
+                  }}
+                  className="px-2 py-1 bg-sky-500/10 text-sky-600 rounded-lg font-bold hover:bg-sky-500/20"
+                >
+                  🧪 Test (CBC ₹350)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddItemCategory('Nursing / Bandage');
+                    setAddItemName('Wound Bandage & Dressing');
+                    setAddItemPrice('150');
+                  }}
+                  className="px-2 py-1 bg-amber-500/10 text-amber-600 rounded-lg font-bold hover:bg-amber-500/20"
+                >
+                  🩹 Bandage (₹150)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddItemCategory('Room / Bed');
+                    setAddItemName('Daily General Bed Charge');
+                    setAddItemPrice('500');
+                  }}
+                  className="px-2 py-1 bg-purple-500/10 text-purple-600 rounded-lg font-bold hover:bg-purple-500/20"
+                >
+                  🛌 Daily Bed (₹500)
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleAddInvoiceItem} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold mb-1">Category</label>
+                <select
+                  value={addItemCategory}
+                  onChange={(e) => setAddItemCategory(e.target.value)}
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                >
+                  <option value="Medicine">Medicine (Dawa)</option>
+                  <option value="Lab Test">Lab Test (Test)</option>
+                  <option value="Nursing / Bandage">Nursing / Bandage / Dressing</option>
+                  <option value="Consultation">Consultation Fee</option>
+                  <option value="Room / Bed">Room / Bed Charge</option>
+                  <option value="Equipment / Consumable">Equipment / Consumable</option>
+                  <option value="Other">Other Expense</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold mb-1">Item Name / Description</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g., Bandage & Dressing, Paracetamol, CBC Test"
+                  value={addItemName}
+                  onChange={(e) => setAddItemName(e.target.value)}
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={addItemQty}
+                    onChange={(e) => setAddItemQty(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">Unit Price (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    placeholder="150"
+                    value={addItemPrice}
+                    onChange={(e) => setAddItemPrice(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4 border-t border-[var(--border-color)]/30">
+                <button
+                  type="button"
+                  onClick={() => setShowAddItemModal(false)}
+                  className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-xs font-bold rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl shadow-sm"
+                >
+                  Add to Bill
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Discharge Patient & Pay Modal */}
+      {showDischargeModal && selectedInvoice && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-fade-in relative text-[var(--text-color)] text-left">
+            <h3 className="font-extrabold text-base mb-2 flex items-center space-x-2 border-b border-[var(--border-color)]/30 pb-2 text-emerald-600">
+              <span className="material-symbols-outlined text-[24px]">task_alt</span>
+              <span>Discharge Patient & Finalize Invoice</span>
+            </h3>
+
+            {dischargeError && (
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl font-bold">
+                {dischargeError}
+              </div>
+            )}
+            {dischargeSuccess && (
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-xs rounded-xl font-bold">
+                {dischargeSuccess}
+              </div>
+            )}
+
+            <div className="bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/40 mb-4 text-xs font-bold space-y-1">
+              <p className="text-[var(--text-color)]">Patient: {selectedInvoice.patient?.name}</p>
+              <p className="text-[var(--text-secondary)]">
+                Total Bill Amount: ₹{selectedInvoice.totalAmount}
+              </p>
+            </div>
+
+            <form onSubmit={handleDischargePatient} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold mb-1">Discount (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={dischargeDiscount}
+                    onChange={(e) => setDischargeDiscount(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold mb-1">Amount Collecting (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={dischargeAmountPaid}
+                    onChange={(e) => setDischargeAmountPaid(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold mb-1">Payment Method</label>
+                <select
+                  value={dischargeMethod}
+                  onChange={(e) => setDischargeMethod(e.target.value)}
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                >
+                  <option value="Cash">Cash Counter</option>
+                  <option value="UPI">UPI / QR Code</option>
+                  <option value="Card">Debit / Credit Card</option>
+                  <option value="Net Banking">Net Banking</option>
+                  <option value="Insurance">Health Insurance</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold mb-1">Discharge Notes / Remarks</label>
+                <input
+                  type="text"
+                  placeholder="e.g., Patient fit for discharge, prescribed 5-day meds"
+                  value={dischargeNotes}
+                  onChange={(e) => setDischargeNotes(e.target.value)}
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4 border-t border-[var(--border-color)]/30">
+                <button
+                  type="button"
+                  onClick={() => setShowDischargeModal(false)}
+                  className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-xs font-bold rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center space-x-1.5"
+                >
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  <span>Confirm & Discharge Patient</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 7. Digital Discharge Summary & Invoice Receipt Modal */}
+      {showReceiptModal && selectedInvoice && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white text-zinc-900 rounded-2xl max-w-lg w-full p-6 shadow-2xl animate-fade-in relative text-left max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="text-center border-b pb-4 mb-4">
+              <h2 className="text-xl font-extrabold tracking-tight text-teal-700">CAREEAI HEALTHCARE</h2>
+              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
+                Official Discharge Summary & Invoice Receipt
+              </p>
+              <p className="text-[10px] text-zinc-400">Date: {new Date().toLocaleString()}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs mb-4 p-3 bg-zinc-50 rounded-xl border border-zinc-200 font-medium">
+              <div>
+                <p className="text-[10px] text-zinc-400 font-bold uppercase">Invoice No:</p>
+                <p className="font-extrabold text-teal-800">{selectedInvoice.invoiceNumber}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-zinc-400 font-bold uppercase">Patient Name:</p>
+                <p className="font-extrabold">{selectedInvoice.patient?.name}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-zinc-400 font-bold uppercase">Phone:</p>
+                <p>{selectedInvoice.patient?.phone}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-zinc-400 font-bold uppercase">Discharged By:</p>
+                <p>{selectedInvoice.dischargedBy || 'Reception'}</p>
+              </div>
+            </div>
+
+            {/* Itemized Table */}
+            <div className="mb-4">
+              <h4 className="text-[10px] font-extrabold uppercase text-zinc-400 mb-2">Itemized Breakdown</h4>
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b text-zinc-500 font-bold text-[10px] uppercase">
+                    <th className="py-2">Item</th>
+                    <th className="py-2 text-center">Qty</th>
+                    <th className="py-2 text-right">Price</th>
+                    <th className="py-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100 font-medium text-[11px]">
+                  {(selectedInvoice.items || []).map((it, idx) => (
+                    <tr key={idx}>
+                      <td className="py-2">{it.itemName}</td>
+                      <td className="py-2 text-center">{it.quantity}</td>
+                      <td className="py-2 text-right">₹{it.unitPrice}</td>
+                      <td className="py-2 text-right font-bold">₹{it.totalPrice}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Summary Box */}
+            <div className="border-t pt-3 space-y-1 text-xs text-right font-bold">
+              <div className="flex justify-between text-zinc-500">
+                <span>Subtotal:</span>
+                <span>₹{selectedInvoice.subtotal}</span>
+              </div>
+              {selectedInvoice.discount > 0 && (
+                <div className="flex justify-between text-emerald-600">
+                  <span>Discount:</span>
+                  <span>-₹{selectedInvoice.discount}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-base font-extrabold text-teal-800 pt-1 border-t">
+                <span>Total Bill Amount:</span>
+                <span>₹{selectedInvoice.totalAmount}</span>
+              </div>
+              <div className="flex justify-between text-xs text-zinc-600 pt-1">
+                <span>Paid ({selectedInvoice.paymentMethod}):</span>
+                <span className="text-emerald-600">₹{selectedInvoice.amountPaid}</span>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex justify-between items-center pt-6 border-t mt-4">
+              <button
+                onClick={() => window.print()}
+                className="px-4 py-2 bg-zinc-800 text-white rounded-xl text-xs font-bold hover:bg-zinc-700 flex items-center space-x-1"
+              >
+                <span className="material-symbols-outlined text-[16px]">print</span>
+                <span>Print Receipt</span>
+              </button>
+              <button
+                onClick={() => setShowReceiptModal(false)}
+                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-500"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

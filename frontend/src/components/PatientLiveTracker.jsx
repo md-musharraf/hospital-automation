@@ -18,6 +18,7 @@ function urlBase64ToUint8Array(base64String) {
 export default function PatientLiveTracker() {
   const { tokenId } = useParams();
   const [data, setData] = useState(null);
+  const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -42,8 +43,23 @@ export default function PatientLiveTracker() {
     }
   };
 
+  const loadInvoice = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/token/${tokenId}`);
+      if (res.ok) {
+        const inv = await res.json();
+        if (inv && !inv.message) {
+          setInvoice(inv);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading billing for tracker:', err);
+    }
+  };
+
   useEffect(() => {
     loadTracker();
+    loadInvoice();
 
     // The shared socket may have given up earlier (e.g. the backend was
     // restarting); a tracker showing a frozen queue position is worse than one
@@ -51,17 +67,20 @@ export default function PatientLiveTracker() {
     if (!socket.connected) socket.connect();
     socket.emit('join-room', 'queue:global');
     // The patient's own room receives targeted journey updates (sent to the lab,
-    // reports ready, medicines dispensed) without a page refresh.
+    // reports ready, medicines dispensed, billing updates) without a page refresh.
     socket.emit('join-room', `patient:${tokenId}`);
     const handleUpdate = () => {
       loadTracker();
+      loadInvoice();
     };
     socket.on('queue-updated', handleUpdate);
     socket.on('journey-updated', handleUpdate);
+    socket.on('billing-updated', handleUpdate);
 
     return () => {
       socket.off('queue-updated', handleUpdate);
       socket.off('journey-updated', handleUpdate);
+      socket.off('billing-updated', handleUpdate);
     };
   }, [tokenId]);
 
@@ -302,6 +321,54 @@ export default function PatientLiveTracker() {
               Refreshes automatically when the queue updates.
             </p>
           </div>
+
+          {/* Live Billing & Discharge Balance Card */}
+          {invoice && (
+            <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-4 space-y-3 shadow-sm text-left">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <span className="material-symbols-outlined text-[18px] text-teal-600">receipt_long</span>
+                  <span className="text-xs font-black uppercase text-[var(--text-color)] tracking-wider">
+                    Medical Bill Summary
+                  </span>
+                </div>
+                <span
+                  className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider ${
+                    invoice.status === 'Discharged' || invoice.status === 'Paid'
+                      ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                      : 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                  }`}
+                >
+                  {invoice.status}
+                </span>
+              </div>
+
+              <div className="space-y-1 text-xs border-t border-[var(--border-color)]/30 pt-2">
+                {(invoice.items || []).slice(0, 4).map((it, idx) => (
+                  <div key={idx} className="flex justify-between items-center text-[11px]">
+                    <span className="text-[var(--text-secondary)] truncate max-w-[200px]">{it.itemName}</span>
+                    <span className="font-bold text-[var(--text-color)]">₹{it.totalPrice}</span>
+                  </div>
+                ))}
+                {(invoice.items || []).length > 4 && (
+                  <p className="text-[9px] text-[var(--text-secondary)] italic">
+                    + {(invoice.items || []).length - 4} more item(s) on bill
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-between items-center border-t border-[var(--border-color)]/30 pt-2 text-xs font-black">
+                <span className="text-[var(--text-secondary)]">Total Payable:</span>
+                <span className="text-teal-600 text-sm">₹{invoice.totalAmount}</span>
+              </div>
+              <div className="flex justify-between items-center text-[10px] font-bold text-[var(--text-secondary)]">
+                <span>Amount Paid: ₹{invoice.amountPaid}</span>
+                <span className={invoice.balanceDue > 0 ? 'text-amber-600' : 'text-emerald-600'}>
+                  Balance Due: ₹{invoice.balanceDue}
+                </span>
+              </div>
+            </div>
+          )}
 
           {pushSupported && (
             <div className="pt-4 border-t border-[var(--border-color)]/25 mt-4 text-center">

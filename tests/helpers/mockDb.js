@@ -136,7 +136,8 @@ const MODELS = [
   ['Hospital', 'h'],
   ['RefillRequest', 'rf'],
   ['Medicine', 'med'],
-  ['ActivityLog', 'act']
+  ['ActivityLog', 'act'],
+  ['Invoice', 'inv']
 ];
 
 /**
