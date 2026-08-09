@@ -365,6 +365,16 @@ function detectMenuIntent(raw) {
   return null;
 }
 
+/**
+ * Which channel raised this booking. Stored on the token so the facility's
+ * reception desk can work its remote (WhatsApp/web) arrivals separately from the
+ * walk-ins standing in front of it.
+ */
+function bookingSourceOf(session) {
+  if (session.tempData && session.tempData.viaQr) return 'QR Scan';
+  return String(session.sessionId || '').startsWith('wa_') ? 'WhatsApp' : 'Web Assistant';
+}
+
 // Shared booking completion — used by BOTH the smart-triage auto-route path and
 // the manual "pick a doctor" fallback, so the token/queue/WhatsApp logic lives in
 // exactly one place. Creates/updates the patient, mints a token, pushes it into
@@ -421,6 +431,7 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
     status: 'Waiting',
     tokenType,
     priorityCategory: priorityCategory || 'None',
+    bookingSource: bookingSourceOf(session),
     patient: patient._id,
     doctor: selectedDoc._id,
     symptoms: session.tempData.symptoms || 'General Checkup'
@@ -463,6 +474,20 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
       socketIo.to('queue:global').emit('queue-updated', { doctorId: selectedDoc._id });
       socketIo.to(`doctor:${selectedDoc._id}`).emit('queue-updated');
       socketIo.to(`hospital:${currentHospId}`).emit('queue-updated', { doctorId: selectedDoc._id });
+
+      // The booking belongs to the facility the patient PICKED in the chat, so it
+      // is announced only in that facility's room — this is what makes a WhatsApp
+      // booking surface on the right hospital's reception desk and nowhere else.
+      socketIo.to(`hospital:${currentHospId}`).emit('remote-arrival', {
+        hospital: currentHospId,
+        tokenId: refreshedToken._id,
+        tokenNumber: refreshedToken.tokenNumber,
+        patientName: patient.name,
+        doctorName: selectedDoc.name,
+        source: bookingSourceOf(session),
+        tokenType,
+        priorityCategory: priorityCategory || 'None'
+      });
     } catch (sErr) {
       logger.error('Socket emit error', { err: sErr });
     }
@@ -571,6 +596,43 @@ function facilityPrompt(text, facilities, { page = 0, query = '', lead = [] } = 
     },
     shownIds: shown.map((h) => h.id)
   };
+}
+
+/**
+ * Bilingual header for the very first reply, shown BEFORE a language is known —
+ * the facility list is now the first thing a patient sees after "hi".
+ */
+const GREETING_HEADER =
+  '👋 Welcome to CareeAi! / केयरसिंक में आपका स्वागत है!\n' +
+  'These are all the hospitals & clinics you can book at right now:\n' +
+  'ये सभी अस्पताल व क्लिनिक अभी बुकिंग के लिए उपलब्ध हैं:';
+
+/**
+ * Open the "which hospital?" step with EVERY registered facility, the patient's
+ * own last-visited one first. On the shared WhatsApp number this is the first
+ * thing "hi" produces: the number belongs to the platform, not to one hospital,
+ * so the list is the only way the patient reaches the facility they actually want
+ * — and whatever they pick is the tenant every later step writes to.
+ */
+async function openFacilityPicker(session, text, { waPhone = null, lead = [] } = {}) {
+  const facilities = await searchFacilities('');
+  const previous = waPhone ? await lastVisitedFacility(waPhone) : null;
+  const ordered = previous ? [previous, ...facilities.filter((h) => h.id !== previous.id)] : facilities;
+
+  const { payload, shownIds } = facilityPrompt(text, ordered, {
+    lead: [...lead, ...(previous ? [{ sender: 'bot', text: text.lastVisited(previous) }] : [])]
+  });
+
+  session.currentState = 'AWAITING_FACILITY';
+  session.tempData = {
+    ...session.tempData,
+    facilityChosen: false,
+    facilityPage: 0,
+    facilityShown: shownIds
+  };
+  session.markModified && session.markModified('tempData');
+  await session.save();
+  return payload;
 }
 
 /** The facility this patient used last, so a returning patient can repeat it in one tap. */
@@ -981,9 +1043,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
   if (hospitalId) {
     // The web widget always runs on a facility's own page, and a WhatsApp number
-    // that maps to a facility is equally unambiguous — either way the patient has
-    // effectively already chosen, so skip the picker.
-    session.tempData = { ...session.tempData, hospitalId, facilityChosen: true };
+    // that serves exactly ONE facility is equally unambiguous — either way the
+    // patient has effectively already chosen, so the picker is skipped and even a
+    // fresh "hi" keeps them on that facility (`facilityLocked`).
+    session.tempData = { ...session.tempData, hospitalId, facilityChosen: true, facilityLocked: true };
     session.markModified && session.markModified('tempData');
     await session.save();
   }
@@ -1008,7 +1071,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   // If message is a Hospital QR Code trigger scan
   if (qrHospital) {
     session.currentState = 'LANGUAGE';
-    session.tempData = { hospitalId: qrHospital.id, facilityChosen: true };
+    session.tempData = { hospitalId: qrHospital.id, facilityChosen: true, facilityLocked: true, viaQr: true };
     session.markModified && session.markModified('tempData');
     await session.save();
 
@@ -1035,10 +1098,13 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   const waPhone = whatsappPhoneFromSession(sessionId);
   const knownLang = (session.tempData && session.tempData.language) || null;
 
-  const languagePrompt = () => {
-    const rawWhatsapp = (hospital && hospital.whatsappNumber) || getPrimaryWhatsAppNumber();
+  // `facility` defaults to the session's current one, but the facility picker
+  // passes the freshly CHOSEN hospital so the language step is already branded
+  // with the place the patient just selected.
+  const languagePrompt = (facility = hospital) => {
+    const rawWhatsapp = (facility && facility.whatsappNumber) || getPrimaryWhatsAppNumber();
     const num = rawWhatsapp.replace(/^whatsapp:/i, '');
-    const facilityName = hospital ? hospital.name : 'CareeAi';
+    const facilityName = facility ? facility.name : 'CareeAi';
     return {
       messages: [
         {
@@ -1054,12 +1120,30 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   // be asked for it again on every "hi" — send them straight to the menu. Only an
   // explicit "reset"/"restart" wipes the language choice.
   if (RESET_TRIGGERS.includes(lowerMsg)) {
-    if (knownLang && !HARD_RESET_TRIGGERS.includes(lowerMsg)) {
+    const hardReset = HARD_RESET_TRIGGERS.includes(lowerMsg);
+    // A QR deep-link, the facility's own web page, or a WhatsApp number that
+    // serves exactly one facility have all already answered "which hospital?" —
+    // those sessions stay put. Everyone else is on the shared platform number, so
+    // "hi" means "show me the hospitals".
+    const locked = Boolean(session.tempData && session.tempData.facilityLocked);
+    const facilities = await searchFacilities('');
+
+    if (!locked && facilities.length > 1) {
+      const keptLang = hardReset ? null : knownLang;
+      const t0 = dictionary[keptLang || 'en'];
+      session.tempData = keptLang ? { language: keptLang } : {};
+      return await openFacilityPicker(session, t0, {
+        waPhone,
+        lead: [{ sender: 'bot', text: GREETING_HEADER }]
+      });
+    }
+
+    if (knownLang && !hardReset) {
       const t0 = dictionary[knownLang];
       return await backToMenu(session, t0, knownLang, currentHospId, [{ sender: 'bot', text: t0.welcome }]);
     }
     session.currentState = 'LANGUAGE';
-    session.tempData = { hospitalId: currentHospId };
+    session.tempData = { hospitalId: currentHospId, facilityChosen: locked, facilityLocked: locked };
     session.markModified && session.markModified('tempData');
     await session.save();
     return languagePrompt();
@@ -1091,19 +1175,10 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   // simply want a different clinic today.
   if (CHANGE_FACILITY_TRIGGERS.includes(lowerMsg)) {
     const t0 = dictionary[knownLang || 'en'];
-    const all = await searchFacilities('');
-    const { payload, shownIds } = facilityPrompt(t0, all);
-
-    session.currentState = 'AWAITING_FACILITY';
-    session.tempData = {
-      ...session.tempData,
-      facilityChosen: false,
-      facilityPage: 0,
-      facilityShown: shownIds
-    };
-    session.markModified && session.markModified('tempData');
-    await session.save();
-    return payload;
+    // An explicit "HOSPITAL" overrides even a locked facility — the patient is
+    // asking for a different one in so many words.
+    session.tempData = { ...session.tempData, facilityLocked: false };
+    return await openFacilityPicker(session, t0, { waPhone });
   }
 
   if (CHANGE_PHONE_TRIGGERS.includes(lowerMsg) && session.tempData && session.tempData.phone) {
@@ -1175,31 +1250,25 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
     const langText = dictionary[selectedLanguage];
 
-    // If we do not already know WHICH facility this patient wants, ask before
-    // the menu — otherwise a shared WhatsApp number silently books everyone into
-    // the default hospital and every other facility is unreachable.
+    // Safety net: a session that somehow reached the language step without a
+    // facility (an older session, or a locked one that lost its hospital) still
+    // gets the picker before the menu — never silently book into the default
+    // hospital while every other facility stays unreachable.
     const facilities = await searchFacilities('');
     if (!session.tempData.facilityChosen && facilities.length > 1) {
-      const previous = await lastVisitedFacility(waPhone);
-      // Put the patient's own last-used facility first: for a returning patient
-      // that turns the whole step into a single tap.
-      const ordered = previous ? [previous, ...facilities.filter((h) => h.id !== previous.id)] : facilities;
-
-      const { payload, shownIds } = facilityPrompt(langText, ordered, {
-        lead: previous ? [{ sender: 'bot', text: langText.lastVisited(previous) }] : []
-      });
-
-      session.currentState = 'AWAITING_FACILITY';
-      session.tempData.facilityPage = 0;
-      session.tempData.facilityShown = shownIds;
-      session.markModified && session.markModified('tempData');
-      await session.save();
-      return payload;
+      return await openFacilityPicker(session, langText, { waPhone });
     }
+
+    // A patient who just picked a hospital off the list gets that hospital's name
+    // back, not the platform's: the generic welcome line names CareeAi and the
+    // shared number, which reads as "wrong hospital" one message after choosing.
+    // Sessions that arrived already tied to a facility (its own web page, its QR)
+    // keep the welcome, whose WhatsApp hint is useful there.
+    const branded = hospital && !session.tempData.facilityLocked;
 
     return {
       messages: [
-        { sender: 'bot', text: langText.welcome },
+        { sender: 'bot', text: branded ? langText.bookingAtFooter(hospital) : langText.welcome },
         { sender: 'bot', text: langText.selectOption },
         { sender: 'bot', text: langText.tipTypeProblem }
       ],
@@ -1219,6 +1288,16 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     let chosen = null;
     if (!isNaN(picked) && picked >= 1 && picked <= shownIds.length) {
       chosen = await Hospital.findOne({ id: shownIds[picked - 1] });
+    }
+
+    // 1b. The facility list is now the FIRST thing a patient sees, so a language
+    //     word here ("English", "हिन्दी") is them answering the step they expected
+    //     — not a hospital search. Remember it and re-show the list in that
+    //     language instead of reporting "no facility matches English".
+    if (!chosen && /^(english|eng|अंग्रेजी|hindi|hin|हिंदी|हिन्दी)$/.test(lowerMsg)) {
+      const picked2 = /हिं|हिन्|hindi|^hin$/.test(lowerMsg) ? 'hi' : 'en';
+      session.tempData = { ...session.tempData, language: picked2 };
+      return await openFacilityPicker(session, dictionary[picked2], { waPhone });
     }
 
     // 2. Otherwise treat it as a name/city search.
@@ -1258,13 +1337,29 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       return payload;
     }
 
-    // Locked in: every later turn books at this facility.
-    session.currentState = 'WELCOME';
+    // Locked in: every later turn — patient record, token, queue, bill — is
+    // written against THIS facility, so the booking lands on its dashboard.
     session.tempData = {
-      language: knownLang || 'en',
+      language: knownLang || undefined,
       hospitalId: chosen.id,
       facilityChosen: true
     };
+
+    // The picker now runs before the language step, so a first-time patient
+    // still owes us a language. Ask it here, branded with the facility they
+    // just chose, instead of assuming English.
+    if (!knownLang) {
+      session.currentState = 'LANGUAGE';
+      session.markModified && session.markModified('tempData');
+      await session.save();
+      const prompt = languagePrompt(chosen);
+      return {
+        ...prompt,
+        messages: [{ sender: 'bot', text: t0.facilityChosen(chosen) }, ...prompt.messages]
+      };
+    }
+
+    session.currentState = 'WELCOME';
     session.markModified && session.markModified('tempData');
     await session.save();
 
@@ -1602,13 +1697,18 @@ router.post('/whatsapp', async (req, res) => {
     // straight into `new RegExp()` throws "Nothing to repeat" (the leading `+`
     // is an invalid quantifier), which used to crash the whole webhook so the
     // patient's reply never got a response ("aage kuch nahi ho raha tha").
+    // Only a number that serves EXACTLY ONE facility identifies a hospital. When
+    // several facilities share the platform number (the normal case), the number
+    // says nothing about where the patient wants to go — the "hi" hospital list
+    // decides that.
     let hospital = null;
     const toDigits = cleanTo.replace(/\D/g, '');
     if (toDigits) {
       const allHospitals = await Hospital.find({});
-      hospital =
-        allHospitals.find((h) => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === toDigits) ||
-        null;
+      const owners = allHospitals.filter(
+        (h) => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === toDigits
+      );
+      hospital = owners.length === 1 ? owners[0] : null;
     }
 
     // Which facility does this chat belong to? A hospital the session ALREADY
@@ -2133,10 +2233,15 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                 } else if (receivingDisplayNumber) {
                   const rxDigits = receivingDisplayNumber.replace(/\D/g, '');
                   const allHosp = await Hospital.find({});
-                  const matched = allHosp.find(
+                  const matched = allHosp.filter(
                     (h) => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === rxDigits
                   );
-                  seedHospitalId = matched ? matched.id : undefined;
+                  // Seed the facility ONLY when this number belongs to exactly one
+                  // of them. Facilities normally share the single platform number,
+                  // and picking the first match there would lock every patient into
+                  // whichever hospital happened to be registered first — the list of
+                  // hospitals ("hi") is what must decide instead.
+                  seedHospitalId = matched.length === 1 ? matched[0].id : undefined;
                 }
 
                 console.log(

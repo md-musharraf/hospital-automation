@@ -14,13 +14,21 @@ async function generateUniqueTokenNumber(hospitalId) {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
-    const query = { createdAt: { $gte: startOfDay } };
+    const query = {};
     if (hospitalId) {
       query.hospital = hospitalId;
     }
 
-    // Query tokens created TODAY for this hospital
-    const todayTokens = await Token.find(query).select('tokenNumber');
+    // Tokens of this facility, narrowed to TODAY here in JS rather than with a
+    // `createdAt: { $gte: startOfDay }` clause in the query. The in-memory dev DB
+    // (USE_MOCK_DB) stores createdAt as an ISO string, so that clause matched
+    // nothing there: every booking of the day was handed "T-1", collided on the
+    // (tokenNumber, hospital) unique index, and the patient's token was silently
+    // lost. Same reasoning as queueHelper.getTodayTokenCount.
+    const allTokens = await Token.find(query).select('tokenNumber createdAt');
+    const todayTokens = (allTokens || []).filter(
+      (t) => t && t.createdAt && new Date(t.createdAt).getTime() >= startOfDay.getTime()
+    );
     let maxNum = 0;
 
     for (const t of todayTokens) {
@@ -38,20 +46,12 @@ async function generateUniqueTokenNumber(hospitalId) {
     let nextNum = maxNum + 1;
     let tokenNumber = `T-${nextNum}`;
 
-    // Collision check for today
-    let exists = await Token.findOne({
-      hospital: hospitalId || 'general-hospital',
-      tokenNumber,
-      createdAt: { $gte: startOfDay }
-    });
-    while (exists) {
+    // Collision check against the numbers already handed out today (same in-JS
+    // date filter, for the same reason).
+    const takenToday = new Set(todayTokens.map((t) => t.tokenNumber));
+    while (takenToday.has(tokenNumber)) {
       nextNum++;
       tokenNumber = `T-${nextNum}`;
-      exists = await Token.findOne({
-        hospital: hospitalId || 'general-hospital',
-        tokenNumber,
-        createdAt: { $gte: startOfDay }
-      });
     }
 
     return tokenNumber;
@@ -87,6 +87,16 @@ async function saveTokenWithRetry(tokenDoc) {
         throw err;
       }
     }
+  }
+
+  // Never hand back an UNSAVED token. This used to return the document anyway
+  // once the retries ran out, so the caller pushed a token id that exists in no
+  // collection into the doctor's queue: the patient was told "Booking Complete"
+  // for a token nobody could ever see. Failing loudly is the only honest answer.
+  if (!saved) {
+    throw new Error(
+      `Could not allocate a free token number for ${tokenDoc.hospital} after ${retryCount} attempts`
+    );
   }
   return tokenDoc;
 }

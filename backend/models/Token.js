@@ -23,6 +23,16 @@ const TokenSchema = new mongoose.Schema(
       enum: ['None', 'Senior', 'Pregnant', 'Disabled'],
       default: 'None'
     },
+    // WHERE this booking came from. Reception needs to tell a patient standing at
+    // the counter apart from one who booked from home on WhatsApp — the second
+    // group never passes the desk, so their bill and their special-needs priority
+    // have to be handled from the arrivals list instead of face to face.
+    bookingSource: {
+      type: String,
+      enum: ['Reception', 'WhatsApp', 'Web Assistant', 'QR Scan'],
+      default: 'Reception',
+      index: true
+    },
     patient: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: true },
     doctor: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true },
     symptoms: { type: String, required: true },

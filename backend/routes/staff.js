@@ -5,7 +5,9 @@ const Doctor = require('../models/Doctor');
 const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const Reminder = require('../models/Reminder');
+const Invoice = require('../models/Invoice');
 const { processPendingReminders } = require('../utils/reminderHelper');
+const { startOfToday } = require('../utils/dates');
 const { authenticateToken, ensureRole } = require('../middleware/auth');
 
 // Role guard for this router (see middleware/auth.js).
@@ -156,6 +158,7 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       status: 'Waiting',
       tokenType: effectiveTokenType,
       priorityCategory: resolvedPriority || 'None',
+      bookingSource: 'Reception',
       patient: patient._id,
       doctor: resolvedDoctorId,
       symptoms
@@ -631,6 +634,180 @@ router.put('/tokens/:tokenId/reschedule', authenticateToken, ensureStaff, async 
     });
   } catch (error) {
     logger.error('Error rescheduling token by staff', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// SPECIAL RECEPTION DESK
+//
+// Reception has always been built around the person standing at the counter. The
+// patients who book from home over WhatsApp never come to the counter — they walk
+// in holding a token, expecting their bill and their special-needs priority to be
+// sorted already. These two endpoints are that desk: one read that puts today's
+// arrivals (with where they came from and what they owe) on one screen, and one
+// write that grants the vulnerable-group priority reception used to only be able
+// to set while registering a walk-in.
+// ---------------------------------------------------------------------------
+
+// GET today's arrivals for this facility — WhatsApp/web bookings and walk-ins
+// side by side, each with its live billing state.
+router.get('/reception/arrivals', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const staffHosp = req.user.hospital || 'general-hospital';
+    const { source, special } = req.query;
+
+    // TENANT ISOLATION: only this facility's own tokens — a WhatsApp booking made
+    // at another hospital on the shared number must never appear on this desk.
+    const tokens = (await Token.find({ hospital: staffHosp }).populate('patient').populate('doctor')) || [];
+
+    // Date filtering happens in JS on purpose: `createdAt` is stored as an ISO
+    // string under the in-memory mock, where a raw `{ $gte: Date }` never matches.
+    const start = startOfToday().getTime();
+    let todays = tokens.filter((t) => t.createdAt && new Date(t.createdAt).getTime() >= start);
+
+    const invoices = (await Invoice.find({ hospital: staffHosp })) || [];
+    const billByToken = new Map();
+    for (const inv of invoices) {
+      if (!inv.token) continue;
+      billByToken.set(String(inv.token._id || inv.token), inv);
+    }
+
+    const isSpecial = (t) =>
+      t.tokenType === 'Emergency' || (t.priorityCategory && t.priorityCategory !== 'None');
+
+    if (source) todays = todays.filter((t) => (t.bookingSource || 'Reception') === source);
+    if (special === 'true') todays = todays.filter(isSpecial);
+
+    const arrivals = todays
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .map((t) => {
+        const bill = billByToken.get(String(t._id));
+        return {
+          tokenId: t._id,
+          tokenNumber: t.tokenNumber,
+          bookingSource: t.bookingSource || 'Reception',
+          tokenType: t.tokenType,
+          priorityCategory: t.priorityCategory || 'None',
+          status: t.status,
+          journeyStage: t.journeyStage,
+          symptoms: t.symptoms,
+          estimatedWaitTime: t.estimatedWaitTime || 0,
+          bookedAt: t.createdAt,
+          patient: t.patient
+            ? {
+                _id: t.patient._id,
+                name: t.patient.name,
+                phone: t.patient.phone,
+                age: t.patient.age,
+                gender: t.patient.gender
+              }
+            : null,
+          doctor: t.doctor
+            ? {
+                _id: t.doctor._id,
+                name: t.doctor.name,
+                department: t.doctor.department,
+                currentRoom: t.doctor.currentRoom
+              }
+            : null,
+          bill: bill
+            ? {
+                _id: bill._id,
+                invoiceNumber: bill.invoiceNumber,
+                status: bill.status,
+                totalAmount: bill.totalAmount || 0,
+                amountPaid: bill.amountPaid || 0,
+                balanceDue: bill.balanceDue || 0
+              }
+            : null
+        };
+      });
+
+    const summary = {
+      total: arrivals.length,
+      remote: arrivals.filter((a) => a.bookingSource !== 'Reception').length,
+      whatsapp: arrivals.filter((a) => a.bookingSource === 'WhatsApp').length,
+      walkIn: arrivals.filter((a) => a.bookingSource === 'Reception').length,
+      special: arrivals.filter((a) => a.tokenType === 'Emergency' || a.priorityCategory !== 'None').length,
+      unbilled: arrivals.filter((a) => !a.bill).length,
+      pendingAmount: arrivals.reduce((sum, a) => sum + (a.bill ? a.bill.balanceDue || 0 : 0), 0),
+      collectedToday: arrivals.reduce((sum, a) => sum + (a.bill ? a.bill.amountPaid || 0 : 0), 0)
+    };
+
+    res.json({ hospital: staffHosp, summary, arrivals });
+  } catch (error) {
+    logger.error('Error loading reception arrivals', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PUT set / clear the vulnerable-group priority on an existing token and re-seat
+// it in the doctor's queue accordingly.
+router.put('/tokens/:tokenId/priority', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+    const { priorityCategory } = req.body;
+    const staffHosp = req.user.hospital || 'general-hospital';
+
+    if (!['None', 'Senior', 'Pregnant', 'Disabled'].includes(priorityCategory)) {
+      return res.status(400).json({ message: 'priorityCategory must be None, Senior, Pregnant or Disabled' });
+    }
+
+    // Loaded WITHOUT populate: saving a populated doc persists the populated
+    // object in place of the ObjectId under the mock and breaks later lookups.
+    const token = await Token.findById(tokenId);
+    if (!token || token.hospital !== staffHosp) {
+      return res.status(404).json({ message: 'Token not found in this hospital tenant' });
+    }
+    if (['Completed', 'Absent'].includes(token.status)) {
+      return res.status(400).json({ message: 'This visit is already finished — priority cannot be changed' });
+    }
+
+    token.priorityCategory = priorityCategory;
+    await token.save();
+
+    // Re-seat in the queue: pull it out, then insert at the tier it now belongs
+    // to. A patient already inside the cabin keeps their place.
+    const queue = await Queue.findOne({ doctor: token.doctor });
+    if (queue && !(queue.currentToken && String(queue.currentToken) === String(tokenId))) {
+      queue.activeQueue = queue.activeQueue.filter((id) => String(id) !== String(tokenId));
+      await insertTokenByPriority(queue, token);
+      await queue.save();
+      await recalculateQueueTimes(token.doctor);
+    }
+
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId: token.doctor });
+      req.io.to(`doctor:${token.doctor}`).emit('queue-updated');
+      req.io.to(`hospital:${staffHosp}`).emit('queue-updated');
+    }
+
+    const updated = await Token.findById(tokenId).populate('patient').populate('doctor');
+
+    await logActivity(req.io, {
+      hospital: staffHosp,
+      type: 'token-priority-updated',
+      role: 'staff',
+      actor: req.user.username || 'Reception',
+      message:
+        priorityCategory === 'None'
+          ? `${updated.tokenNumber} moved back to the regular queue by reception.`
+          : `${updated.tokenNumber} given ${priorityCategory} priority by reception.`,
+      tokenNumber: updated.tokenNumber,
+      refId: updated._id,
+      severity: 'info'
+    });
+
+    res.json({
+      message:
+        priorityCategory === 'None'
+          ? `${updated.tokenNumber} is back in the regular queue.`
+          : `${updated.tokenNumber} moved ahead as ${priorityCategory} priority.`,
+      token: updated
+    });
+  } catch (error) {
+    logger.error('Error updating token priority', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });

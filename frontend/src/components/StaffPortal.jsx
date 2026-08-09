@@ -199,6 +199,17 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const [walkError, setWalkError] = useState('');
   const [walkSuccess, setWalkSuccess] = useState('');
 
+  // SPECIAL RECEPTION DESK — today's arrivals at this facility, with the ones who
+  // booked remotely (WhatsApp / the web assistant) called out. Those patients
+  // never pass the counter, so this is the only place reception can see them,
+  // grant a special-needs priority, and start their bill.
+  const [arrivals, setArrivals] = useState([]);
+  const [arrivalSummary, setArrivalSummary] = useState(null);
+  const [arrivalFilter, setArrivalFilter] = useState('remote');
+  const [arrivalBusyId, setArrivalBusyId] = useState('');
+  const [arrivalError, setArrivalError] = useState('');
+  const [arrivalNotice, setArrivalNotice] = useState('');
+
   // Live facility overview + cross-department alerts
   const [overview, setOverview] = useState(null);
   const [stockAlert, setStockAlert] = useState('');
@@ -293,6 +304,73 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   };
 
   const currency = billingConfig?.currencySymbol || '₹';
+
+  const loadArrivals = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/staff/reception/arrivals`, {
+        headers: { Authorization: `Bearer ${staffToken}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setArrivals(Array.isArray(data.arrivals) ? data.arrivals : []);
+      setArrivalSummary(data.summary || null);
+    } catch (err) {
+      console.error('Error loading reception arrivals:', err);
+    }
+  };
+
+  /**
+   * Grant (or clear) the vulnerable-group priority for a patient who booked from
+   * home. Reception could only do this while registering a walk-in, so a senior
+   * citizen or a disabled patient arriving on a WhatsApp token had no way to be
+   * moved up short of re-registering them at the counter.
+   */
+  const handleSetArrivalPriority = async (tokenId, priorityCategory) => {
+    setArrivalError('');
+    setArrivalNotice('');
+    setArrivalBusyId(tokenId);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/staff/tokens/${tokenId}/priority`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+        body: JSON.stringify({ priorityCategory })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not update the priority');
+      setArrivalNotice(data.message);
+      setTimeout(() => setArrivalNotice(''), 4000);
+      loadArrivals();
+      loadData();
+    } catch (err) {
+      setArrivalError(err.message);
+    } finally {
+      setArrivalBusyId('');
+    }
+  };
+
+  /**
+   * Start (or reopen) the bill for an arrival and drop reception straight into the
+   * billing counter with it selected — the endpoint creates the invoice at this
+   * facility's own rates on first call.
+   */
+  const handleBillArrival = async (tokenId) => {
+    setArrivalError('');
+    setArrivalBusyId(tokenId);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/token/${tokenId}`, {
+        headers: { Authorization: `Bearer ${staffToken}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not open the bill');
+      setSelectedInvoice(data);
+      await loadInvoices();
+      setActiveSidebarTab('billing');
+    } catch (err) {
+      setArrivalError(err.message);
+    } finally {
+      setArrivalBusyId('');
+    }
+  };
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault();
@@ -587,6 +665,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     loadOverview();
     loadInvoices();
     loadBillingConfig();
+    loadArrivals();
 
     socket.emit('join-room', 'queue:global');
 
@@ -625,7 +704,12 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     loadOverview();
     if (activeSidebarTab === 'reminders') loadReminders();
     if (activeSidebarTab === 'billing') loadInvoices();
+    if (activeSidebarTab === 'reception') loadArrivals();
   });
+  // `remote-arrival` is emitted into this facility's room only, the instant a
+  // patient finishes booking on WhatsApp — so the desk shows them while they are
+  // still reading the confirmation, without anyone refreshing anything.
+  useLiveRefresh(['remote-arrival', 'billing-updated', 'patient-discharged'], loadArrivals);
   useLiveRefresh(['journey-updated', 'lab-updated', 'doctor-status-update', 'stock-alert'], loadOverview);
   useLiveRefresh(['billing-updated', 'patient-discharged'], loadInvoices);
   // Another counter changing a price must not leave this screen quoting the old
@@ -878,6 +962,30 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       )
     : [];
 
+  // Which arrivals the desk is looking at. It opens on "remote" — the patients
+  // who booked from home and are the whole reason this section exists.
+  const isSpecialArrival = (a) => a.tokenType === 'Emergency' || a.priorityCategory !== 'None';
+  const visibleArrivals = arrivals.filter((a) => {
+    if (arrivalFilter === 'remote') return a.bookingSource !== 'Reception';
+    if (arrivalFilter === 'special') return isSpecialArrival(a);
+    if (arrivalFilter === 'unbilled') return !a.bill || a.bill.status !== 'Discharged';
+    return true;
+  });
+
+  const SOURCE_BADGE = {
+    WhatsApp: { icon: 'chat', className: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' },
+    'QR Scan': { icon: 'qr_code_2', className: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20' },
+    'Web Assistant': { icon: 'language', className: 'bg-sky-500/10 text-sky-600 border-sky-500/20' },
+    Reception: { icon: 'contact_page', className: 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20' }
+  };
+
+  const PRIORITY_OPTIONS = [
+    { value: 'Senior', label: 'Senior', icon: '👵' },
+    { value: 'Pregnant', label: 'Expecting', icon: '🤰' },
+    { value: 'Disabled', label: 'Special needs', icon: '♿' },
+    { value: 'None', label: 'Regular', icon: '•' }
+  ];
+
   // Filter invoices list
   const filteredInvoices = Array.isArray(invoices)
     ? invoices.filter((inv) => {
@@ -914,6 +1022,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           <div className="p-4 space-y-1">
             {[
               { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', tab: 'dashboard' },
+              { id: 'reception', label: 'Special Reception Desk', icon: 'support_agent', tab: 'reception' },
               { id: 'billing', label: 'Billing & Discharge', icon: 'payments', tab: 'billing' },
               { id: 'patients', label: 'Patients', icon: 'group', tab: 'patients' },
               { id: 'queues', label: 'Queues', icon: 'queue', tab: 'monitor' },
@@ -932,6 +1041,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     setActiveSidebarTab(item.tab);
                     if (item.tab === 'reminders') loadReminders();
                     if (item.tab === 'billing') loadInvoices();
+                    if (item.tab === 'reception') loadArrivals();
                   }}
                   className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
                     isActive
@@ -986,7 +1096,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   ? 'Follow-ups / Reminders'
                   : activeSidebarTab === 'billing'
                     ? 'Reception Patient Billing & Discharge Counter'
-                    : activeSidebarTab + ' Workspace'}
+                    : activeSidebarTab === 'reception'
+                      ? 'Special Reception Desk — Online Arrivals & Billing'
+                      : activeSidebarTab + ' Workspace'}
             </h2>
             <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
               {staffUser?.counterNumber || 'Reception Desk'}
@@ -1009,6 +1121,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         <div className="md:hidden flex items-center space-x-2 overflow-x-auto px-6 py-3 bg-[var(--card-bg)] border-b border-[var(--border-color)]/30 sticky top-[62px] z-20 no-scrollbar">
           {[
             { id: 'dashboard', label: 'Overview', tab: 'dashboard' },
+            { id: 'reception', label: 'Special Reception', tab: 'reception' },
             { id: 'billing', label: 'Billing & Discharge', tab: 'billing' },
             { id: 'patients', label: 'Patients Directory', tab: 'patients' },
             { id: 'queues', label: 'Live Queue Monitor', tab: 'monitor' },
@@ -1020,6 +1133,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 setActiveSidebarTab(item.tab);
                 if (item.tab === 'reminders') loadReminders();
                 if (item.tab === 'billing') loadInvoices();
+                if (item.tab === 'reception') loadArrivals();
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
                 activeSidebarTab === item.tab
@@ -2003,6 +2117,261 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* TAB: SPECIAL RECEPTION DESK — patients who booked from home.
+              A WhatsApp booking arrives with nobody standing at the counter: no
+              one to judge that the patient is 78 and should go ahead of the line,
+              and no one to start their bill. This desk is where reception works
+              those arrivals — the facility's own, and only its own. */}
+          {activeSidebarTab === 'reception' && (
+            <div className="space-y-6 animate-fade-in text-left">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 shadow-sm">
+                <div>
+                  <h3 className="text-lg font-extrabold text-[var(--text-color)] tracking-tight flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[24px] text-emerald-600">
+                      support_agent
+                    </span>
+                    <span>Special Reception Desk</span>
+                  </h3>
+                  <p className="text-xs text-[var(--text-secondary)] font-medium mt-0.5">
+                    Every patient who booked at{' '}
+                    <span className="font-bold text-emerald-600">
+                      {billingConfig?.displayName || staffUser?.hospital || 'this facility'}
+                    </span>{' '}
+                    today — including WhatsApp bookings made from home. Give special-needs priority and open
+                    their bill without re-registering them.
+                  </p>
+                </div>
+
+                <button
+                  onClick={loadArrivals}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1"
+                >
+                  <span className="material-symbols-outlined text-[16px]">refresh</span>
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              {arrivalError && (
+                <div className="bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">error</span>
+                  <span className="flex-1">{arrivalError}</span>
+                  <button
+                    onClick={() => setArrivalError('')}
+                    className="text-[10px] font-black opacity-60 hover:opacity-100"
+                  >
+                    DISMISS
+                  </button>
+                </div>
+              )}
+              {arrivalNotice && (
+                <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                  <span>{arrivalNotice}</span>
+                </div>
+              )}
+
+              {/* Today at a glance */}
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                {[
+                  {
+                    label: 'Arrivals today',
+                    value: arrivalSummary?.total ?? 0,
+                    tone: 'text-[var(--text-color)]'
+                  },
+                  {
+                    label: 'Booked on WhatsApp',
+                    value: arrivalSummary?.whatsapp ?? 0,
+                    tone: 'text-emerald-600'
+                  },
+                  { label: 'Booked at counter', value: arrivalSummary?.walkIn ?? 0, tone: 'text-sky-600' },
+                  {
+                    label: 'Priority / emergency',
+                    value: arrivalSummary?.special ?? 0,
+                    tone: 'text-amber-600'
+                  },
+                  { label: 'No bill opened', value: arrivalSummary?.unbilled ?? 0, tone: 'text-rose-500' },
+                  {
+                    label: 'Collected today',
+                    value: `${currency}${arrivalSummary?.collectedToday ?? 0}`,
+                    tone: 'text-teal-600'
+                  }
+                ].map((stat) => (
+                  <div
+                    key={stat.label}
+                    className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-4 shadow-sm"
+                  >
+                    <p className={`text-2xl font-black tracking-tight ${stat.tone}`}>{stat.value}</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mt-0.5">
+                      {stat.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Filters */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {[
+                  { id: 'remote', label: 'Booked from home' },
+                  { id: 'special', label: 'Priority & emergency' },
+                  { id: 'unbilled', label: 'Bill not settled' },
+                  { id: 'all', label: 'Everyone today' }
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setArrivalFilter(f.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                      arrivalFilter === f.id
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border-[var(--border-color)]/40 hover:text-[var(--text-color)]'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+                <span className="text-[10px] bg-emerald-500/10 text-emerald-600 px-2 py-1 rounded-full font-bold ml-auto">
+                  Live — new WhatsApp bookings appear here on their own
+                </span>
+              </div>
+
+              {/* Arrivals */}
+              {visibleArrivals.length === 0 ? (
+                <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl py-16 text-center shadow-sm">
+                  <span className="material-symbols-outlined text-[36px] text-[var(--text-secondary)]">
+                    inbox
+                  </span>
+                  <p className="text-xs text-[var(--text-secondary)] font-semibold mt-2">
+                    {arrivalFilter === 'remote'
+                      ? 'No online bookings yet today. A patient who says "hi" on WhatsApp and picks this hospital shows up here instantly.'
+                      : 'Nothing matches this filter today.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {visibleArrivals.map((a) => {
+                    const badge = SOURCE_BADGE[a.bookingSource] || SOURCE_BADGE.Reception;
+                    const busy = arrivalBusyId === a.tokenId;
+                    return (
+                      <div
+                        key={a.tokenId}
+                        className={`bg-[var(--card-bg)] border rounded-2xl p-4 shadow-sm space-y-3 ${
+                          a.tokenType === 'Emergency'
+                            ? 'border-rose-500/50'
+                            : a.priorityCategory !== 'None'
+                              ? 'border-amber-500/40'
+                              : 'border-[var(--border-color)]/30'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">
+                                {a.tokenNumber}
+                              </span>
+                              <span
+                                className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider border flex items-center gap-1 ${badge.className}`}
+                              >
+                                <span className="material-symbols-outlined text-[12px]">{badge.icon}</span>
+                                {a.bookingSource}
+                              </span>
+                              {a.tokenType === 'Emergency' && (
+                                <span className="text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-rose-500/10 text-rose-600 border border-rose-500/20">
+                                  🚨 Emergency
+                                </span>
+                              )}
+                              {a.priorityCategory !== 'None' && (
+                                <span className="text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                                  {a.priorityCategory} priority
+                                </span>
+                              )}
+                            </div>
+                            <h4 className="font-extrabold text-sm text-[var(--text-color)] mt-1 truncate">
+                              {a.patient?.name || 'Patient'}
+                              <span className="text-[var(--text-secondary)] font-semibold text-xs">
+                                {a.patient?.age ? ` · ${a.patient.age}` : ''}
+                                {a.patient?.gender ? ` · ${a.patient.gender}` : ''}
+                              </span>
+                            </h4>
+                            <p className="text-[10px] text-[var(--text-secondary)] font-medium truncate">
+                              {a.patient?.phone} · {a.doctor?.name || 'Doctor'} ({a.doctor?.department}) ·{' '}
+                              {a.doctor?.currentRoom || 'Cabin'}
+                            </p>
+                            <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-1 line-clamp-2">
+                              “{a.symptoms}”
+                            </p>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <span className="text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-[var(--bg-color)] border border-[var(--border-color)]/40 text-[var(--text-secondary)]">
+                              {a.status}
+                            </span>
+                            <p className="text-[10px] text-[var(--text-secondary)] font-semibold mt-1">
+                              {a.bookedAt ? new Date(a.bookedAt).toLocaleTimeString() : ''}
+                            </p>
+                            <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
+                              ~{a.estimatedWaitTime} min wait
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Special-needs priority — the counter decision that a
+                            remote booking never gets made for it. */}
+                        <div className="flex items-center gap-1.5 flex-wrap border-t border-[var(--border-color)]/30 pt-3">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mr-1">
+                            Priority
+                          </span>
+                          {PRIORITY_OPTIONS.map((p) => (
+                            <button
+                              key={p.value}
+                              disabled={busy || a.priorityCategory === p.value}
+                              onClick={() => handleSetArrivalPriority(a.tokenId, p.value)}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all disabled:opacity-100 ${
+                                a.priorityCategory === p.value
+                                  ? 'bg-amber-500/15 text-amber-600 border-amber-500/30 cursor-default'
+                                  : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border-[var(--border-color)]/40 hover:text-[var(--text-color)] hover:border-amber-500/40 disabled:opacity-40'
+                              }`}
+                            >
+                              {p.icon} {p.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Billing */}
+                        <div className="flex items-center justify-between gap-3 border-t border-[var(--border-color)]/30 pt-3">
+                          <div className="text-[10px] font-semibold text-[var(--text-secondary)]">
+                            {a.bill ? (
+                              <>
+                                <span className="font-black text-teal-600">{a.bill.invoiceNumber}</span> ·{' '}
+                                {a.bill.status} · Total {currency}
+                                {a.bill.totalAmount}
+                                {a.bill.balanceDue > 0 && (
+                                  <span className="text-rose-500 font-black">
+                                    {' '}
+                                    · Due {currency}
+                                    {a.bill.balanceDue}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-rose-500 font-bold">No bill opened yet</span>
+                            )}
+                          </div>
+                          <button
+                            disabled={busy}
+                            onClick={() => handleBillArrival(a.tokenId)}
+                            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold text-[11px] rounded-lg shadow-sm transition-all flex items-center gap-1 shrink-0"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">receipt_long</span>
+                            <span>{a.bill ? 'Open bill' : 'Start bill'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

@@ -178,17 +178,23 @@ async function say(sessionId, message) {
   };
 
   session = 'wa_919000000001';
-  await waSay(session, 'hi');
-  reply = await waSay(session, 'English');
-  check('patient is asked which hospital', /Which hospital or clinic/i.test(reply.flat), reply.flat);
+  reply = await waSay(session, 'hi');
+  check('"hi" lists the hospitals straight away', /Which hospital or clinic/i.test(reply.flat), reply.flat);
   check(
-    'both facilities are listed',
+    'every registered facility is listed',
     /City General/.test(reply.flat) && /BrightDental/.test(reply.flat),
     reply.flat
   );
 
   reply = await waSay(session, 'gaya');
   check('search by city selects the facility', /BrightDental Clinic/.test(reply.flat), reply.flat);
+  check(
+    'language is asked after the facility, branded with it',
+    /select your preferred language/i.test(reply.flat) && /BrightDental/.test(reply.flat),
+    reply.flat
+  );
+
+  reply = await waSay(session, 'English');
   check('and the menu follows', /select an option/i.test(reply.flat), reply.flat);
 
   // New patient at this facility, so registration runs; the WhatsApp number is
@@ -213,15 +219,27 @@ async function say(sessionId, message) {
     Boolean(dentalToken),
     models.Token._rows.map((t) => t.hospital)
   );
+  // What makes the booking show up on the RIGHT reception desk: the facility the
+  // patient picked, tagged as a remote WhatsApp arrival rather than a walk-in.
+  check(
+    'token is tagged as a WhatsApp arrival',
+    dentalToken && dentalToken.bookingSource === 'WhatsApp',
+    dentalToken && dentalToken.bookingSource
+  );
 
   session = 'wa_919000000002';
   await waSay(session, 'hi');
-  await waSay(session, 'English');
   reply = await waSay(session, '2');
   check('numeric pick works', /BrightDental|City General/.test(reply.flat), reply.flat);
 
   reply = await waSay(session, 'hospital');
   check('HOSPITAL command reopens the picker', /Which hospital or clinic/i.test(reply.flat), reply.flat);
+
+  // A returning patient greeting the shared number again gets the full list back —
+  // they may want a different hospital today.
+  reply = await waSay('wa_919000000001', 'hi');
+  check('a later "hi" re-opens the hospital list', /Which hospital or clinic/i.test(reply.flat), reply.flat);
+  check('with the last facility offered first', /BrightDental/.test(reply.flat), reply.flat);
 
   section('The web widget never sees the picker');
   session = 'web_facility';
