@@ -248,6 +248,23 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
     }
   };
 
+  // Declared alongside the other loaders — it is read during render by the
+  // useLiveRefresh subscription below, so a `const` defined further down the
+  // component would be in its temporal dead zone and throw on every render.
+  const loadRefills = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/refills`, {
+        headers: { Authorization: `Bearer ${doctorToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setRefills(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const markResultReviewed = async (tokenId) => {
     try {
       await fetch(`${BACKEND_URL}/api/v1/doctor/lab-results/${tokenId}/review`, {
@@ -361,20 +378,6 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
       if (res.ok) {
         setAvailability(status);
         loadQueue();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const loadRefills = async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/refills`, {
-        headers: { Authorization: `Bearer ${doctorToken}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) setRefills(data);
       }
     } catch (err) {
       console.error(err);
