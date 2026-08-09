@@ -197,16 +197,32 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     }
   };
 
+  const handlePdfUpload = (tokenId, testName, file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUri = e.target.result;
+      setField(tokenId, testName, 'reportPdf', dataUri);
+      setField(tokenId, testName, 'reportFileName', file.name);
+      if (!results[keyOf(tokenId, testName)]?.resultValue) {
+        setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleCompleteTest = async (tokenId, testName) => {
     const entry = results[keyOf(tokenId, testName)] || {};
     try {
       const data = await api.post(`/lab/tests/${tokenId}/complete`, {
         testName,
-        resultValue: entry.resultValue || '',
+        resultValue: entry.resultValue || (entry.reportPdf ? 'PDF Report Attached' : 'Normal'),
         unit: entry.unit || '',
         normalRange: entry.normalRange || '',
         abnormal: Boolean(entry.abnormal),
-        remarks: entry.remarks || 'Completed successfully.'
+        remarks: entry.remarks || 'Completed successfully.',
+        reportPdf: entry.reportPdf || '',
+        reportFileName: entry.reportFileName || ''
       });
       // Tell the bench what just happened downstream — the doctor has already
       // been notified and the patient has been told to walk back.
@@ -495,6 +511,39 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             <span className="material-symbols-outlined text-[14px]">warning</span>
                             Abnormal
                           </label>
+                        </div>
+
+                        {/* PDF Upload Option */}
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 p-2.5 bg-[var(--bg-color)]/60 rounded-xl border border-[var(--border-color)]/40 text-xs">
+                          <label className="flex items-center space-x-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg cursor-pointer transition-all shrink-0">
+                            <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+                            <span>
+                              {entry.reportFileName ? 'Change PDF Report' : 'Attach PDF Test Report'}
+                            </span>
+                            <input
+                              type="file"
+                              accept="application/pdf"
+                              className="hidden"
+                              onChange={(e) =>
+                                handlePdfUpload(selectedToken._id, test.testName, e.target.files[0])
+                              }
+                            />
+                          </label>
+                          {entry.reportFileName && (
+                            <span className="text-[11px] font-extrabold text-teal-600 bg-teal-500/10 px-2.5 py-1 rounded-lg border border-teal-500/20 truncate max-w-xs">
+                              📄 {entry.reportFileName}
+                            </span>
+                          )}
+                          {test.reportPdf && !entry.reportPdf && (
+                            <a
+                              href={test.reportPdf}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] font-extrabold text-sky-600 bg-sky-500/10 px-2.5 py-1 rounded-lg border border-sky-500/20 underline"
+                            >
+                              📄 View Existing PDF Report
+                            </a>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-3">

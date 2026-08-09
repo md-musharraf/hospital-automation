@@ -2,19 +2,28 @@ const Token = require('../models/Token');
 const logger = require('./logger');
 
 /**
- * Generates a collision-free unique token number across ALL hospital tenants and legacy indexes.
- * Checks global max token number so numbers like T-101, T-102 never collide across hospitals or indexes.
+ * Generates a daily resetting token number (T-1, T-2, T-3...) for current date.
+ * Filtered by today's date (createdAt >= startOfDay), ensuring every new day tokens
+ * start at 1 while keeping ALL historical patient data, visits, and tokens 100% safe in DB.
  *
  * @param {string} [hospitalId] Optional hospital tenant ID
- * @returns {Promise<string>} Unique token number, e.g. "T-104"
+ * @returns {Promise<string>} Daily token number, e.g. "T-1", "T-2"
  */
 async function generateUniqueTokenNumber(hospitalId) {
   try {
-    // Search ALL tokens in database to guarantee global uniqueness across all tenants and legacy indexes
-    const existingTokens = await Token.find({}).select('tokenNumber');
-    let maxNum = 100;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
 
-    for (const t of existingTokens) {
+    const query = { createdAt: { $gte: startOfDay } };
+    if (hospitalId) {
+      query.hospital = hospitalId;
+    }
+
+    // Query tokens created TODAY for this hospital
+    const todayTokens = await Token.find(query).select('tokenNumber');
+    let maxNum = 0;
+
+    for (const t of todayTokens) {
       if (t && t.tokenNumber) {
         const match = t.tokenNumber.match(/T-(\d+)/i) || t.tokenNumber.match(/\d+/);
         if (match) {
@@ -29,24 +38,31 @@ async function generateUniqueTokenNumber(hospitalId) {
     let nextNum = maxNum + 1;
     let tokenNumber = `T-${nextNum}`;
 
-    // Global collision check across ALL tokens in DB
-    let exists = await Token.findOne({ tokenNumber });
+    // Collision check for today
+    let exists = await Token.findOne({
+      hospital: hospitalId || 'general-hospital',
+      tokenNumber,
+      createdAt: { $gte: startOfDay }
+    });
     while (exists) {
       nextNum++;
       tokenNumber = `T-${nextNum}`;
-      exists = await Token.findOne({ tokenNumber });
+      exists = await Token.findOne({
+        hospital: hospitalId || 'general-hospital',
+        tokenNumber,
+        createdAt: { $gte: startOfDay }
+      });
     }
 
     return tokenNumber;
   } catch (err) {
-    logger.error('Error generating unique token number', { err: err });
-    // Fallback guaranteed unique string
+    logger.error('Error generating daily token number', { err: err });
     return `T-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 90 + 10)}`;
   }
 }
 
 /**
- * Saves a Token document with automatic retry & fallback handling for E11000 duplicate key errors.
+ * Saves a Token document with automatic retry for duplicate key handling.
  *
  * @param {object} tokenDoc Mongoose Token document instance
  * @returns {Promise<object>} Saved token document

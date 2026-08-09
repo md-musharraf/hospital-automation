@@ -2009,6 +2009,15 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           </button>
 
                           <button
+                            onClick={() => setShowReceiptModal(true)}
+                            className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                            title="Generate and print vector PDF invoice on-demand"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+                            <span>PDF Invoice</span>
+                          </button>
+
+                          <button
                             onClick={() => {
                               setDischargeAmountPaid(selectedInvoice.balanceDue.toString());
                               setShowDischargeModal(true);

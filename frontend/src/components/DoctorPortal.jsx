@@ -1001,23 +1001,35 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                               <span className="font-bold text-[11px] text-[var(--text-color)]">
                                 {t.testName}
                               </span>
-                              <span
-                                className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
-                                  t.status === 'Completed'
-                                    ? t.abnormal
-                                      ? 'bg-rose-500/15 text-rose-500'
-                                      : 'bg-emerald-500/15 text-emerald-500'
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
+                                    t.status === 'Completed'
+                                      ? t.abnormal
+                                        ? 'bg-rose-500/15 text-rose-500'
+                                        : 'bg-emerald-500/15 text-emerald-500'
+                                      : t.status === 'Collected'
+                                        ? 'bg-sky-500/15 text-sky-500'
+                                        : 'bg-amber-500/15 text-amber-500'
+                                  }`}
+                                >
+                                  {t.status === 'Completed'
+                                    ? `${t.resultValue || 'Done'}${t.unit ? ' ' + t.unit : ''}${t.abnormal ? ' ⚠️' : ''}`
                                     : t.status === 'Collected'
-                                      ? 'bg-sky-500/15 text-sky-500'
-                                      : 'bg-amber-500/15 text-amber-500'
-                                }`}
-                              >
-                                {t.status === 'Completed'
-                                  ? `${t.resultValue || 'Done'}${t.unit ? ' ' + t.unit : ''}${t.abnormal ? ' ⚠️' : ''}`
-                                  : t.status === 'Collected'
-                                    ? 'Sample taken'
-                                    : 'Awaiting sample'}
-                              </span>
+                                      ? 'Sample taken'
+                                      : 'Awaiting sample'}
+                                </span>
+                                {t.reportPdf && (
+                                  <a
+                                    href={t.reportPdf}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[9px] font-extrabold text-teal-600 bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20 underline hover:bg-teal-500 hover:text-white transition-all"
+                                  >
+                                    📄 View PDF Report
+                                  </a>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>

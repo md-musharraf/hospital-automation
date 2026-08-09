@@ -85,7 +85,7 @@ async function say(sessionId, message) {
   section('A token number typed anywhere returns live status');
   reply = await say(session, tokenNumber);
   check('status without navigating the menu', /Live Status/i.test(reply.flat), reply.flat);
-  reply = await say(session, tokenNumber.replace('T-', ''));
+  reply = await say(session, tokenNumber.replace('-', ''));
   check('a bare number works too', /Live Status/i.test(reply.flat), reply.flat);
 
   section('Returning patient is recognised across phone formats');

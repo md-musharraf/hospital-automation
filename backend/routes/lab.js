@@ -219,11 +219,14 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
     }
 
     test.status = 'Completed';
-    test.resultValue = resultValue || test.resultValue;
+    test.resultValue =
+      resultValue || test.resultValue || (req.body.reportPdf ? 'PDF Report Uploaded' : 'Normal');
     test.unit = unit || test.unit;
     test.normalRange = normalRange || test.normalRange;
     test.abnormal = Boolean(abnormal);
-    test.remarks = remarks || test.remarks || 'No remarks provided';
+    test.remarks = remarks || test.remarks || 'Report completed';
+    if (req.body.reportPdf) test.reportPdf = req.body.reportPdf;
+    if (req.body.reportFileName) test.reportFileName = req.body.reportFileName;
     test.completedBy = req.user.username || 'Lab';
     test.completedAt = new Date();
     token.markModified && token.markModified('labTests');

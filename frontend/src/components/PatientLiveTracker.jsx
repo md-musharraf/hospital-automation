@@ -286,6 +286,47 @@ export default function PatientLiveTracker() {
                 ⚠️ One of your results is outside the normal range — please show it to your doctor.
               </p>
             )}
+
+            {/* Lab PDF Test Reports Section */}
+            {Array.isArray(token.labTests) && token.labTests.some((t) => t.status === 'Completed') && (
+              <div className="mt-3 pt-3 border-t border-[var(--border-color)]/30 space-y-2 text-left">
+                <p className="text-[10px] font-black uppercase text-teal-600 tracking-wider">
+                  🧪 Your Lab Test Reports (PDF)
+                </p>
+                <div className="space-y-1.5">
+                  {token.labTests
+                    .filter((t) => t.status === 'Completed')
+                    .map((t, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2 rounded-xl bg-[var(--bg-color)] border border-[var(--border-color)]/40 text-xs"
+                      >
+                        <div>
+                          <p className="font-bold text-[var(--text-color)]">{t.testName}</p>
+                          <p className="text-[10px] text-[var(--text-secondary)]">
+                            {t.resultValue || 'Completed'}
+                          </p>
+                        </div>
+                        {t.reportPdf ? (
+                          <a
+                            href={t.reportPdf}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white text-[10px] font-bold rounded-lg shadow-sm flex items-center space-x-1"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">picture_as_pdf</span>
+                            <span>Download PDF</span>
+                          </a>
+                        ) : (
+                          <span className="text-[9px] text-emerald-600 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">
+                            Done
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
