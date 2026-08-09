@@ -121,13 +121,11 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
       req.io.to('queue:global').emit('queue-updated', { doctorId });
       req.io.to(`doctor:${doctorId}`).emit('queue-updated');
       // Trigger voice call or screen alert room
-      req.io
-        .to(`patient:${token._id}`)
-        .emit('token-called', {
-          status: 'Active',
-          roomName: req.user.currentRoom || 'Cabin A',
-          tokenNumber: token.tokenNumber
-        });
+      req.io.to(`patient:${token._id}`).emit('token-called', {
+        status: 'Active',
+        roomName: req.user.currentRoom || 'Cabin A',
+        tokenNumber: token.tokenNumber
+      });
     }
 
     // Facility-wide: reception and the waiting-room screens see the call live,
@@ -954,6 +952,140 @@ router.post('/refills/:id/decide', authenticateToken, ensureDoctor, async (req, 
     }
   } catch (err) {
     logger.error('Error deciding refill', { err: err });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST reschedule or transfer patient token
+router.post('/queue/reschedule', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const hospital = req.user.hospital || 'general-hospital';
+    const { tokenId, newDoctorId, revisitDays, reason } = req.body;
+
+    const queue = await Queue.findOne({ doctor: doctorId });
+    const targetTokenId = tokenId || (queue && queue.currentToken);
+
+    if (!targetTokenId) {
+      return res.status(400).json({ message: 'No patient token specified or active in cabin' });
+    }
+
+    const token = await Token.findById(targetTokenId).populate('patient').populate('doctor');
+    if (!token) {
+      return res.status(404).json({ message: 'Token not found' });
+    }
+
+    const oldDoctorId = token.doctor ? token.doctor._id : doctorId;
+    let targetDoctor = token.doctor;
+
+    // Check if transferring to another doctor
+    if (newDoctorId && String(newDoctorId) !== String(oldDoctorId)) {
+      targetDoctor = await Doctor.findById(newDoctorId);
+      if (!targetDoctor) {
+        return res.status(404).json({ message: 'Target doctor not found' });
+      }
+
+      // Remove from current doctor's activeQueue and currentToken
+      if (queue) {
+        if (queue.currentToken && String(queue.currentToken) === String(targetTokenId)) {
+          queue.currentToken = null;
+        }
+        queue.activeQueue = queue.activeQueue.filter((id) => String(id) !== String(targetTokenId));
+        await queue.save();
+        await recalculateQueueTimes(oldDoctorId);
+      }
+
+      // Insert into new doctor's queue
+      let newQueue = await Queue.findOne({ doctor: newDoctorId });
+      if (!newQueue) {
+        newQueue = new Queue({ doctor: newDoctorId, activeQueue: [] });
+      }
+      newQueue.activeQueue.push(token._id);
+      await newQueue.save();
+
+      token.doctor = newDoctorId;
+      await recalculateQueueTimes(newDoctorId);
+    } else {
+      // Same doctor, remove from active cabin if it was currentToken
+      if (queue && queue.currentToken && String(queue.currentToken) === String(targetTokenId)) {
+        queue.currentToken = null;
+        await queue.save();
+        await recalculateQueueTimes(oldDoctorId);
+      }
+    }
+
+    // Handle revisit / reschedule date
+    let scheduledDate = null;
+    if (revisitDays !== undefined && revisitDays !== null && parseInt(revisitDays) >= 0) {
+      const days = parseInt(revisitDays);
+      scheduledDate = new Date();
+      scheduledDate.setDate(scheduledDate.getDate() + days);
+      scheduledDate.setHours(9, 0, 0, 0);
+
+      const reminder = new Reminder({
+        patient: token.patient._id,
+        doctor: targetDoctor._id,
+        token: token._id,
+        hospital,
+        scheduledDate,
+        revisitDays: days,
+        status: 'Pending',
+        message: `Scheduled re-visit for ${token.patient.name || 'Patient'} with ${targetDoctor.name || 'Doctor'} on ${scheduledDate.toLocaleDateString()}.${reason ? ` Reason: ${reason}` : ''}`
+      });
+      await reminder.save();
+    }
+
+    token.status = 'Waiting';
+    setStage(token, 'Rescheduled', req.user.username || 'Doctor');
+    await token.save();
+
+    // Broadcast updates to all rooms
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId: oldDoctorId });
+      req.io.to(`doctor:${oldDoctorId}`).emit('queue-updated');
+      if (newDoctorId) {
+        req.io.to(`doctor:${newDoctorId}`).emit('queue-updated');
+      }
+      req.io.to(`hospital:${hospital}`).emit('queue-updated');
+      req.io.to(`patient:${token._id}`).emit('token-called', {
+        status: 'Rescheduled',
+        doctorName: targetDoctor.name,
+        roomName: targetDoctor.currentRoom || 'Cabin',
+        scheduledDate: scheduledDate ? scheduledDate.toLocaleDateString() : null
+      });
+    }
+
+    // Send WhatsApp notification to patient
+    if (token.patient && token.patient.phone) {
+      const msg =
+        `📅 Appointment Update for ${token.patient.name || 'Patient'}: Your token ${token.tokenNumber} has been ${newDoctorId ? `transferred to ${targetDoctor.name}` : 'rescheduled'}` +
+        `${scheduledDate ? ` for ${scheduledDate.toLocaleDateString()}` : ''}.${reason ? ` Reason: ${reason}` : ''}\n` +
+        `✅ Details updated on your live tracker.`;
+      try {
+        await sendWhatsAppNotification(token.patient.phone, msg);
+      } catch (waErr) {
+        logger.error('Reschedule WhatsApp notification error', { err: waErr });
+      }
+    }
+
+    await announceJourney(req.io, {
+      hospital,
+      token,
+      stage: 'Rescheduled',
+      role: 'doctor',
+      actor: req.user.username || 'Doctor',
+      type: 'token-rescheduled',
+      message: `${token.tokenNumber} ${newDoctorId ? `transferred to ${targetDoctor.name}` : 'rescheduled'}${scheduledDate ? ` for ${scheduledDate.toLocaleDateString()}` : ''}.`,
+      severity: 'info'
+    });
+
+    res.json({
+      message: `Token ${token.tokenNumber} successfully ${newDoctorId ? `transferred to ${targetDoctor.name}` : 'rescheduled'}.`,
+      token,
+      targetDoctor: { id: targetDoctor._id, name: targetDoctor.name }
+    });
+  } catch (error) {
+    logger.error('Error rescheduling patient token', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });

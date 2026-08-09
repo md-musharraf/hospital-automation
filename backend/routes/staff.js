@@ -235,16 +235,14 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       severity: createdToken.tokenType === 'Emergency' ? 'critical' : 'info'
     });
 
-    res
-      .status(201)
-      .json({
-        message: 'Walk-in token generated successfully',
-        token: createdToken,
-        whatsapp,
-        autoTriaged,
-        triagedDepartment,
-        priorityCategory: resolvedPriority || 'None'
-      });
+    res.status(201).json({
+      message: 'Walk-in token generated successfully',
+      token: createdToken,
+      whatsapp,
+      autoTriaged,
+      triagedDepartment,
+      priorityCategory: resolvedPriority || 'None'
+    });
   } catch (error) {
     logger.error('Error booking walk-in', { err: error });
     res.status(500).json({ message: 'Server error' });
@@ -507,11 +505,9 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
     if (phone && phone !== patient.phone) {
       const phoneConflict = await Patient.findOne({ phone, hospital: staffHosp });
       if (phoneConflict) {
-        return res
-          .status(400)
-          .json({
-            message: 'Phone number is already associated with another patient in this hospital tenant'
-          });
+        return res.status(400).json({
+          message: 'Phone number is already associated with another patient in this hospital tenant'
+        });
       }
       patient.phone = phone;
     }
@@ -524,6 +520,117 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
     res.json({ message: 'Patient details updated successfully', patient });
   } catch (error) {
     logger.error('Error updating patient', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PUT reschedule or reassign patient token from Staff/Reception
+router.put('/tokens/:tokenId/reschedule', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+    const { newDoctorId, revisitDays, reason } = req.body;
+    const staffHosp = req.user.hospital || 'general-hospital';
+
+    const token = await Token.findById(tokenId).populate('patient').populate('doctor');
+    if (!token || token.hospital !== staffHosp) {
+      return res.status(404).json({ message: 'Token not found in this hospital tenant' });
+    }
+
+    const oldDoctorId = token.doctor ? token.doctor._id : null;
+    let targetDoctor = token.doctor;
+
+    // Check if transferring to another doctor
+    if (newDoctorId && String(newDoctorId) !== String(oldDoctorId)) {
+      targetDoctor = await Doctor.findById(newDoctorId);
+      if (!targetDoctor || targetDoctor.hospital !== staffHosp) {
+        return res.status(404).json({ message: 'Target doctor not found in this hospital tenant' });
+      }
+
+      // Remove from old doctor queue
+      if (oldDoctorId) {
+        const oldQueue = await Queue.findOne({ doctor: oldDoctorId });
+        if (oldQueue) {
+          if (oldQueue.currentToken && String(oldQueue.currentToken) === String(tokenId)) {
+            oldQueue.currentToken = null;
+          }
+          oldQueue.activeQueue = oldQueue.activeQueue.filter((id) => String(id) !== String(tokenId));
+          await oldQueue.save();
+          await recalculateQueueTimes(oldDoctorId);
+        }
+      }
+
+      // Insert into new doctor queue
+      let newQueue = await Queue.findOne({ doctor: newDoctorId });
+      if (!newQueue) {
+        newQueue = new Queue({ doctor: newDoctorId, activeQueue: [] });
+      }
+      newQueue.activeQueue.push(token._id);
+      await newQueue.save();
+
+      token.doctor = newDoctorId;
+      await recalculateQueueTimes(newDoctorId);
+    }
+
+    // Handle scheduled date
+    let scheduledDate = null;
+    if (revisitDays !== undefined && revisitDays !== null && parseInt(revisitDays) >= 0) {
+      const days = parseInt(revisitDays);
+      scheduledDate = new Date();
+      scheduledDate.setDate(scheduledDate.getDate() + days);
+      scheduledDate.setHours(9, 0, 0, 0);
+
+      const reminder = new Reminder({
+        patient: token.patient._id,
+        doctor: targetDoctor._id,
+        token: token._id,
+        hospital: staffHosp,
+        scheduledDate,
+        revisitDays: days,
+        status: 'Pending',
+        message: `Scheduled re-visit for ${token.patient.name || 'Patient'} with ${targetDoctor.name || 'Doctor'} on ${scheduledDate.toLocaleDateString()}.${reason ? ` Reason: ${reason}` : ''}`
+      });
+      await reminder.save();
+    }
+
+    token.status = 'Waiting';
+    setStage(token, 'Rescheduled', req.user.username || 'Reception');
+    await token.save();
+
+    // Broadcast updates
+    if (req.io) {
+      if (oldDoctorId) {
+        req.io.to('queue:global').emit('queue-updated', { doctorId: oldDoctorId });
+        req.io.to(`doctor:${oldDoctorId}`).emit('queue-updated');
+      }
+      if (newDoctorId) {
+        req.io.to(`doctor:${newDoctorId}`).emit('queue-updated');
+      }
+      req.io.to(`hospital:${staffHosp}`).emit('queue-updated');
+      req.io.to(`patient:${token._id}`).emit('token-called', {
+        status: 'Rescheduled',
+        doctorName: targetDoctor ? targetDoctor.name : 'Doctor',
+        roomName: targetDoctor ? targetDoctor.currentRoom || 'Cabin' : 'Cabin',
+        scheduledDate: scheduledDate ? scheduledDate.toLocaleDateString() : null
+      });
+    }
+
+    await announceJourney(req.io, {
+      hospital: staffHosp,
+      token,
+      stage: 'Rescheduled',
+      role: 'staff',
+      actor: req.user.username || 'Reception',
+      type: 'token-rescheduled',
+      message: `${token.tokenNumber} ${newDoctorId ? `transferred to ${targetDoctor.name}` : 'rescheduled'}${scheduledDate ? ` for ${scheduledDate.toLocaleDateString()}` : ''} by reception.`,
+      severity: 'info'
+    });
+
+    res.json({
+      message: `Token ${token.tokenNumber} successfully ${newDoctorId ? `transferred to ${targetDoctor.name}` : 'rescheduled'}.`,
+      token
+    });
+  } catch (error) {
+    logger.error('Error rescheduling token by staff', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
