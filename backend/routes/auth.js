@@ -228,17 +228,82 @@ router.post('/super-admin/verify', verifyAdminSecret, (req, res) => {
 });
 
 // Register Hospital (Super Admin Endpoint — requires authentication via admin secret)
+// The facility types the platform onboards, and WHICH login accounts each one
+// actually needs. A pathology lab has no OPD doctors and a medical store has no
+// lab bench — asking for those accounts (or accepting a facility without the one
+// account that makes it operable) is how half-configured tenants get created.
+const FACILITY_TYPE_RULES = {
+  Hospital: { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
+  'Government Hospital': { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
+  Clinic: { requires: ['doctors'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
+  Lab: { requires: ['lab'], offers: ['staff', 'lab'] },
+  'Government Lab': { requires: ['lab'], offers: ['staff', 'lab'] },
+  Medical: { requires: ['pharmacy'], offers: ['staff', 'pharmacy'] },
+  Government: { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] }
+};
+
+const DOCTOR_TYPES = [
+  'Consultant',
+  'Visiting',
+  'Resident',
+  'Surgeon',
+  'Emergency Officer',
+  'General Physician'
+];
+
+/** Everything the admin panel sends for one doctor, normalized and defaulted. */
+function buildDoctorFields(d, hospitalId) {
+  return {
+    name: d.name || 'Doctor Consultant',
+    email: d.email,
+    department: d.department || 'General Practice',
+    specialization: d.specialization || 'General Consultation',
+    doctorType: DOCTOR_TYPES.includes(d.doctorType) ? d.doctorType : 'Consultant',
+    availabilityStatus: 'Available',
+    averageCheckupTime: d.averageCheckupTime ? parseInt(d.averageCheckupTime) : 10,
+    dailyTokenLimit: d.dailyTokenLimit ? parseInt(d.dailyTokenLimit) : 0,
+    currentRoom: d.currentRoom || 'Cabin 1',
+    hospital: hospitalId
+  };
+}
+
+// GET the onboarding vocabulary the admin panel builds its form from — which
+// facility types exist, which accounts each one needs vs. merely offers, and the
+// doctor types. Served from the same constants the registration validates
+// against, so the form can never offer a combination the API then rejects.
+router.get('/super-admin/facility-types', verifyAdminSecret, (req, res) => {
+  res.json({
+    facilityTypes: Object.entries(FACILITY_TYPE_RULES).map(([name, rule]) => ({ name, ...rule })),
+    doctorTypes: DOCTOR_TYPES
+  });
+});
+
 router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res) => {
   try {
     const b = req.body;
     const {
-      id, name, slug, address, phone, whatsappNumber, coverImage, description,
-      city, coordinates, type, clinicSubtype, customServices, features
+      id,
+      name,
+      slug,
+      address,
+      phone,
+      whatsappNumber,
+      coverImage,
+      description,
+      city,
+      coordinates,
+      type,
+      clinicSubtype,
+      customServices,
+      features
     } = b;
 
     // Validate core facility parameters
     if (!id || !name || !slug || !address || !phone || !whatsappNumber || !city || !coordinates || !type) {
-      return res.status(400).json({ message: 'All facility details (id, name, slug, address, phone, whatsappNumber, city, coordinates, type) are required' });
+      return res.status(400).json({
+        message:
+          'All facility details (id, name, slug, address, phone, whatsappNumber, city, coordinates, type) are required'
+      });
     }
 
     const hasInternalLab = b.hasInternalLab !== undefined ? b.hasInternalLab : true;
@@ -249,51 +314,127 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
     // fields, so an admin can onboard "2-3 doctors, 1-2 labs, a pharmacy" in ONE
     // registration. Internal lab/pharmacy accounts are only created when the
     // facility declares it has that unit.
-    const doctors = (Array.isArray(b.doctors) && b.doctors.length)
-      ? b.doctors
-      : (b.docEmail ? [{ name: b.docName, email: b.docEmail, password: b.docPassword, department: b.docDepartment, currentRoom: b.docRoom, specialization: b.docSpecialization, averageCheckupTime: b.docCheckupTime }] : []);
+    const doctors =
+      Array.isArray(b.doctors) && b.doctors.length
+        ? b.doctors
+        : b.docEmail
+          ? [
+              {
+                name: b.docName,
+                email: b.docEmail,
+                password: b.docPassword,
+                department: b.docDepartment,
+                currentRoom: b.docRoom,
+                specialization: b.docSpecialization,
+                averageCheckupTime: b.docCheckupTime
+              }
+            ]
+          : [];
 
-    const staffMembers = (Array.isArray(b.staffMembers) && b.staffMembers.length)
-      ? b.staffMembers
-      : (b.staffUsername ? [{ name: b.staffName, username: b.staffUsername, password: b.staffPassword, counterNumber: b.counterNumber }] : []);
+    const staffMembers =
+      Array.isArray(b.staffMembers) && b.staffMembers.length
+        ? b.staffMembers
+        : b.staffUsername
+          ? [
+              {
+                name: b.staffName,
+                username: b.staffUsername,
+                password: b.staffPassword,
+                counterNumber: b.counterNumber
+              }
+            ]
+          : [];
 
     const labAssistants = hasInternalLab
-      ? ((Array.isArray(b.labAssistants) && b.labAssistants.length)
-          ? b.labAssistants
-          : (b.labUsername ? [{ name: b.labName, username: b.labUsername, password: b.labPassword }] : []))
+      ? Array.isArray(b.labAssistants) && b.labAssistants.length
+        ? b.labAssistants
+        : b.labUsername
+          ? [{ name: b.labName, username: b.labUsername, password: b.labPassword }]
+          : []
       : [];
 
     const pharmacists = hasInternalPharmacy
-      ? ((Array.isArray(b.pharmacists) && b.pharmacists.length)
-          ? b.pharmacists
-          : (b.pharmUsername ? [{ name: b.pharmName, username: b.pharmUsername, password: b.pharmPassword, counterNumber: b.pharmCounter }] : []))
+      ? Array.isArray(b.pharmacists) && b.pharmacists.length
+        ? b.pharmacists
+        : b.pharmUsername
+          ? [
+              {
+                name: b.pharmName,
+                username: b.pharmUsername,
+                password: b.pharmPassword,
+                counterNumber: b.pharmCounter
+              }
+            ]
+          : []
       : [];
+
+    // The facility type decides which accounts this tenant actually needs.
+    const typeRule = FACILITY_TYPE_RULES[type];
+    if (!typeRule) {
+      return res.status(400).json({
+        message: `Unknown facility type '${type}'. Choose one of: ${Object.keys(FACILITY_TYPE_RULES).join(', ')}.`
+      });
+    }
 
     // A facility must have at least one login account to be operable
     if (!staffMembers.length && !doctors.length && !labAssistants.length && !pharmacists.length) {
-      return res.status(400).json({ message: 'At least one account (reception, doctor, lab, or pharmacy) is required to register a facility.' });
+      return res.status(400).json({
+        message:
+          'At least one account (reception, doctor, lab, or pharmacy) is required to register a facility.'
+      });
+    }
+
+    // ...and specifically the account that makes THIS type of facility work: a
+    // lab with no lab login, or a medical store with no pharmacy login, is a
+    // tenant nobody can ever sign into to do the actual job.
+    const accountCounts = {
+      staff: staffMembers.length,
+      doctors: doctors.length,
+      lab: labAssistants.length,
+      pharmacy: pharmacists.length
+    };
+    const accountLabels = { staff: 'reception', doctors: 'doctor', lab: 'lab', pharmacy: 'pharmacy' };
+    const missing = typeRule.requires.filter((kind) => accountCounts[kind] === 0);
+    if (missing.length) {
+      return res.status(400).json({
+        message: `A ${type} needs at least one ${missing.map((k) => accountLabels[k]).join(' and one ')} account.`
+      });
     }
 
     // Validate each account + reject duplicates WITHIN this request
     const seen = { doctor: new Set(), staff: new Set(), lab: new Set(), pharmacy: new Set() };
     for (const d of doctors) {
-      if (!d.email || !d.password) return res.status(400).json({ message: 'Every doctor needs an email and password.' });
-      if (seen.doctor.has(d.email)) return res.status(400).json({ message: `Duplicate doctor email '${d.email}' in this registration.` });
+      if (!d.email || !d.password)
+        return res.status(400).json({ message: 'Every doctor needs an email and password.' });
+      if (seen.doctor.has(d.email))
+        return res.status(400).json({ message: `Duplicate doctor email '${d.email}' in this registration.` });
       seen.doctor.add(d.email);
     }
     for (const s of staffMembers) {
-      if (!s.username || !s.password) return res.status(400).json({ message: 'Every reception account needs a username and password.' });
-      if (seen.staff.has(s.username)) return res.status(400).json({ message: `Duplicate reception username '${s.username}' in this registration.` });
+      if (!s.username || !s.password)
+        return res.status(400).json({ message: 'Every reception account needs a username and password.' });
+      if (seen.staff.has(s.username))
+        return res
+          .status(400)
+          .json({ message: `Duplicate reception username '${s.username}' in this registration.` });
       seen.staff.add(s.username);
     }
     for (const l of labAssistants) {
-      if (!l.username || !l.password) return res.status(400).json({ message: 'Every lab account needs a username and password.' });
-      if (seen.lab.has(l.username)) return res.status(400).json({ message: `Duplicate lab username '${l.username}' in this registration.` });
+      if (!l.username || !l.password)
+        return res.status(400).json({ message: 'Every lab account needs a username and password.' });
+      if (seen.lab.has(l.username))
+        return res
+          .status(400)
+          .json({ message: `Duplicate lab username '${l.username}' in this registration.` });
       seen.lab.add(l.username);
     }
     for (const p of pharmacists) {
-      if (!p.username || !p.password) return res.status(400).json({ message: 'Every pharmacy account needs a username and password.' });
-      if (seen.pharmacy.has(p.username)) return res.status(400).json({ message: `Duplicate pharmacy username '${p.username}' in this registration.` });
+      if (!p.username || !p.password)
+        return res.status(400).json({ message: 'Every pharmacy account needs a username and password.' });
+      if (seen.pharmacy.has(p.username))
+        return res
+          .status(400)
+          .json({ message: `Duplicate pharmacy username '${p.username}' in this registration.` });
       seen.pharmacy.add(p.username);
     }
 
@@ -305,16 +446,28 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
 
     // Check credential collisions against existing accounts in this tenant
     for (const s of staffMembers) {
-      if (await Staff.findOne({ username: s.username, hospital: id })) return res.status(400).json({ message: `Reception username '${s.username}' is already taken in this facility.` });
+      if (await Staff.findOne({ username: s.username, hospital: id }))
+        return res
+          .status(400)
+          .json({ message: `Reception username '${s.username}' is already taken in this facility.` });
     }
     for (const d of doctors) {
-      if (await Doctor.findOne({ email: d.email, hospital: id })) return res.status(400).json({ message: `Doctor email '${d.email}' is already registered in this facility.` });
+      if (await Doctor.findOne({ email: d.email, hospital: id }))
+        return res
+          .status(400)
+          .json({ message: `Doctor email '${d.email}' is already registered in this facility.` });
     }
     for (const l of labAssistants) {
-      if (await LabAssistant.findOne({ username: l.username, hospital: id })) return res.status(400).json({ message: `Lab username '${l.username}' is already taken in this facility.` });
+      if (await LabAssistant.findOne({ username: l.username, hospital: id }))
+        return res
+          .status(400)
+          .json({ message: `Lab username '${l.username}' is already taken in this facility.` });
     }
     for (const p of pharmacists) {
-      if (await Pharmacist.findOne({ username: p.username, hospital: id })) return res.status(400).json({ message: `Pharmacy username '${p.username}' is already taken in this facility.` });
+      if (await Pharmacist.findOne({ username: p.username, hospital: id }))
+        return res
+          .status(400)
+          .json({ message: `Pharmacy username '${p.username}' is already taken in this facility.` });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -322,10 +475,19 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
 
     // Create the facility
     const newHospital = new Hospital({
-      id, name, slug, address, phone, whatsappNumber,
-      coverImage: coverImage || 'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
+      id,
+      name,
+      slug,
+      address,
+      phone,
+      whatsappNumber,
+      coverImage:
+        coverImage ||
+        'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
       description: description || 'Specialized clinical care service.',
-      city, coordinates, type,
+      city,
+      coordinates,
+      type,
       state: b.state || '',
       district: b.district || '',
       logoUrl: b.logoUrl || '',
@@ -348,29 +510,43 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
     const created = { staff: [], doctors: [], labAssistants: [], pharmacists: [] };
 
     for (const s of staffMembers) {
-      const doc = new Staff({ name: s.name || 'Reception Staff', username: s.username, passwordHash: await hash(s.password), counterNumber: s.counterNumber || 'Counter 1', hospital: id });
+      const doc = new Staff({
+        name: s.name || 'Reception Staff',
+        username: s.username,
+        passwordHash: await hash(s.password),
+        counterNumber: s.counterNumber || 'Counter 1',
+        hospital: id
+      });
       await doc.save();
       created.staff.push(doc.username);
     }
     for (const d of doctors) {
       const doc = new Doctor({
-        name: d.name || 'Doctor Consultant', email: d.email, passwordHash: await hash(d.password),
-        department: d.department || 'General Practice', specialization: d.specialization || 'General Consultation',
-        availabilityStatus: 'Available', averageCheckupTime: d.averageCheckupTime ? parseInt(d.averageCheckupTime) : 10,
-        dailyTokenLimit: d.dailyTokenLimit ? parseInt(d.dailyTokenLimit) : 0,
-        currentRoom: d.currentRoom || 'Cabin 1', hospital: id
+        ...buildDoctorFields(d, id),
+        passwordHash: await hash(d.password)
       });
       await doc.save();
       await new Queue({ doctor: doc._id, currentToken: null, activeQueue: [] }).save();
       created.doctors.push(doc.email);
     }
     for (const l of labAssistants) {
-      const doc = new LabAssistant({ name: l.name || 'Lab Assistant', username: l.username, passwordHash: await hash(l.password), hospital: id });
+      const doc = new LabAssistant({
+        name: l.name || 'Lab Assistant',
+        username: l.username,
+        passwordHash: await hash(l.password),
+        hospital: id
+      });
       await doc.save();
       created.labAssistants.push(doc.username);
     }
     for (const p of pharmacists) {
-      const doc = new Pharmacist({ name: p.name || 'Pharmacist', username: p.username, passwordHash: await hash(p.password), counterNumber: p.counterNumber || 'Pharmacy Counter', hospital: id });
+      const doc = new Pharmacist({
+        name: p.name || 'Pharmacist',
+        username: p.username,
+        passwordHash: await hash(p.password),
+        counterNumber: p.counterNumber || 'Pharmacy Counter',
+        hospital: id
+      });
       await doc.save();
       created.pharmacists.push(doc.username);
     }
@@ -380,7 +556,6 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       hospital: newHospital,
       created
     });
-
   } catch (error) {
     console.error('Super admin hospital registration error:', error);
     res.status(500).json({ message: 'Server error registering hospital' });
@@ -404,7 +579,9 @@ router.post('/super-admin/register-staff', verifyAdminSecret, async (req, res) =
     // Check if staff username is already taken in this hospital tenant
     const existingStaff = await Staff.findOne({ username, hospital });
     if (existingStaff) {
-      return res.status(400).json({ message: `Staff username '${username}' is already taken in this hospital tenant.` });
+      return res
+        .status(400)
+        .json({ message: `Staff username '${username}' is already taken in this hospital tenant.` });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -438,7 +615,7 @@ router.post('/super-admin/register-staff', verifyAdminSecret, async (req, res) =
 // Register Additional Doctor
 router.post('/super-admin/register-doctor', verifyAdminSecret, async (req, res) => {
   try {
-    const { hospital, name, email, password, department, currentRoom, specialization, averageCheckupTime, dailyTokenLimit } = req.body;
+    const { hospital, email, password } = req.body;
     if (!hospital || !email || !password) {
       return res.status(400).json({ message: 'Hospital selection, email, and password are required' });
     }
@@ -452,24 +629,17 @@ router.post('/super-admin/register-doctor', verifyAdminSecret, async (req, res) 
     // Check if doctor email is already registered in this hospital tenant
     const existingDoc = await Doctor.findOne({ email, hospital });
     if (existingDoc) {
-      return res.status(400).json({ message: `Doctor email '${email}' is already registered in this hospital tenant.` });
+      return res
+        .status(400)
+        .json({ message: `Doctor email '${email}' is already registered in this hospital tenant.` });
     }
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    const newDoctor = new Doctor({
-      name: name || 'Doctor Consultant',
-      email,
-      passwordHash,
-      department: department || 'General Practice',
-      specialization: specialization || 'General Consultation',
-      availabilityStatus: 'Available',
-      averageCheckupTime: averageCheckupTime ? parseInt(averageCheckupTime) : 10,
-      dailyTokenLimit: dailyTokenLimit ? parseInt(dailyTokenLimit) : 0,
-      currentRoom: currentRoom || 'Cabin 1',
-      hospital
-    });
+    // Same normalization as registration, so a doctor added to a facility later
+    // carries exactly the same fields as one created during onboarding.
+    const newDoctor = new Doctor({ ...buildDoctorFields(req.body, hospital), passwordHash });
     await newDoctor.save();
 
     // Increment doctor count on hospital
@@ -485,12 +655,13 @@ router.post('/super-admin/register-doctor', verifyAdminSecret, async (req, res) 
     await newQueue.save();
 
     res.status(201).json({
-      message: `Doctor account '${email}' registered successfully!`,
+      message: `${newDoctor.doctorType} '${email}' registered successfully!`,
       doctor: {
         id: newDoctor._id,
         name: newDoctor.name,
         email: newDoctor.email,
         department: newDoctor.department,
+        doctorType: newDoctor.doctorType,
         hospital: newDoctor.hospital
       }
     });
@@ -517,7 +688,9 @@ router.post('/super-admin/register-lab', verifyAdminSecret, async (req, res) => 
     // Check if lab assistant username is already taken in this hospital tenant
     const existingLab = await LabAssistant.findOne({ username, hospital });
     if (existingLab) {
-      return res.status(400).json({ message: `Lab assistant username '${username}' is already taken in this hospital tenant.` });
+      return res
+        .status(400)
+        .json({ message: `Lab assistant username '${username}' is already taken in this hospital tenant.` });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -561,7 +734,9 @@ router.post('/super-admin/register-pharmacist', verifyAdminSecret, async (req, r
 
     const existingPharmacist = await Pharmacist.findOne({ username, hospital });
     if (existingPharmacist) {
-      return res.status(400).json({ message: `Pharmacy username '${username}' is already taken in this facility.` });
+      return res
+        .status(400)
+        .json({ message: `Pharmacy username '${username}' is already taken in this facility.` });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -646,7 +821,8 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     if (welcomeMessage !== undefined) hospital.welcomeMessage = welcomeMessage;
     if (req.body.parentHospital !== undefined) hospital.parentHospital = req.body.parentHospital;
     if (req.body.hasInternalLab !== undefined) hospital.hasInternalLab = req.body.hasInternalLab;
-    if (req.body.hasInternalPharmacy !== undefined) hospital.hasInternalPharmacy = req.body.hasInternalPharmacy;
+    if (req.body.hasInternalPharmacy !== undefined)
+      hospital.hasInternalPharmacy = req.body.hasInternalPharmacy;
     if (clinicSubtype !== undefined) hospital.clinicSubtype = clinicSubtype;
     if (customServices !== undefined) hospital.customServices = customServices;
     if (features !== undefined) hospital.features = features;
@@ -671,7 +847,7 @@ router.delete('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) =
 
     // Delete associated Doctors, Staff, Lab Assistants
     const doctors = await Doctor.find({ hospital: id });
-    const doctorIds = doctors.map(d => d._id);
+    const doctorIds = doctors.map((d) => d._id);
 
     await Queue.deleteMany({ doctor: { $in: doctorIds } });
     await Doctor.deleteMany({ hospital: id });
@@ -694,7 +870,7 @@ router.get('/super-admin/facility-data/:hospitalId', verifyAdminSecret, async (r
   try {
     const { hospitalId } = req.params;
     const Patient = require('../models/Patient');
-    
+
     const doctors = await Doctor.find({ hospital: hospitalId }).select('-passwordHash');
     const staff = await Staff.find({ hospital: hospitalId }).select('-passwordHash');
     const labAssistants = await LabAssistant.find({ hospital: hospitalId }).select('-passwordHash');
@@ -712,17 +888,39 @@ router.get('/super-admin/facility-data/:hospitalId', verifyAdminSecret, async (r
 router.put('/super-admin/doctor/:id', verifyAdminSecret, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, department, specialization, currentRoom, availabilityStatus, password } = req.body;
+    const {
+      name,
+      email,
+      department,
+      specialization,
+      doctorType,
+      currentRoom,
+      availabilityStatus,
+      averageCheckupTime,
+      dailyTokenLimit,
+      password
+    } = req.body;
 
     const doctor = await Doctor.findById(id);
     if (!doctor) return res.status(404).json({ message: 'Doctor not found' });
+
+    if (doctorType !== undefined && !DOCTOR_TYPES.includes(doctorType)) {
+      return res.status(400).json({ message: `Doctor type must be one of: ${DOCTOR_TYPES.join(', ')}.` });
+    }
 
     if (name) doctor.name = name;
     if (email) doctor.email = email;
     if (department) doctor.department = department;
     if (specialization !== undefined) doctor.specialization = specialization;
+    if (doctorType) doctor.doctorType = doctorType;
     if (currentRoom) doctor.currentRoom = currentRoom;
     if (availabilityStatus) doctor.availabilityStatus = availabilityStatus;
+    if (averageCheckupTime !== undefined && !isNaN(parseInt(averageCheckupTime))) {
+      doctor.averageCheckupTime = Math.max(1, parseInt(averageCheckupTime));
+    }
+    if (dailyTokenLimit !== undefined && !isNaN(parseInt(dailyTokenLimit))) {
+      doctor.dailyTokenLimit = Math.max(0, parseInt(dailyTokenLimit));
+    }
     if (password) doctor.passwordHash = await bcrypt.hash(password, 10);
 
     await doctor.save();
@@ -909,7 +1107,10 @@ router.post('/super-admin/clear-demo-data', verifyAdminSecret, async (req, res) 
       req.io.emit('queue-reset');
     }
 
-    res.json({ message: 'All demo and sample data cleared successfully! System is 100% clean for manual hospital entry.' });
+    res.json({
+      message:
+        'All demo and sample data cleared successfully! System is 100% clean for manual hospital entry.'
+    });
   } catch (error) {
     console.error('Super admin clear demo data error:', error);
     res.status(500).json({ message: 'Server error clearing demo data' });

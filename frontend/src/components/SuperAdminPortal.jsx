@@ -4,6 +4,135 @@ import { BACKEND_URL } from '../App';
 import { Activity, ShieldAlert, ArrowLeft } from 'lucide-react';
 import WhatsAppTester from './WhatsAppTester';
 
+/**
+ * What each kind of facility IS, and which login accounts it needs.
+ *
+ * `requires` / `offers` mirror FACILITY_TYPE_RULES in backend/routes/auth.js and
+ * are refreshed from `GET /super-admin/facility-types` once the panel unlocks, so
+ * the form can never offer a shape the API then rejects. A pathology lab has no
+ * OPD doctors and a medical store has no lab bench — hiding those sections is
+ * what stops half-configured tenants being created.
+ */
+const FACILITY_TYPES = [
+  {
+    name: 'Hospital',
+    icon: 'local_hospital',
+    blurb: 'Multi-department OPD with its own lab and pharmacy.',
+    requires: ['staff'],
+    offers: ['staff', 'doctors', 'lab', 'pharmacy']
+  },
+  {
+    name: 'Clinic',
+    icon: 'medical_services',
+    blurb: 'One or a few doctors, usually a single specialty.',
+    requires: ['doctors'],
+    offers: ['staff', 'doctors', 'lab', 'pharmacy']
+  },
+  {
+    name: 'Medical',
+    icon: 'local_pharmacy',
+    blurb: 'Medical store / pharmacy counter — dispensing only.',
+    requires: ['pharmacy'],
+    offers: ['staff', 'pharmacy']
+  },
+  {
+    name: 'Lab',
+    icon: 'science',
+    blurb: 'Diagnostic / pathology lab — samples and reports.',
+    requires: ['lab'],
+    offers: ['staff', 'lab']
+  },
+  {
+    name: 'Government Hospital',
+    icon: 'account_balance',
+    blurb: 'Government OPD — same units as a hospital.',
+    requires: ['staff'],
+    offers: ['staff', 'doctors', 'lab', 'pharmacy']
+  },
+  {
+    name: 'Government Lab',
+    icon: 'biotech',
+    blurb: 'Government diagnostic lab.',
+    requires: ['lab'],
+    offers: ['staff', 'lab']
+  },
+  {
+    name: 'Government',
+    icon: 'apartment',
+    blurb: 'Other government health facility.',
+    requires: ['staff'],
+    offers: ['staff', 'doctors', 'lab', 'pharmacy']
+  }
+];
+
+/** Employment shape of a doctor at the facility (Doctor.doctorType). */
+const DOCTOR_TYPES = [
+  'Consultant',
+  'Visiting',
+  'Resident',
+  'Surgeon',
+  'Emergency Officer',
+  'General Physician'
+];
+
+/**
+ * The departments smart triage actually recognises (utils/triageHelper.js). A
+ * doctor filed under anything else still works, but symptom auto-routing can
+ * only fall back to General Medicine for them — so these are offered first.
+ */
+const KNOWN_DEPARTMENTS = [
+  'General Medicine',
+  'Cardiology',
+  'Pediatrics',
+  'Orthopedics',
+  'Dermatology',
+  'ENT',
+  'Ophthalmology',
+  'Gynecology',
+  'Neurology',
+  'Gastroenterology',
+  'Dental',
+  'Psychiatry'
+];
+
+/** Which departments to suggest first for a given clinic subtype. */
+const SUBTYPE_DEPARTMENTS = {
+  Dental: ['Dental'],
+  Eye: ['Ophthalmology'],
+  Ortho: ['Orthopedics'],
+  General: ['General Medicine']
+};
+
+const SECTION_LABEL = {
+  staff: 'reception',
+  doctors: 'doctor',
+  lab: 'lab',
+  pharmacy: 'pharmacy'
+};
+
+/** [singular, plural] for the "about to create" tally. */
+const SECTION_COUNT_LABEL = {
+  staff: ['reception counter', 'reception counters'],
+  doctors: ['doctor', 'doctors'],
+  lab: ['lab account', 'lab accounts'],
+  pharmacy: ['pharmacy counter', 'pharmacy counters']
+};
+
+const blankStaff = () => ({ name: '', username: '', password: '', counterNumber: 'Reception Counter 1' });
+const blankDoctor = () => ({
+  name: '',
+  email: '',
+  password: '',
+  department: 'General Medicine',
+  specialization: '',
+  doctorType: 'Consultant',
+  currentRoom: 'Cabin 1',
+  averageCheckupTime: 10,
+  dailyTokenLimit: 0
+});
+const blankLab = () => ({ name: '', username: '', password: '' });
+const blankPharmacy = () => ({ name: '', username: '', password: '', counterNumber: 'Pharmacy Counter' });
+
 export default function SuperAdminPortal() {
   const navigate = useNavigate();
 
@@ -30,28 +159,23 @@ export default function SuperAdminPortal() {
   const [lng, setLng] = useState('77.2090');
   const [type, setType] = useState('Hospital');
 
-  // Staff credentials
-  const [staffName, setStaffName] = useState('');
-  const [staffUsername, setStaffUsername] = useState('');
-  const [staffPassword, setStaffPassword] = useState('');
-  const [counterNumber, setCounterNumber] = useState('Reception Counter 1');
+  // Personnel is onboarded as four uniform, repeatable lists — a facility rarely
+  // has exactly one of anything. Previously only ONE reception account could be
+  // created at registration, so a hospital running three counters had to go back
+  // into the "add account" tab twice for something the admin already knew.
+  const [staffRows, setStaffRows] = useState([blankStaff()]);
+  const [doctorRows, setDoctorRows] = useState([blankDoctor()]);
+  const [labRows, setLabRows] = useState([blankLab()]);
+  const [pharmacyRows, setPharmacyRows] = useState([]);
 
-  // Doctor credentials
-  const [docName, setDocName] = useState('');
-  const [docEmail, setDocEmail] = useState('');
-  const [docPassword, setDocPassword] = useState('');
-  const [docDepartment, setDocDepartment] = useState('General Medicine');
-  const [docRoom, setDocRoom] = useState('Cabin 101');
+  // Onboarding vocabulary, refreshed from the API on unlock (falls back to the
+  // constants above if the call fails, so the form always renders).
+  const [facilityTypes, setFacilityTypes] = useState(FACILITY_TYPES);
+  const [doctorTypes, setDoctorTypes] = useState(DOCTOR_TYPES);
 
-  // Lab tech credentials
-  const [labName, setLabName] = useState('');
-  const [labUsername, setLabUsername] = useState('');
-  const [labPassword, setLabPassword] = useState('');
-
-  // Extra doctors / labs / pharmacists — onboard several units in ONE registration.
-  const [extraDoctors, setExtraDoctors] = useState([]); // {name,email,password,department,room}
-  const [extraLabs, setExtraLabs] = useState([]); // {name,username,password}
-  const [pharmacists, setPharmacists] = useState([]); // {name,username,password}
+  /** Update one field of one row in any of the four personnel lists. */
+  const patchRow = (setRows, index, field, value) =>
+    setRows((rows) => rows.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
   const fieldCls =
     'w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all';
 
@@ -71,6 +195,8 @@ export default function SuperAdminPortal() {
   const [addRoom, setAddRoom] = useState('Cabin 101');
   const [addSpecialization, setAddSpecialization] = useState('General Consultation');
   const [addAverageCheckupTime, setAddAverageCheckupTime] = useState(10);
+  const [addDoctorType, setAddDoctorType] = useState('Consultant');
+  const [addDailyTokenLimit, setAddDailyTokenLimit] = useState(0);
 
   // Edit Hospital States
   const [editHospId, setEditHospId] = useState('');
@@ -389,6 +515,7 @@ export default function SuperAdminPortal() {
       }
       setAuthorized(true);
       setAuthError('');
+      loadOnboardingVocabulary();
     } catch (err) {
       if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
         setAuthError(
@@ -413,10 +540,82 @@ export default function SuperAdminPortal() {
     setHospId(slugified);
   };
 
+  /** Facility types + doctor types straight from the API that validates them. */
+  const loadOnboardingVocabulary = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/facility-types`, {
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.facilityTypes) && data.facilityTypes.length) {
+        // Keep the local icon/blurb for each known type; the API is the authority
+        // on which accounts a type requires and offers.
+        setFacilityTypes(
+          data.facilityTypes.map((t) => {
+            const local = FACILITY_TYPES.find((f) => f.name === t.name);
+            return { icon: 'domain', blurb: '', ...local, ...t };
+          })
+        );
+      }
+      if (Array.isArray(data.doctorTypes) && data.doctorTypes.length) setDoctorTypes(data.doctorTypes);
+    } catch (err) {
+      console.error('Could not load facility type rules, using built-in defaults:', err);
+    }
+  };
+
+  /** The rules for the facility type currently selected in the form. */
+  const activeType = facilityTypes.find((t) => t.name === type) || facilityTypes[0];
+
+  /**
+   * Does this facility type use this kind of account? Lab and pharmacy are gated
+   * on the "runs its own lab / pharmacy" toggles too — a clinic that sends its
+   * blood work out should never be asked to create a lab login.
+   */
+  const sectionApplies = (kind) => {
+    if (!activeType || !(activeType.offers || []).includes(kind)) return false;
+    if (kind === 'lab') return hasInternalLab;
+    if (kind === 'pharmacy') return hasInternalPharmacy;
+    return true;
+  };
+
+  // A blank row left at the bottom of a list is not a half-made account.
+  const filledStaff = staffRows.filter((s) => s.username && s.password);
+  const filledDoctors = doctorRows.filter((d) => d.email && d.password);
+  const filledLabs = labRows.filter((l) => l.username && l.password);
+  const filledPharmacy = pharmacyRows.filter((p) => p.username && p.password);
+  const filledCount = {
+    staff: sectionApplies('staff') ? filledStaff.length : 0,
+    doctors: sectionApplies('doctors') ? filledDoctors.length : 0,
+    lab: sectionApplies('lab') ? filledLabs.length : 0,
+    pharmacy: sectionApplies('pharmacy') ? filledPharmacy.length : 0
+  };
+  const missingRequired = (activeType?.requires || []).filter((kind) => filledCount[kind] === 0);
+
+  // Departments to suggest for this facility: the subtype's own first (a dental
+  // clinic should not have to scroll past Cardiology), then the rest of the ones
+  // smart triage recognises. Free text is still accepted.
+  const departmentOptions = [
+    ...(type === 'Clinic' ? SUBTYPE_DEPARTMENTS[clinicSubtype] || [] : []),
+    ...KNOWN_DEPARTMENTS
+  ].filter((d, i, arr) => arr.indexOf(d) === i);
+
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
     setSuccessMsg('');
+
+    // Say what is missing here rather than letting the API bounce it back — the
+    // admin is looking at the very section that needs a row.
+    if (missingRequired.length) {
+      setError(
+        `A ${type} needs at least one ${missingRequired
+          .map((k) => SECTION_LABEL[k])
+          .join(' and one ')} account. Fill in that section below.`
+      );
+      return;
+    }
+
     setLoading(true);
 
     const parsedGalleryImages = galleryImagesStr
@@ -456,29 +655,13 @@ export default function SuperAdminPortal() {
       clinicSubtype,
       customServices,
       features,
-      staffMembers: [{ name: staffName, username: staffUsername, password: staffPassword, counterNumber }],
-      doctors: [
-        {
-          name: docName,
-          email: docEmail,
-          password: docPassword,
-          department: docDepartment,
-          currentRoom: docRoom
-        },
-        ...extraDoctors.map((d) => ({
-          name: d.name,
-          email: d.email,
-          password: d.password,
-          department: d.department,
-          currentRoom: d.room
-        }))
-      ].filter((d) => d.email && d.password),
-      labAssistants: hasInternalLab
-        ? [{ name: labName, username: labUsername, password: labPassword }, ...extraLabs].filter(
-            (l) => l.username && l.password
-          )
-        : [],
-      pharmacists: hasInternalPharmacy ? pharmacists.filter((p) => p.username && p.password) : []
+      // Only the sections this facility type actually offers are sent, and only
+      // the rows the admin actually filled in — a blank row left at the bottom of
+      // a list is not a half-made account.
+      staffMembers: sectionApplies('staff') ? filledStaff : [],
+      doctors: sectionApplies('doctors') ? filledDoctors : [],
+      labAssistants: sectionApplies('lab') ? filledLabs : [],
+      pharmacists: sectionApplies('pharmacy') ? filledPharmacy : []
     };
 
     try {
@@ -538,6 +721,8 @@ export default function SuperAdminPortal() {
       payload.currentRoom = addRoom;
       payload.specialization = addSpecialization;
       payload.averageCheckupTime = addAverageCheckupTime;
+      payload.doctorType = addDoctorType;
+      payload.dailyTokenLimit = addDailyTokenLimit;
     } else if (accountType === 'lab') {
       url = `${BACKEND_URL}/api/v1/auth/super-admin/register-lab`;
       payload.username = addUsername;
@@ -996,12 +1181,12 @@ export default function SuperAdminPortal() {
                       setPhone('');
                       setWhatsappNumber('');
                       setDescription('');
-                      setStaffUsername('');
-                      setStaffPassword('');
-                      setDocEmail('');
-                      setDocPassword('');
-                      setLabUsername('');
-                      setLabPassword('');
+                      // Credentials must never carry over to the next facility —
+                      // reset the personnel lists to a single empty row each.
+                      setStaffRows([blankStaff()]);
+                      setDoctorRows([blankDoctor()]);
+                      setLabRows([blankLab()]);
+                      setPharmacyRows([]);
                     }
                   }}
                   className="px-4 py-2 border border-[var(--border-color)] hover:bg-[var(--border-color)]/25 rounded-xl font-black transition-all"
@@ -1057,25 +1242,67 @@ export default function SuperAdminPortal() {
                   </div>
                 </div>
 
-                <div
-                  className={`grid grid-cols-1 ${type === 'Clinic' || type === 'Medical' ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4`}
-                >
-                  <div>
-                    <label className="block mb-1">Service Type *</label>
-                    <select
-                      value={type}
-                      onChange={(e) => setType(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
-                    >
-                      <option>Hospital</option>
-                      <option>Clinic</option>
-                      <option>Medical</option>
-                      <option>Lab</option>
-                      <option>Government Hospital</option>
-                      <option>Government Lab</option>
-                      <option>Government</option>
-                    </select>
+                {/* WHAT KIND of facility this is — the first real decision, and the
+                    one that decides which accounts the rest of this form asks for. */}
+                <div>
+                  <label className="block mb-2">What are you registering? *</label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {facilityTypes.map((ft) => {
+                      const selected = type === ft.name;
+                      return (
+                        <button
+                          key={ft.name}
+                          type="button"
+                          onClick={() => setType(ft.name)}
+                          className={`text-left p-3 rounded-xl border transition-all ${
+                            selected
+                              ? 'bg-[var(--primary-color)]/10 border-[var(--primary-color)] shadow-sm'
+                              : 'bg-[var(--bg-color)] border-[var(--border-color)]/50 hover:border-[var(--primary-color)]/50'
+                          }`}
+                        >
+                          <span
+                            className={`material-symbols-outlined text-[20px] ${
+                              selected ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'
+                            }`}
+                          >
+                            {ft.icon || 'domain'}
+                          </span>
+                          <p
+                            className={`text-[11px] font-black mt-0.5 ${
+                              selected ? 'text-[var(--primary-color)]' : 'text-[var(--text-color)]'
+                            }`}
+                          >
+                            {ft.name}
+                          </p>
+                          <p className="text-[10px] text-[var(--text-secondary)] font-medium leading-tight mt-0.5">
+                            {ft.blurb}
+                          </p>
+                        </button>
+                      );
+                    })}
                   </div>
+                  <p className="text-[10px] text-[var(--text-secondary)] font-semibold mt-2">
+                    A {type} is set up with{' '}
+                    <span className="font-black text-[var(--primary-color)]">
+                      {(activeType?.offers || []).map((k) => SECTION_LABEL[k]).join(', ')}
+                    </span>{' '}
+                    accounts
+                    {(activeType?.requires || []).length > 0 && (
+                      <>
+                        {' '}
+                        — at least one{' '}
+                        <span className="font-black">
+                          {(activeType.requires || []).map((k) => SECTION_LABEL[k]).join(' and one ')}
+                        </span>{' '}
+                        account is required.
+                      </>
+                    )}
+                  </p>
+                </div>
+
+                <div
+                  className={`grid grid-cols-1 ${type === 'Clinic' || type === 'Medical' ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-4`}
+                >
                   {type === 'Clinic' && (
                     <div>
                       <label className="block mb-1">Clinic Subtype *</label>
@@ -1446,382 +1673,397 @@ export default function SuperAdminPortal() {
                 </div>
               </div>
 
-              {/* SECTION B: Staff Onboarding */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
-                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
-                    verified_user
-                  </span>
-                  <span>2. Receptionist / Staff Account Setup</span>
-                </h3>
+              {/* SECTIONS 2-5: PERSONNEL.
+                  Which of these appear is decided by the facility type chosen
+                  above — a pathology lab is never asked for doctors, a medical
+                  store is never asked for a lab bench. Every list is repeatable
+                  because real facilities run several counters and several
+                  doctors, and the admin already knows all of them at onboarding
+                  time; making them come back later to the "add account" tab was
+                  busywork. Blank rows are ignored on submit. */}
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block mb-1">Staff Full Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. David Jones"
-                      value={staffName}
-                      onChange={(e) => setStaffName(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1">Username (Isolated Tenant Login) *</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. city_staff"
-                      value={staffUsername}
-                      onChange={(e) => setStaffUsername(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1">Staff Password *</label>
-                    <input
-                      type="password"
-                      placeholder="••••••••"
-                      value={staffPassword}
-                      onChange={(e) => setStaffPassword(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                      required
-                    />
-                  </div>
-                </div>
+              {sectionApplies('staff') && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-black text-[var(--text-color)] flex items-center gap-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                    <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
+                      verified_user
+                    </span>
+                    <span>Reception / front desk ({filledStaff.length})</span>
+                    {(activeType?.requires || []).includes('staff') && (
+                      <span className="text-[9px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
+                        Required
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-[var(--text-secondary)] font-semibold">
+                    One login per counter — each sees the same facility, signed in as itself.
+                  </p>
 
-                <div>
-                  <label className="block mb-1">Counter Room Name</label>
-                  <input
-                    type="text"
-                    value={counterNumber}
-                    onChange={(e) => setCounterNumber(e.target.value)}
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                  />
-                </div>
-              </div>
-
-              {/* SECTION C: Doctor Onboarding */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
-                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
-                    stethoscope
-                  </span>
-                  <span>3. Initial Medical Officer / Doctor Setup</span>
-                </h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block mb-1">Doctor Full Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Dr. David Miller"
-                      value={docName}
-                      onChange={(e) => setDocName(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1">Doctor Email (Tenant Login) *</label>
-                    <input
-                      type="email"
-                      placeholder="e.g. david.miller@hospital.com"
-                      value={docEmail}
-                      onChange={(e) => setDocEmail(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1">Doctor Password *</label>
-                    <input
-                      type="password"
-                      placeholder="••••••••"
-                      value={docPassword}
-                      onChange={(e) => setDocPassword(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block mb-1">Department</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Cardiology"
-                      value={docDepartment}
-                      onChange={(e) => setDocDepartment(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1">Consultation Cabin Room</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Cabin 101"
-                      value={docRoom}
-                      onChange={(e) => setDocRoom(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                    />
-                  </div>
-                </div>
-
-                {/* Additional doctors (a hospital can have 2-3) */}
-                {extraDoctors.map((d, i) => (
-                  <div
-                    key={i}
-                    className="grid grid-cols-1 md:grid-cols-5 gap-2 items-center border-t border-dashed border-[var(--border-color)]/20 pt-3"
-                  >
-                    <input
-                      placeholder="Name"
-                      value={d.name || ''}
-                      onChange={(e) =>
-                        setExtraDoctors((p) =>
-                          p.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <input
-                      type="email"
-                      placeholder="Email *"
-                      value={d.email || ''}
-                      onChange={(e) =>
-                        setExtraDoctors((p) =>
-                          p.map((r, idx) => (idx === i ? { ...r, email: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <input
-                      type="password"
-                      placeholder="Password *"
-                      value={d.password || ''}
-                      onChange={(e) =>
-                        setExtraDoctors((p) =>
-                          p.map((r, idx) => (idx === i ? { ...r, password: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <input
-                      placeholder="Department"
-                      value={d.department || ''}
-                      onChange={(e) =>
-                        setExtraDoctors((p) =>
-                          p.map((r, idx) => (idx === i ? { ...r, department: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <div className="flex gap-1.5">
+                  {staffRows.map((s, i) => (
+                    <div key={i} className="grid grid-cols-1 md:grid-cols-9 gap-2 items-center">
                       <input
-                        placeholder="Room"
-                        value={d.room || ''}
-                        onChange={(e) =>
-                          setExtraDoctors((p) =>
-                            p.map((r, idx) => (idx === i ? { ...r, room: e.target.value } : r))
-                          )
-                        }
-                        className={fieldCls}
+                        placeholder="Full name"
+                        value={s.name}
+                        onChange={(e) => patchRow(setStaffRows, i, 'name', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <input
+                        placeholder="Username *"
+                        value={s.username}
+                        onChange={(e) => patchRow(setStaffRows, i, 'username', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <input
+                        type="password"
+                        placeholder="Password *"
+                        value={s.password}
+                        onChange={(e) => patchRow(setStaffRows, i, 'password', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <input
+                        placeholder="Counter name"
+                        value={s.counterNumber}
+                        onChange={(e) => patchRow(setStaffRows, i, 'counterNumber', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
                       />
                       <button
                         type="button"
-                        title="Remove doctor"
-                        onClick={() => setExtraDoctors((p) => p.filter((_, idx) => idx !== i))}
-                        className="shrink-0 px-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 font-black"
+                        title="Remove this reception account"
+                        disabled={staffRows.length === 1}
+                        onClick={() => setStaffRows((p) => p.filter((_, idx) => idx !== i))}
+                        className="px-2.5 py-2 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 disabled:opacity-30 font-black text-xs"
                       >
                         ×
                       </button>
                     </div>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setExtraDoctors((p) => [
-                      ...p,
-                      { name: '', email: '', password: '', department: '', room: '' }
-                    ])
-                  }
-                  className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1"
-                >
-                  <span className="material-symbols-outlined text-[16px]">add_circle</span> Add another doctor
-                </button>
-              </div>
-
-              {/* SECTION D: Lab Tech Onboarding */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
-                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
-                    science
-                  </span>
-                  <span>4. Clinical Laboratory assistant Account Setup</span>
-                </h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block mb-1">Lab Assistant Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. City Lab Specialist"
-                      value={labName}
-                      onChange={(e) => setLabName(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1">Lab Assistant Username *</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. city_lab"
-                      value={labUsername}
-                      onChange={(e) => setLabUsername(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1">Lab Password *</label>
-                    <input
-                      type="password"
-                      placeholder="••••••••"
-                      value={labPassword}
-                      onChange={(e) => setLabPassword(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                      required
-                    />
-                  </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setStaffRows((p) => [...p, blankStaff()])}
+                    className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add_circle</span> Add another
+                    reception counter
+                  </button>
                 </div>
+              )}
 
-                {/* Additional lab assistants (a facility can run 1-2 labs) */}
-                {extraLabs.map((l, i) => (
-                  <div
-                    key={i}
-                    className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center border-t border-dashed border-[var(--border-color)]/20 pt-3"
-                  >
-                    <input
-                      placeholder="Lab Name"
-                      value={l.name || ''}
-                      onChange={(e) =>
-                        setExtraLabs((p) =>
-                          p.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <input
-                      placeholder="Username *"
-                      value={l.username || ''}
-                      onChange={(e) =>
-                        setExtraLabs((p) =>
-                          p.map((r, idx) => (idx === i ? { ...r, username: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <input
-                      type="password"
-                      placeholder="Password *"
-                      value={l.password || ''}
-                      onChange={(e) =>
-                        setExtraLabs((p) =>
-                          p.map((r, idx) => (idx === i ? { ...r, password: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <button
-                      type="button"
-                      title="Remove lab"
-                      onClick={() => setExtraLabs((p) => p.filter((_, idx) => idx !== i))}
-                      className="justify-self-start md:justify-self-end px-3 py-2 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 font-black text-[11px]"
+              {sectionApplies('doctors') && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-black text-[var(--text-color)] flex items-center gap-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                    <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
+                      stethoscope
+                    </span>
+                    <span>Doctors ({filledDoctors.length})</span>
+                    {(activeType?.requires || []).includes('doctors') && (
+                      <span className="text-[9px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
+                        Required
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-[var(--text-secondary)] font-semibold">
+                    Department drives symptom auto-routing, so prefer a listed one. Doctor type records what
+                    this doctor is at the facility; the daily token limit caps their OPD (0 = unlimited,
+                    emergencies always bypass it).
+                  </p>
+
+                  {/* Departments smart triage recognises — free text is still allowed. */}
+                  <datalist id="known-departments">
+                    {departmentOptions.map((d) => (
+                      <option key={d} value={d} />
+                    ))}
+                  </datalist>
+
+                  {doctorRows.map((d, i) => (
+                    <div
+                      key={i}
+                      className="rounded-xl border border-[var(--border-color)]/40 bg-[var(--bg-color)]/40 p-3 space-y-2"
                     >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setExtraLabs((p) => [...p, { name: '', username: '', password: '' }])}
-                  className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1"
-                >
-                  <span className="material-symbols-outlined text-[16px]">add_circle</span> Add another lab
-                </button>
-              </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
+                          Doctor {i + 1}
+                          {d.name ? ` — ${d.name}` : ''}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={doctorRows.length === 1}
+                          onClick={() => setDoctorRows((p) => p.filter((_, idx) => idx !== i))}
+                          className="px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 disabled:opacity-30 font-black text-[10px]"
+                        >
+                          Remove
+                        </button>
+                      </div>
 
-              {/* SECTION E: Pharmacy / Medical Store Onboarding */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
-                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
-                    local_pharmacy
-                  </span>
-                  <span>
-                    5. Pharmacy / Medical Store Setup{' '}
-                    <span className="font-semibold text-[var(--text-secondary)]">(optional)</span>
-                  </span>
-                </h3>
-                <p className="text-[11px] text-[var(--text-secondary)] font-semibold -mt-2">
-                  The facility's internal medical store operator(s). Add one per pharmacy counter.
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <input
+                          placeholder="Full name"
+                          value={d.name}
+                          onChange={(e) => patchRow(setDoctorRows, i, 'name', e.target.value)}
+                          className={fieldCls}
+                        />
+                        <input
+                          type="email"
+                          placeholder="Login email *"
+                          value={d.email}
+                          onChange={(e) => patchRow(setDoctorRows, i, 'email', e.target.value)}
+                          className={fieldCls}
+                        />
+                        <input
+                          type="password"
+                          placeholder="Password *"
+                          value={d.password}
+                          onChange={(e) => patchRow(setDoctorRows, i, 'password', e.target.value)}
+                          className={fieldCls}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <div>
+                          <label className="block mb-1 text-[10px]">Department</label>
+                          <input
+                            list="known-departments"
+                            placeholder="e.g. Cardiology"
+                            value={d.department}
+                            onChange={(e) => patchRow(setDoctorRows, i, 'department', e.target.value)}
+                            className={fieldCls}
+                          />
+                        </div>
+                        <div>
+                          <label className="block mb-1 text-[10px]">Doctor type</label>
+                          <select
+                            value={d.doctorType}
+                            onChange={(e) => patchRow(setDoctorRows, i, 'doctorType', e.target.value)}
+                            className={`${fieldCls} cursor-pointer font-bold`}
+                          >
+                            {doctorTypes.map((dt) => (
+                              <option key={dt} value={dt}>
+                                {dt}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block mb-1 text-[10px]">Specialization</label>
+                          <input
+                            placeholder="e.g. Interventional Cardiology"
+                            value={d.specialization}
+                            onChange={(e) => patchRow(setDoctorRows, i, 'specialization', e.target.value)}
+                            className={fieldCls}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <div>
+                          <label className="block mb-1 text-[10px]">Cabin / room</label>
+                          <input
+                            placeholder="e.g. Cabin 101"
+                            value={d.currentRoom}
+                            onChange={(e) => patchRow(setDoctorRows, i, 'currentRoom', e.target.value)}
+                            className={fieldCls}
+                          />
+                        </div>
+                        <div>
+                          <label className="block mb-1 text-[10px]">Avg. checkup (min)</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={d.averageCheckupTime}
+                            onChange={(e) => patchRow(setDoctorRows, i, 'averageCheckupTime', e.target.value)}
+                            className={fieldCls}
+                          />
+                        </div>
+                        <div>
+                          <label className="block mb-1 text-[10px]">Daily OPD limit (0 = none)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={d.dailyTokenLimit}
+                            onChange={(e) => patchRow(setDoctorRows, i, 'dailyTokenLimit', e.target.value)}
+                            className={fieldCls}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setDoctorRows((p) => [...p, blankDoctor()])}
+                    className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add_circle</span> Add another
+                    doctor
+                  </button>
+                </div>
+              )}
+
+              {sectionApplies('lab') && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-black text-[var(--text-color)] flex items-center gap-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                    <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
+                      science
+                    </span>
+                    <span>Laboratory ({filledLabs.length})</span>
+                    {(activeType?.requires || []).includes('lab') && (
+                      <span className="text-[9px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
+                        Required
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-[var(--text-secondary)] font-semibold">
+                    Logins for the facility&apos;s own lab bench — they see the doctors&apos; test orders and
+                    upload the reports.
+                  </p>
+
+                  {labRows.map((l, i) => (
+                    <div key={i} className="grid grid-cols-1 md:grid-cols-7 gap-2 items-center">
+                      <input
+                        placeholder="Lab assistant name"
+                        value={l.name}
+                        onChange={(e) => patchRow(setLabRows, i, 'name', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <input
+                        placeholder="Username *"
+                        value={l.username}
+                        onChange={(e) => patchRow(setLabRows, i, 'username', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <input
+                        type="password"
+                        placeholder="Password *"
+                        value={l.password}
+                        onChange={(e) => patchRow(setLabRows, i, 'password', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <button
+                        type="button"
+                        title="Remove this lab account"
+                        disabled={labRows.length === 1}
+                        onClick={() => setLabRows((p) => p.filter((_, idx) => idx !== i))}
+                        className="px-2.5 py-2 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 disabled:opacity-30 font-black text-xs"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setLabRows((p) => [...p, blankLab()])}
+                    className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add_circle</span> Add another lab
+                    account
+                  </button>
+                </div>
+              )}
+
+              {sectionApplies('pharmacy') && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-black text-[var(--text-color)] flex items-center gap-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                    <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
+                      local_pharmacy
+                    </span>
+                    <span>Pharmacy / medical store ({filledPharmacy.length})</span>
+                    {(activeType?.requires || []).includes('pharmacy') && (
+                      <span className="text-[9px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
+                        Required
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-[var(--text-secondary)] font-semibold">
+                    One login per dispensing counter — they see the prescriptions doctors write here.
+                  </p>
+
+                  {pharmacyRows.length === 0 && (
+                    <p className="text-[11px] text-[var(--text-secondary)] font-medium italic">
+                      No pharmacy account yet.
+                    </p>
+                  )}
+                  {pharmacyRows.map((p, i) => (
+                    <div key={i} className="grid grid-cols-1 md:grid-cols-9 gap-2 items-center">
+                      <input
+                        placeholder="Pharmacist name"
+                        value={p.name}
+                        onChange={(e) => patchRow(setPharmacyRows, i, 'name', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <input
+                        placeholder="Username *"
+                        value={p.username}
+                        onChange={(e) => patchRow(setPharmacyRows, i, 'username', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <input
+                        type="password"
+                        placeholder="Password *"
+                        value={p.password}
+                        onChange={(e) => patchRow(setPharmacyRows, i, 'password', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <input
+                        placeholder="Counter name"
+                        value={p.counterNumber}
+                        onChange={(e) => patchRow(setPharmacyRows, i, 'counterNumber', e.target.value)}
+                        className={`${fieldCls} md:col-span-2`}
+                      />
+                      <button
+                        type="button"
+                        title="Remove this pharmacy account"
+                        onClick={() => setPharmacyRows((prev) => prev.filter((_, idx) => idx !== i))}
+                        className="px-2.5 py-2 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 font-black text-xs"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setPharmacyRows((prev) => [...prev, blankPharmacy()])}
+                    className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add_circle</span> Add a pharmacy
+                    counter
+                  </button>
+                </div>
+              )}
+
+              {/* Exactly what this submit is about to create, before it happens. */}
+              <div className="rounded-xl border border-[var(--border-color)]/40 bg-[var(--bg-color)]/50 p-4">
+                <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
+                  About to create
                 </p>
-                {pharmacists.map((p, i) => (
-                  <div
-                    key={i}
-                    className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center border-t border-dashed border-[var(--border-color)]/20 pt-3"
-                  >
-                    <input
-                      placeholder="Pharmacist Name"
-                      value={p.name || ''}
-                      onChange={(e) =>
-                        setPharmacists((prev) =>
-                          prev.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <input
-                      placeholder="Username *"
-                      value={p.username || ''}
-                      onChange={(e) =>
-                        setPharmacists((prev) =>
-                          prev.map((r, idx) => (idx === i ? { ...r, username: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <input
-                      type="password"
-                      placeholder="Password *"
-                      value={p.password || ''}
-                      onChange={(e) =>
-                        setPharmacists((prev) =>
-                          prev.map((r, idx) => (idx === i ? { ...r, password: e.target.value } : r))
-                        )
-                      }
-                      className={fieldCls}
-                    />
-                    <button
-                      type="button"
-                      title="Remove pharmacy"
-                      onClick={() => setPharmacists((prev) => prev.filter((_, idx) => idx !== i))}
-                      className="justify-self-start md:justify-self-end px-3 py-2 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 font-black text-[11px]"
+                <p className="text-xs font-bold text-[var(--text-color)] mt-1">
+                  {name || 'Unnamed facility'}{' '}
+                  <span className="text-[var(--text-secondary)] font-semibold">
+                    ({type}
+                    {(type === 'Clinic' || type === 'Medical') && clinicSubtype ? ` · ${clinicSubtype}` : ''}
+                    {city ? ` · ${city}` : ''})
+                  </span>
+                </p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {['staff', 'doctors', 'lab', 'pharmacy'].map((kind) => (
+                    <span
+                      key={kind}
+                      className={`text-[10px] font-black px-2 py-1 rounded-lg border ${
+                        filledCount[kind] > 0
+                          ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                          : (activeType?.requires || []).includes(kind)
+                            ? 'bg-rose-500/10 text-rose-500 border-rose-500/20'
+                            : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border-[var(--border-color)]/40'
+                      }`}
                     >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setPharmacists((prev) => [...prev, { name: '', username: '', password: '' }])
-                  }
-                  className="text-[11px] font-black text-[var(--primary-color)] hover:underline flex items-center gap-1"
-                >
-                  <span className="material-symbols-outlined text-[16px]">add_circle</span> Add a pharmacy /
-                  medical store account
-                </button>
+                      {filledCount[kind]} {SECTION_COUNT_LABEL[kind][filledCount[kind] === 1 ? 0 : 1]}
+                    </span>
+                  ))}
+                </div>
+                {missingRequired.length > 0 && (
+                  <p className="text-[11px] font-bold text-rose-500 mt-2">
+                    A {type} needs at least one{' '}
+                    {missingRequired.map((k) => SECTION_LABEL[k]).join(' and one ')} account before it can go
+                    live.
+                  </p>
+                )}
               </div>
 
               <button
@@ -1952,11 +2194,31 @@ export default function SuperAdminPortal() {
                       <label className="block mb-1">Department</label>
                       <input
                         type="text"
+                        list="known-departments-add"
                         placeholder="e.g. Cardiology"
                         value={addDepartment}
                         onChange={(e) => setAddDepartment(e.target.value)}
                         className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       />
+                      <datalist id="known-departments-add">
+                        {KNOWN_DEPARTMENTS.map((d) => (
+                          <option key={d} value={d} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="block mb-1">Doctor Type</label>
+                      <select
+                        value={addDoctorType}
+                        onChange={(e) => setAddDoctorType(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
+                      >
+                        {doctorTypes.map((dt) => (
+                          <option key={dt} value={dt}>
+                            {dt}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="block mb-1">Consultation Cabin Room</label>
@@ -1968,6 +2230,9 @@ export default function SuperAdminPortal() {
                         className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       />
                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                       <label className="block mb-1">Specialization</label>
                       <input
@@ -1975,6 +2240,26 @@ export default function SuperAdminPortal() {
                         placeholder="e.g. Heart Failure"
                         value={addSpecialization}
                         onChange={(e) => setAddSpecialization(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1">Avg. Checkup Time (min)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={addAverageCheckupTime}
+                        onChange={(e) => setAddAverageCheckupTime(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1">Daily OPD Limit (0 = unlimited)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={addDailyTokenLimit}
+                        onChange={(e) => setAddDailyTokenLimit(e.target.value)}
                         className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       />
                     </div>
@@ -2663,9 +2948,15 @@ export default function SuperAdminPortal() {
                               className="flex justify-between items-center bg-[var(--bg-color)] p-2 rounded-lg text-xs"
                             >
                               <div>
-                                <p className="font-extrabold text-[var(--text-color)]">{d.name}</p>
+                                <p className="font-extrabold text-[var(--text-color)] flex items-center gap-1.5">
+                                  {d.name}
+                                  <span className="text-[8px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-1.5 py-0.5 rounded-full">
+                                    {d.doctorType || 'Consultant'}
+                                  </span>
+                                </p>
                                 <p className="text-[10px] text-[var(--text-secondary)]">
                                   {d.department} • {d.currentRoom || 'Cabin'} ({d.availabilityStatus})
+                                  {d.dailyTokenLimit ? ` • cap ${d.dailyTokenLimit}/day` : ''}
                                 </p>
                               </div>
                               <button

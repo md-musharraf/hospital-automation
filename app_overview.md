@@ -131,6 +131,77 @@ environments** — Sunrise can charge ₹400 for a dressing with 5% tax while th
 district hospital charges ₹90 and nothing for consultation, and neither can see or
 change the other's rates, catalogue or invoices.
 
+### A9. "Hi" → pick any hospital → it lands on that hospital's desk
+
+The WhatsApp number belongs to the **platform**, not to one hospital. So a patient
+who messages **"hi"** is answered with the **full list of registered facilities**
+(name, city, type) before anything else — tap one, reply with its number, or search
+by city/name ("patna", "dental"). Their own last-visited facility is listed first,
+so a returning patient re-books in a single tap. Only then does the bot ask for a
+language, branded with the hospital they just picked.
+
+Everything after that point is written against **that** facility: its doctors, its
+token series, its queue, its rate card. Three things keep it honest:
+
+* A facility **QR deep-link** (`HI_<hospitalId>`), the facility's own web portal
+  page, and a WhatsApp number registered to **exactly one** facility all set
+  `facilityLocked` — those patients have already answered "which hospital?" and skip
+  the picker (a shared number matching several facilities deliberately does **not**
+  lock, or the first-registered hospital would silently swallow every patient).
+* Replying **HOSPITAL** re-opens the list at any point, even from a locked session.
+* The finished booking is announced as `remote-arrival` **only into
+  `hospital:<chosenId>`**, so it appears live on the right reception dashboard and
+  on no other.
+
+### A10. Special Reception Desk (`GET /staff/reception/arrivals`)
+
+Reception was built around the person standing at the counter. A patient who books
+from home over WhatsApp never stands there — nobody notices they are 78 and belong
+ahead of the queue, and nobody starts their bill. The **Special Reception Desk** is
+that missing counter: today's arrivals at this facility on one screen, each tagged
+with where it came from (`Token.bookingSource`: WhatsApp / QR Scan / Web Assistant /
+Reception), filtered by *booked from home*, *priority & emergency*, *bill not
+settled*, or everyone. From each row the desk can:
+
+* **Grant vulnerable-group priority** (senior / expecting / special-needs) on an
+  existing token — `PUT /staff/tokens/:id/priority` re-seats it in the doctor's
+  queue at its new tier, without re-registering the patient.
+* **Start or open the bill** in one tap, which creates the invoice at this
+  facility's own rates and drops the counter into the billing screen with it loaded.
+
+Counters across the top show arrivals today, how many came from WhatsApp vs the
+counter, how many are priority cases, how many still have no bill, and what has been
+collected. The whole view is strictly tenant-scoped and refreshes itself on
+`remote-arrival` / `billing-updated`.
+
+### A11. Type-driven Facility Onboarding (Super Admin panel)
+
+Registration starts with **what you are registering** — Hospital, Clinic, Medical
+store, Lab, or their government equivalents — picked as a card, not buried in a
+dropdown. That choice then drives the rest of the form, because a pathology lab has
+no OPD doctors and a medical store has no lab bench:
+
+* **Sections appear only if the type uses them.** `FACILITY_TYPE_RULES` (backend
+  `routes/auth.js`) declares what each type `requires` vs. merely `offers`; the panel
+  fetches the same table from `GET /super-admin/facility-types`, so the form can
+  never offer a shape the API then rejects. The lab/pharmacy sections are further
+  gated on the facility's "runs its own lab / pharmacy" toggles.
+* **A type's required account is enforced.** A Lab without a lab login, or a Medical
+  store without a pharmacy login, is refused with a message naming what is missing —
+  in the panel before submitting, and again server-side.
+* **Every role is a repeatable list.** Reception, doctors, lab and pharmacy are all
+  +/- row lists, so a hospital running three counters and four doctors is onboarded
+  in ONE registration. Previously only a single reception account could be created
+  at registration, forcing the admin back into the "add account" tab afterwards.
+* **Doctors carry their full profile:** department (offered from the twelve
+  departments smart triage actually recognises, free text still allowed),
+  **`doctorType`** (Consultant / Visiting / Resident / Surgeon / Emergency Officer /
+  General Physician), specialization, cabin, average checkup time and the daily OPD
+  token limit. The same fields — including doctor type — are on the "add an account
+  to an existing facility" tab and shown in the facility personnel console.
+* A live **"about to create"** tally shows the facility and the exact number of each
+  account the button is about to bring into existence.
+
 ### B. Emergency Queue Prioritization (SOS)
 * **Logic:** Staff members can trigger an **Emergency Override** flag during registration, or change an existing ticket to SOS.
 * **Priority Routing:** Emergency tokens are pushed to **Index 0** of the doctor's `activeQueue` array, instantly routing them to the top of the waitlist.
@@ -169,7 +240,7 @@ change the other's rates, catalogue or invoices.
 
 ### 2. Doctor (`DoctorSchema`)
 * Credentials and department classification.
-* Fields: `name`, `email`, `passwordHash`, `department`, `specialization`, `availabilityStatus` (`Available`, `In Surgery`, `On Break`), `averageCheckupTime`, `currentRoom`.
+* Fields: `name`, `email`, `passwordHash`, `department`, `specialization`, `doctorType` (`Consultant`, `Visiting`, `Resident`, `Surgeon`, `Emergency Officer`, `General Physician`), `availabilityStatus` (`Available`, `In Surgery`, `On Break`), `averageCheckupTime`, `dailyTokenLimit`, `currentRoom`.
 
 ### 3. Staff (`StaffSchema`)
 * Receptionist logins.
@@ -177,7 +248,7 @@ change the other's rates, catalogue or invoices.
 
 ### 4. Token (`TokenSchema`)
 * Active daily tickets in queue.
-* Fields: `tokenNumber` (e.g. `T-101`), `patient` (Reference), `doctor` (Reference), `tokenType` (`Regular` or `Emergency`), `status` (`Waiting`, `Active`, `Completed`, `Absent`), `symptoms`, `estimatedWaitTime`.
+* Fields: `tokenNumber` (e.g. `T-101`), `patient` (Reference), `doctor` (Reference), `tokenType` (`Regular` or `Emergency`), `priorityCategory` (`None`/`Senior`/`Pregnant`/`Disabled`), `bookingSource` (`Reception`/`WhatsApp`/`Web Assistant`/`QR Scan` — powers the Special Reception Desk), `status` (`Waiting`, `Active`, `Completed`, `Absent`), `symptoms`, `estimatedWaitTime`.
 
 ### 5. Queue (`QueueSchema`)
 * Coordinates cabin queues.
@@ -207,14 +278,22 @@ change the other's rates, catalogue or invoices.
 * `POST /staff/login` - Authenticates reception staff.
 * `POST /doctor/login` - Authenticates clinical doctors.
 
+### Super Admin Onboarding (`/api/v1/auth/super-admin`, admin secret header)
+* `GET /facility-types` - The onboarding vocabulary the admin panel builds its form from: every facility type with the accounts it `requires` vs. merely `offers`, plus the doctor types.
+* `POST /register-hospital` - Onboards a facility **and** its whole starting roster in one call: `staffMembers[]`, `doctors[]`, `labAssistants[]`, `pharmacists[]`.
+* `POST /register-doctor` / `register-staff` / `register-lab` / `register-pharmacist` - Adds one more account to an existing facility.
+* `GET /facility-data/:hospitalId` - Everyone registered at a facility (doctors, staff, lab, pharmacy, patients).
+
 ### Chat Routes (`/api/v1/chat`)
 * `POST /message` - Feeds client messages to the chatbot state machine and returns responses.
 
 ### Staff Actions (`/api/v1/staff`)
 * `GET /queues` - Fetches global queues and doctor parameters.
+* `GET /reception/arrivals` - Special Reception Desk: today's arrivals at this facility with their booking source, priority tier and live billing state.
 * `POST /tokens/walk-in` - Direct walk-in booking tool.
 * `PUT /tokens/:id/status` - Manually updates a token's status.
 * `PUT /tokens/:id/override` - Elevates a regular token to SOS.
+* `PUT /tokens/:id/priority` - Sets the vulnerable-group priority (senior / pregnant / special-needs) and re-seats the token in the queue.
 * `GET /reminders` - Fetches all scheduled reminders.
 * `POST /reminders/trigger` - Instantly processes and triggers pending reminders for testing.
 
