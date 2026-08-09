@@ -1,4 +1,5 @@
 const express = require('express');
+const { randomUUID } = require('crypto');
 const router = express.Router();
 const Invoice = require('../models/Invoice');
 const Patient = require('../models/Patient');
@@ -9,23 +10,182 @@ const { authenticateToken, ensureRole } = require('../middleware/auth');
 const ensureStaff = ensureRole('staff');
 const { logActivity, announceJourney } = require('../utils/realtime');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+const { getBillingConfig, priceOf, recalculateInvoice } = require('../utils/billingConfig');
 const logger = require('../utils/logger');
 
-// Helper: Recalculate subtotal, totalAmount, balanceDue
-function recalculateInvoice(invoice) {
-  invoice.subtotal = (invoice.items || []).reduce((acc, item) => acc + (item.totalPrice || 0), 0);
-  const disc = invoice.discount || 0;
-  const taxVal = invoice.tax || 0;
-  invoice.totalAmount = Math.max(0, invoice.subtotal - disc + taxVal);
-  invoice.balanceDue = Math.max(0, invoice.totalAmount - (invoice.amountPaid || 0));
-  return invoice;
+// Helper: Generate Unique Invoice Number, prefixed per facility so two hospitals
+// on the platform never hand a patient the same-looking invoice number.
+async function generateInvoiceNumber(hospital, config) {
+  const count = await Invoice.countDocuments({ hospital });
+  const prefix = (config && config.invoicePrefix) || 'INV';
+  return `${prefix}-${1000 + count + 1}`;
 }
 
-// Helper: Generate Unique Invoice Number
-async function generateInvoiceNumber(hospital) {
-  const count = await Invoice.countDocuments({ hospital });
-  return `INV-${1000 + count + 1}`;
-}
+// ---------------------------------------------------------------------------
+// Facility rate card ("this hospital's billing environment")
+// ---------------------------------------------------------------------------
+
+// GET this facility's rate card — seeded with starter prices on first call
+router.get('/config', authenticateToken, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const config = await getBillingConfig(hospital);
+    res.json(config);
+  } catch (error) {
+    logger.error('Error loading billing config', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PUT update this facility's rates, tax and invoice letterhead
+router.put('/config', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const config = await getBillingConfig(hospital);
+
+    const numericFields = [
+      'taxPercent',
+      'consultationFee',
+      'labTestPrice',
+      'urgentLabTestPrice',
+      'defaultMedicinePrice',
+      'registrationFee'
+    ];
+    for (const field of numericFields) {
+      if (req.body[field] !== undefined && !isNaN(parseFloat(req.body[field]))) {
+        config[field] = Math.max(0, parseFloat(req.body[field]));
+      }
+    }
+    if (config.taxPercent > 100) config.taxPercent = 100;
+
+    const textFields = [
+      'displayName',
+      'address',
+      'phone',
+      'gstin',
+      'footerNote',
+      'currencySymbol',
+      'invoicePrefix'
+    ];
+    for (const field of textFields) {
+      if (typeof req.body[field] === 'string') {
+        config[field] = req.body[field].trim();
+      }
+    }
+
+    config.updatedBy = req.user.username || 'Reception';
+    await config.save();
+
+    if (req.io) {
+      req.io.to(`hospital:${hospital}`).emit('billing-config-updated', { hospital });
+    }
+
+    res.json({ message: 'Billing rate card updated', config });
+  } catch (error) {
+    logger.error('Error updating billing config', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST add a chargeable service to this facility's catalogue
+router.post('/config/services', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const { category, name, price } = req.body;
+
+    if (!name || String(name).trim().length < 2) {
+      return res.status(400).json({ message: 'Service name is required (min 2 characters)' });
+    }
+    if (price === undefined || isNaN(parseFloat(price)) || parseFloat(price) < 0) {
+      return res.status(400).json({ message: 'A valid price is required' });
+    }
+
+    const config = await getBillingConfig(hospital);
+    const cleanName = String(name).trim();
+
+    const duplicate = (config.services || []).find(
+      (service) => String(service.name).toLowerCase() === cleanName.toLowerCase()
+    );
+    if (duplicate) {
+      return res.status(400).json({ message: 'This facility already charges for a service with that name' });
+    }
+
+    config.services.push({
+      _id: randomUUID(),
+      category: category || 'Other',
+      name: cleanName,
+      price: parseFloat(price),
+      active: true
+    });
+    config.updatedBy = req.user.username || 'Reception';
+    await config.save();
+
+    if (req.io) {
+      req.io.to(`hospital:${hospital}`).emit('billing-config-updated', { hospital });
+    }
+
+    res.status(201).json({ message: `${cleanName} added to the rate card`, config });
+  } catch (error) {
+    logger.error('Error adding billing service', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PUT edit one catalogue service (price change / rename / disable)
+router.put('/config/services/:serviceId', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const { serviceId } = req.params;
+    const { name, category, price, active } = req.body;
+
+    const config = await getBillingConfig(hospital);
+    const service = (config.services || []).find((entry) => String(entry._id) === String(serviceId));
+    if (!service) {
+      return res.status(404).json({ message: 'Service not found on this facility rate card' });
+    }
+
+    if (typeof name === 'string' && name.trim().length >= 2) service.name = name.trim();
+    if (category) service.category = category;
+    if (price !== undefined && !isNaN(parseFloat(price))) service.price = Math.max(0, parseFloat(price));
+    if (active !== undefined) service.active = Boolean(active);
+
+    config.updatedBy = req.user.username || 'Reception';
+    config.markModified('services');
+    await config.save();
+
+    if (req.io) {
+      req.io.to(`hospital:${hospital}`).emit('billing-config-updated', { hospital });
+    }
+
+    res.json({ message: 'Rate updated', config });
+  } catch (error) {
+    logger.error('Error updating billing service', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE remove a service from this facility's catalogue
+router.delete('/config/services/:serviceId', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const { serviceId } = req.params;
+
+    const config = await getBillingConfig(hospital);
+    config.services = (config.services || []).filter((service) => String(service._id) !== String(serviceId));
+    config.updatedBy = req.user.username || 'Reception';
+    config.markModified('services');
+    await config.save();
+
+    if (req.io) {
+      req.io.to(`hospital:${hospital}`).emit('billing-config-updated', { hospital });
+    }
+
+    res.json({ message: 'Service removed from rate card', config });
+  } catch (error) {
+    logger.error('Error deleting billing service', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 // GET all invoices for staff member's hospital tenant
 router.get('/invoices', authenticateToken, async (req, res) => {
@@ -61,18 +221,33 @@ router.get('/token/:tokenId', authenticateToken, async (req, res) => {
     let invoice = await Invoice.findOne({ token: tokenId, hospital }).populate('patient').populate('token');
 
     if (!invoice) {
-      // Auto-initialize invoice for token if it doesn't exist yet
-      const invoiceNumber = await generateInvoiceNumber(hospital);
-      const defaultItems = [
-        {
+      // Auto-initialize invoice for token if it doesn't exist yet, at THIS
+      // facility's rates — a hospital that charges nothing for consultation
+      // (fee set to 0) simply starts the patient on an empty bill.
+      const config = await getBillingConfig(hospital);
+      const invoiceNumber = await generateInvoiceNumber(hospital, config);
+      const defaultItems = [];
+
+      if (config.consultationFee > 0) {
+        defaultItems.push({
           category: 'Consultation',
           itemName: `OPD Doctor Consultation Fee (${token.doctor ? token.doctor.name : 'General'})`,
           quantity: 1,
-          unitPrice: 300,
-          totalPrice: 300,
+          unitPrice: config.consultationFee,
+          totalPrice: config.consultationFee,
           addedBy: 'System Auto-billing'
-        }
-      ];
+        });
+      }
+      if (config.registrationFee > 0) {
+        defaultItems.push({
+          category: 'Other',
+          itemName: 'Registration / File Charge',
+          quantity: 1,
+          unitPrice: config.registrationFee,
+          totalPrice: config.registrationFee,
+          addedBy: 'System Auto-billing'
+        });
+      }
 
       invoice = new Invoice({
         invoiceNumber,
@@ -83,7 +258,7 @@ router.get('/token/:tokenId', authenticateToken, async (req, res) => {
         items: defaultItems
       });
 
-      recalculateInvoice(invoice);
+      recalculateInvoice(invoice, config);
       await invoice.save();
       invoice = await Invoice.findById(invoice._id).populate('patient').populate('token');
     }
@@ -95,29 +270,74 @@ router.get('/token/:tokenId', authenticateToken, async (req, res) => {
   }
 });
 
-// POST create new patient invoice
+// POST open a bill for ANY patient — one already on file, or a walk-in who has
+// never been registered (dressing, injection, a test only: no doctor, no token).
 router.post('/invoices', authenticateToken, ensureStaff, async (req, res) => {
   try {
-    const { patientId, tokenId, items, discount, notes } = req.body;
+    const { patientId, tokenId, items, discount, notes, newPatient, addConsultationFee } = req.body;
     const hospital = req.user.hospital || 'general-hospital';
 
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-      return res.status(404).json({ message: 'Patient not found' });
+    let patient = null;
+
+    if (patientId) {
+      patient = await Patient.findById(patientId);
+      if (!patient || patient.hospital !== hospital) {
+        return res.status(404).json({ message: 'Patient not found at this facility' });
+      }
+    } else if (newPatient && newPatient.name && newPatient.phone) {
+      // Register the walk-in on the spot. If reception typed a phone number that
+      // already exists here, bill that existing record rather than failing on the
+      // per-facility unique phone index.
+      const existing = await Patient.findOne({ phone: String(newPatient.phone).trim(), hospital });
+      if (existing) {
+        patient = existing;
+      } else {
+        const parsedAge = parseInt(newPatient.age);
+        if (isNaN(parsedAge) || parsedAge < 1 || parsedAge > 130) {
+          return res.status(400).json({ message: 'Age must be a number between 1 and 130' });
+        }
+        if (!['Male', 'Female', 'Other'].includes(newPatient.gender)) {
+          return res.status(400).json({ message: 'Gender must be Male, Female, or Other' });
+        }
+        patient = new Patient({
+          name: String(newPatient.name).trim(),
+          phone: String(newPatient.phone).trim(),
+          age: parsedAge,
+          gender: newPatient.gender,
+          hospital
+        });
+        await patient.save();
+      }
+    } else {
+      return res.status(400).json({ message: 'Select an existing patient or provide new patient details' });
     }
 
-    const invoiceNumber = await generateInvoiceNumber(hospital);
+    const config = await getBillingConfig(hospital);
+    const invoiceNumber = await generateInvoiceNumber(hospital, config);
+
+    const lineItems = Array.isArray(items) ? [...items] : [];
+    if (addConsultationFee && config.consultationFee > 0) {
+      lineItems.unshift({
+        category: 'Consultation',
+        itemName: 'Doctor Consultation Fee',
+        quantity: 1,
+        unitPrice: config.consultationFee,
+        totalPrice: config.consultationFee,
+        addedBy: req.user.username || 'Reception'
+      });
+    }
+
     const invoice = new Invoice({
       invoiceNumber,
       hospital,
       patient: patient._id,
       token: tokenId || null,
-      items: items || [],
+      items: lineItems,
       discount: discount || 0,
       notes: notes || ''
     });
 
-    recalculateInvoice(invoice);
+    recalculateInvoice(invoice, config);
     await invoice.save();
 
     const populated = await Invoice.findById(invoice._id).populate('patient').populate('token');
@@ -125,6 +345,15 @@ router.post('/invoices', authenticateToken, ensureStaff, async (req, res) => {
     if (req.io) {
       req.io.to(`hospital:${hospital}`).emit('billing-updated', { invoiceId: invoice._id });
     }
+
+    await logActivity(req.io, {
+      hospital,
+      type: 'billing-opened',
+      role: 'staff',
+      actor: req.user.username || 'Reception',
+      message: `Opened bill ${invoiceNumber} for ${patient.name}.`,
+      severity: 'info'
+    });
 
     res.status(201).json({ message: 'Invoice generated successfully', invoice: populated });
   } catch (error) {
@@ -137,12 +366,8 @@ router.post('/invoices', authenticateToken, ensureStaff, async (req, res) => {
 router.post('/invoices/:id/items', authenticateToken, ensureStaff, async (req, res) => {
   try {
     const { id } = req.params;
-    const { category, itemName, quantity, unitPrice } = req.body;
+    const { serviceId, quantity } = req.body;
     const hospital = req.user.hospital || 'general-hospital';
-
-    if (!itemName || unitPrice === undefined || isNaN(parseFloat(unitPrice))) {
-      return res.status(400).json({ message: 'Valid itemName and unitPrice are required' });
-    }
 
     const invoice = await Invoice.findById(id);
     if (!invoice || invoice.hospital !== hospital) {
@@ -153,13 +378,36 @@ router.post('/invoices/:id/items', authenticateToken, ensureStaff, async (req, r
       return res.status(400).json({ message: 'Cannot modify a discharged invoice' });
     }
 
+    const config = await getBillingConfig(hospital);
+
+    // Two ways to charge: pick a service off this facility's rate card (the
+    // price is then resolved here, so the counter can never bill a stale
+    // number), or type a one-off charge that has no catalogue entry.
+    let category = req.body.category;
+    let itemName = req.body.itemName;
+    let unitPrice = req.body.unitPrice;
+
+    if (serviceId) {
+      const service = (config.services || []).find((entry) => String(entry._id) === String(serviceId));
+      if (!service) {
+        return res.status(404).json({ message: 'Service not found on this facility rate card' });
+      }
+      category = service.category;
+      itemName = service.name;
+      unitPrice = service.price;
+    }
+
+    if (!itemName || unitPrice === undefined || isNaN(parseFloat(unitPrice))) {
+      return res.status(400).json({ message: 'Valid itemName and unitPrice are required' });
+    }
+
     const qty = Math.max(1, parseInt(quantity) || 1);
     const price = Math.max(0, parseFloat(unitPrice));
     const totalPrice = qty * price;
 
     invoice.items.push({
       category: category || 'Other',
-      itemName: itemName.trim(),
+      itemName: String(itemName).trim(),
       quantity: qty,
       unitPrice: price,
       totalPrice,
@@ -167,7 +415,7 @@ router.post('/invoices/:id/items', authenticateToken, ensureStaff, async (req, r
       addedAt: new Date()
     });
 
-    recalculateInvoice(invoice);
+    recalculateInvoice(invoice, config);
     await invoice.save();
 
     const updated = await Invoice.findById(id).populate('patient').populate('token');
@@ -216,7 +464,7 @@ router.delete('/invoices/:id/items/:itemId', authenticateToken, ensureStaff, asy
     }
 
     invoice.items = invoice.items.filter((item) => String(item._id) !== String(itemId));
-    recalculateInvoice(invoice);
+    recalculateInvoice(invoice, await getBillingConfig(hospital));
     await invoice.save();
 
     const updated = await Invoice.findById(id).populate('patient').populate('token');
@@ -255,6 +503,7 @@ router.post('/invoices/:id/sync-prescriptions', authenticateToken, ensureStaff, 
       return res.status(404).json({ message: 'Linked token not found' });
     }
 
+    const config = await getBillingConfig(hospital);
     let addedCount = 0;
 
     // 1. Sync Prescribed Medicines
@@ -265,9 +514,13 @@ router.post('/invoices/:id/sync-prescriptions', authenticateToken, ensureStaff, 
           (i) => i.category === 'Medicine' && i.itemName.toLowerCase() === med.name.toLowerCase()
         );
         if (!exists) {
-          // Price lookup from inventory stock or default ₹50
+          // Price authority, in order: this facility's pharmacy stock → its rate
+          // card → its configured default medicine price.
           const stockMed = await Medicine.findOne({ hospital, name: new RegExp(med.name, 'i') });
-          const unitPrice = stockMed && stockMed.unitPrice ? stockMed.unitPrice : 50;
+          const unitPrice =
+            stockMed && stockMed.unitPrice
+              ? stockMed.unitPrice
+              : priceOf(config, 'Medicine', med.name, config.defaultMedicinePrice);
 
           invoice.items.push({
             category: 'Medicine',
@@ -291,7 +544,10 @@ router.post('/invoices/:id/sync-prescriptions', authenticateToken, ensureStaff, 
           (i) => i.category === 'Lab Test' && i.itemName.toLowerCase().includes(lab.testName.toLowerCase())
         );
         if (!exists) {
-          const unitPrice = lab.urgency === 'Urgent' ? 500 : 350;
+          // A named test on the rate card wins; otherwise the facility's flat
+          // routine/urgent test price.
+          const fallback = lab.urgency === 'Urgent' ? config.urgentLabTestPrice : config.labTestPrice;
+          const unitPrice = priceOf(config, 'Lab Test', lab.testName, fallback);
           invoice.items.push({
             category: 'Lab Test',
             itemName: `Lab: ${lab.testName} (${lab.urgency || 'Routine'})`,
@@ -306,7 +562,7 @@ router.post('/invoices/:id/sync-prescriptions', authenticateToken, ensureStaff, 
       }
     }
 
-    recalculateInvoice(invoice);
+    recalculateInvoice(invoice, config);
     await invoice.save();
 
     const updated = await Invoice.findById(id).populate('patient').populate('token');
@@ -352,7 +608,8 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
       invoice.notes = notes;
     }
 
-    recalculateInvoice(invoice);
+    const config = await getBillingConfig(hospital);
+    recalculateInvoice(invoice, config);
 
     const paid = parseFloat(amountPaid) || invoice.totalAmount;
     invoice.amountPaid = paid;
@@ -387,14 +644,27 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
 
     // Send WhatsApp Discharge Invoice Receipt to Patient
     if (invoice.patient && invoice.patient.phone) {
+      // The receipt carries the facility's own letterhead, currency and closing
+      // note — a patient of Sunrise Clinic should never receive a message
+      // branded as some other hospital on the platform.
+      const cur = config.currencySymbol || '₹';
+      const facilityName = (config.displayName || invoice.hospital).toUpperCase();
+      const itemLines = (invoice.items || [])
+        .map((item) => `• ${item.itemName} x${item.quantity} — ${cur}${item.totalPrice}`)
+        .join('\n');
+
       const receiptMsg =
-        `🏥 DISCHARGE INVOICE SUMMARY — ${invoice.hospital.toUpperCase()}\n` +
+        `🏥 DISCHARGE INVOICE SUMMARY — ${facilityName}\n` +
         `Patient: ${invoice.patient.name}\n` +
-        `Invoice #: ${invoice.invoiceNumber}\n` +
-        `Total Amount: ₹${invoice.totalAmount}\n` +
-        `Amount Paid: ₹${invoice.amountPaid} (${invoice.paymentMethod})\n` +
-        `Balance Due: ₹${invoice.balanceDue}\n\n` +
-        `Thank you for choosing CareeAi Health. Get well soon! 🙏`;
+        `Invoice #: ${invoice.invoiceNumber}\n\n` +
+        `${itemLines}\n\n` +
+        `Subtotal: ${cur}${invoice.subtotal}\n` +
+        (invoice.discount > 0 ? `Discount: -${cur}${invoice.discount}\n` : '') +
+        (invoice.tax > 0 ? `Tax (${config.taxPercent}%): ${cur}${invoice.tax}\n` : '') +
+        `Total Amount: ${cur}${invoice.totalAmount}\n` +
+        `Amount Paid: ${cur}${invoice.amountPaid} (${invoice.paymentMethod})\n` +
+        `Balance Due: ${cur}${invoice.balanceDue}\n\n` +
+        `${config.footerNote || 'Thank you. Get well soon!'} 🙏`;
       try {
         await sendWhatsAppNotification(invoice.patient.phone, receiptMsg);
       } catch (waErr) {

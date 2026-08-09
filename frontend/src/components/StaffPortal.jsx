@@ -7,6 +7,20 @@ import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
 import HelpPanel from './HelpPanel';
 
+/** Colour per billing category, so the counter can pick a charge by shape as
+ *  well as by reading it — the same categories the Invoice schema allows. */
+const CATEGORY_CHIP = {
+  Medicine: 'bg-teal-500/10 text-teal-600 hover:bg-teal-500/20',
+  'Lab Test': 'bg-sky-500/10 text-sky-600 hover:bg-sky-500/20',
+  Consultation: 'bg-indigo-500/10 text-indigo-600 hover:bg-indigo-500/20',
+  'Nursing / Bandage': 'bg-amber-500/10 text-amber-600 hover:bg-amber-500/20',
+  'Room / Bed': 'bg-purple-500/10 text-purple-600 hover:bg-purple-500/20',
+  'Equipment / Consumable': 'bg-rose-500/10 text-rose-600 hover:bg-rose-500/20',
+  Other: 'bg-zinc-500/10 text-zinc-500 hover:bg-zinc-500/20'
+};
+
+const BILLING_CATEGORIES = Object.keys(CATEGORY_CHIP);
+
 export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
   const [username, setUsername] = useState('alice_staff');
   const [password, setPassword] = useState('password123');
@@ -214,6 +228,30 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const [addItemSuccess, setAddItemSuccess] = useState('');
   const [addItemError, setAddItemError] = useState('');
 
+  // This facility's own rate card — every price shown at the counter comes from
+  // here, never from a constant in this file. A second hospital on the platform
+  // gets its own document and therefore its own prices, tax and letterhead.
+  const [billingConfig, setBillingConfig] = useState(null);
+  const [showRateCardModal, setShowRateCardModal] = useState(false);
+  const [rateForm, setRateForm] = useState(null);
+  const [rateError, setRateError] = useState('');
+  const [rateSuccess, setRateSuccess] = useState('');
+  const [newSvcCategory, setNewSvcCategory] = useState('Nursing / Bandage');
+  const [newSvcName, setNewSvcName] = useState('');
+  const [newSvcPrice, setNewSvcPrice] = useState('');
+
+  // Open a bill for any patient — registered or a walk-in with no token at all.
+  const [showNewBillModal, setShowNewBillModal] = useState(false);
+  const [newBillMode, setNewBillMode] = useState('existing');
+  const [newBillPatientId, setNewBillPatientId] = useState('');
+  const [newBillSearch, setNewBillSearch] = useState('');
+  const [newBillName, setNewBillName] = useState('');
+  const [newBillPhone, setNewBillPhone] = useState('');
+  const [newBillAge, setNewBillAge] = useState('');
+  const [newBillGender, setNewBillGender] = useState('Male');
+  const [newBillConsult, setNewBillConsult] = useState(true);
+  const [newBillError, setNewBillError] = useState('');
+
   const [showDischargeModal, setShowDischargeModal] = useState(false);
   const [dischargeAmountPaid, setDischargeAmountPaid] = useState('');
   const [dischargeMethod, setDischargeMethod] = useState('Cash');
@@ -240,6 +278,118 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       }
     } catch (err) {
       console.error('Error loading billing invoices:', err);
+    }
+  };
+
+  const loadBillingConfig = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/config`, {
+        headers: { Authorization: `Bearer ${staffToken}` }
+      });
+      if (res.ok) setBillingConfig(await res.json());
+    } catch (err) {
+      console.error('Error loading facility rate card:', err);
+    }
+  };
+
+  const currency = billingConfig?.currencySymbol || '₹';
+
+  const handleCreateInvoice = async (e) => {
+    e.preventDefault();
+    setNewBillError('');
+
+    const body = { addConsultationFee: newBillConsult };
+    if (newBillMode === 'existing') {
+      if (!newBillPatientId) {
+        setNewBillError('Select a patient from the list.');
+        return;
+      }
+      body.patientId = newBillPatientId;
+    } else {
+      body.newPatient = {
+        name: newBillName,
+        phone: newBillPhone,
+        age: newBillAge,
+        gender: newBillGender
+      };
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/invoices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not open the bill');
+
+      setSelectedInvoice(data.invoice);
+      setShowNewBillModal(false);
+      setNewBillName('');
+      setNewBillPhone('');
+      setNewBillAge('');
+      setNewBillPatientId('');
+      setNewBillSearch('');
+      loadInvoices();
+      loadData();
+    } catch (err) {
+      setNewBillError(err.message);
+    }
+  };
+
+  const handleSaveRateCard = async (e) => {
+    e.preventDefault();
+    setRateError('');
+    setRateSuccess('');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+        body: JSON.stringify(rateForm)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not save the rate card');
+      setBillingConfig(data.config);
+      setRateSuccess('Rate card saved for this hospital.');
+      setTimeout(() => setRateSuccess(''), 2500);
+    } catch (err) {
+      setRateError(err.message);
+    }
+  };
+
+  const handleAddService = async (e) => {
+    e.preventDefault();
+    setRateError('');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/config/services`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+        body: JSON.stringify({
+          category: newSvcCategory,
+          name: newSvcName,
+          price: parseFloat(newSvcPrice) || 0
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not add the service');
+      setBillingConfig(data.config);
+      setNewSvcName('');
+      setNewSvcPrice('');
+    } catch (err) {
+      setRateError(err.message);
+    }
+  };
+
+  const handleDeleteService = async (serviceId) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/billing/config/services/${serviceId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${staffToken}` }
+      });
+      const data = await res.json();
+      if (res.ok) setBillingConfig(data.config);
+    } catch (err) {
+      console.error('Error removing service:', err);
     }
   };
 
@@ -436,6 +586,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     loadData();
     loadOverview();
     loadInvoices();
+    loadBillingConfig();
 
     socket.emit('join-room', 'queue:global');
 
@@ -477,6 +628,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   });
   useLiveRefresh(['journey-updated', 'lab-updated', 'doctor-status-update', 'stock-alert'], loadOverview);
   useLiveRefresh(['billing-updated', 'patient-discharged'], loadInvoices);
+  // Another counter changing a price must not leave this screen quoting the old
+  // one — the rate card is facility-wide state, so it refreshes like the queue.
+  useLiveRefresh(['billing-config-updated'], loadBillingConfig);
 
   useEffect(() => {
     if (!stockAlert) return undefined;
@@ -1864,12 +2018,16 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   </h3>
                   <p className="text-xs text-[var(--text-secondary)] font-medium mt-0.5">
                     Track daily medicines (dawa), lab tests, bandages, room charges, and generate final
-                    discharge invoices.
+                    discharge invoices — at{' '}
+                    <span className="font-bold text-teal-600">
+                      {billingConfig?.displayName || staffUser?.hospital || 'this facility'}
+                    </span>
+                    &apos;s own rates.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3 w-full md:w-auto">
-                  <div className="relative flex-1 md:w-64">
+                <div className="flex items-center gap-3 w-full md:w-auto flex-wrap">
+                  <div className="relative flex-1 md:w-56">
                     <span className="material-symbols-outlined absolute left-3 top-2.5 text-[18px] text-[var(--text-secondary)]">
                       search
                     </span>
@@ -1881,6 +2039,29 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl pl-9 pr-4 py-2 text-xs font-bold text-[var(--text-color)] outline-none focus:border-teal-500"
                     />
                   </div>
+                  <button
+                    onClick={() => {
+                      setNewBillError('');
+                      setShowNewBillModal(true);
+                    }}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1"
+                    title="Open a bill for any patient — even a walk-in with no token"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">receipt_long</span>
+                    <span>New Bill</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setRateForm({ ...(billingConfig || {}) });
+                      setRateError('');
+                      setShowRateCardModal(true);
+                    }}
+                    className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] hover:border-teal-500 text-[var(--text-color)] font-bold text-xs rounded-xl transition-all flex items-center space-x-1"
+                    title="Set this hospital's own prices, tax and invoice letterhead"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">price_change</span>
+                    <span>Rate Card</span>
+                  </button>
                   <button
                     onClick={loadInvoices}
                     className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1"
@@ -2115,17 +2296,35 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         <div className="w-full sm:w-64 space-y-1.5 border-t sm:border-t-0 sm:border-l border-[var(--border-color)]/30 pt-3 sm:pt-0 sm:pl-4 text-right">
                           <div className="flex justify-between text-[var(--text-secondary)]">
                             <span>Subtotal:</span>
-                            <span>₹{selectedInvoice.subtotal}</span>
+                            <span>
+                              {currency}
+                              {selectedInvoice.subtotal}
+                            </span>
                           </div>
                           {selectedInvoice.discount > 0 && (
                             <div className="flex justify-between text-emerald-600">
                               <span>Discount:</span>
-                              <span>-₹{selectedInvoice.discount}</span>
+                              <span>
+                                -{currency}
+                                {selectedInvoice.discount}
+                              </span>
+                            </div>
+                          )}
+                          {selectedInvoice.tax > 0 && (
+                            <div className="flex justify-between text-[var(--text-secondary)]">
+                              <span>Tax ({billingConfig?.taxPercent || 0}%):</span>
+                              <span>
+                                {currency}
+                                {selectedInvoice.tax}
+                              </span>
                             </div>
                           )}
                           <div className="flex justify-between text-base font-black text-[var(--text-color)] pt-1 border-t border-[var(--border-color)]/30">
                             <span>Total Amount:</span>
-                            <span className="text-teal-600">₹{selectedInvoice.totalAmount}</span>
+                            <span className="text-teal-600">
+                              {currency}
+                              {selectedInvoice.totalAmount}
+                            </span>
                           </div>
                           <div className="flex justify-between text-xs font-bold pt-1">
                             <span className="text-[var(--text-secondary)]">
@@ -2367,56 +2566,50 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </div>
             )}
 
-            {/* Quick Presets */}
+            {/* This facility's rate card — one tap fills the charge. Prices come
+                from the hospital's own catalogue, so nothing here is hardcoded. */}
             <div className="mb-4 space-y-1.5">
-              <label className="text-[10px] font-extrabold uppercase text-[var(--text-secondary)]">
-                Quick Presets:
-              </label>
-              <div className="flex flex-wrap gap-1.5 text-[10px]">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-extrabold uppercase text-[var(--text-secondary)]">
+                  {billingConfig?.displayName || 'Facility'} Rate Card
+                </label>
                 <button
                   type="button"
                   onClick={() => {
-                    setAddItemCategory('Medicine');
-                    setAddItemName('Paracetamol 500mg');
-                    setAddItemPrice('20');
+                    setRateForm({ ...(billingConfig || {}) });
+                    setShowAddItemModal(false);
+                    setShowRateCardModal(true);
                   }}
-                  className="px-2 py-1 bg-teal-500/10 text-teal-600 rounded-lg font-bold hover:bg-teal-500/20"
+                  className="text-[10px] font-bold text-teal-600 hover:underline"
                 >
-                  💊 Dawa (Paracetamol ₹20)
+                  Edit prices
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddItemCategory('Lab Test');
-                    setAddItemName('CBC Blood Test');
-                    setAddItemPrice('350');
-                  }}
-                  className="px-2 py-1 bg-sky-500/10 text-sky-600 rounded-lg font-bold hover:bg-sky-500/20"
-                >
-                  🧪 Test (CBC ₹350)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddItemCategory('Nursing / Bandage');
-                    setAddItemName('Wound Bandage & Dressing');
-                    setAddItemPrice('150');
-                  }}
-                  className="px-2 py-1 bg-amber-500/10 text-amber-600 rounded-lg font-bold hover:bg-amber-500/20"
-                >
-                  🩹 Bandage (₹150)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddItemCategory('Room / Bed');
-                    setAddItemName('Daily General Bed Charge');
-                    setAddItemPrice('500');
-                  }}
-                  className="px-2 py-1 bg-purple-500/10 text-purple-600 rounded-lg font-bold hover:bg-purple-500/20"
-                >
-                  🛌 Daily Bed (₹500)
-                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5 text-[10px] max-h-32 overflow-y-auto">
+                {(billingConfig?.services || []).filter((svc) => svc.active !== false).length === 0 ? (
+                  <span className="text-[10px] text-[var(--text-secondary)] italic">
+                    No services priced yet — add them from the Rate Card.
+                  </span>
+                ) : (
+                  (billingConfig.services || [])
+                    .filter((svc) => svc.active !== false)
+                    .map((svc) => (
+                      <button
+                        key={svc._id || svc.name}
+                        type="button"
+                        onClick={() => {
+                          setAddItemCategory(svc.category);
+                          setAddItemName(svc.name);
+                          setAddItemPrice(String(svc.price));
+                        }}
+                        className={`px-2 py-1 rounded-lg font-bold transition-colors ${CATEGORY_CHIP[svc.category] || CATEGORY_CHIP.Other}`}
+                        title={`${svc.category} — ${currency}${svc.price}`}
+                      >
+                        {svc.name} ({currency}
+                        {svc.price})
+                      </button>
+                    ))
+                )}
               </div>
             </div>
 
@@ -2599,10 +2792,19 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       {showReceiptModal && selectedInvoice && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white text-zinc-900 rounded-2xl max-w-lg w-full p-6 shadow-2xl animate-fade-in relative text-left max-h-[90vh] overflow-y-auto">
-            {/* Header */}
+            {/* Letterhead — the facility that actually treated the patient */}
             <div className="text-center border-b pb-4 mb-4">
-              <h2 className="text-xl font-extrabold tracking-tight text-teal-700">CAREEAI HEALTHCARE</h2>
-              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
+              <h2 className="text-xl font-extrabold tracking-tight text-teal-700 uppercase">
+                {billingConfig?.displayName || selectedInvoice.hospital || 'Hospital'}
+              </h2>
+              {billingConfig?.address && (
+                <p className="text-[10px] text-zinc-500 font-medium">{billingConfig.address}</p>
+              )}
+              <p className="text-[10px] text-zinc-500 font-medium">
+                {billingConfig?.phone ? `Ph: ${billingConfig.phone}` : ''}
+                {billingConfig?.gstin ? `  |  GSTIN: ${billingConfig.gstin}` : ''}
+              </p>
+              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mt-1">
                 Official Discharge Summary & Invoice Receipt
               </p>
               <p className="text-[10px] text-zinc-400">Date: {new Date().toLocaleString()}</p>
@@ -2642,10 +2844,21 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 <tbody className="divide-y divide-zinc-100 font-medium text-[11px]">
                   {(selectedInvoice.items || []).map((it, idx) => (
                     <tr key={idx}>
-                      <td className="py-2">{it.itemName}</td>
+                      <td className="py-2">
+                        <span className="text-[9px] uppercase text-zinc-400 font-bold block">
+                          {it.category}
+                        </span>
+                        {it.itemName}
+                      </td>
                       <td className="py-2 text-center">{it.quantity}</td>
-                      <td className="py-2 text-right">₹{it.unitPrice}</td>
-                      <td className="py-2 text-right font-bold">₹{it.totalPrice}</td>
+                      <td className="py-2 text-right">
+                        {currency}
+                        {it.unitPrice}
+                      </td>
+                      <td className="py-2 text-right font-bold">
+                        {currency}
+                        {it.totalPrice}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2656,22 +2869,60 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             <div className="border-t pt-3 space-y-1 text-xs text-right font-bold">
               <div className="flex justify-between text-zinc-500">
                 <span>Subtotal:</span>
-                <span>₹{selectedInvoice.subtotal}</span>
+                <span>
+                  {currency}
+                  {selectedInvoice.subtotal}
+                </span>
               </div>
               {selectedInvoice.discount > 0 && (
                 <div className="flex justify-between text-emerald-600">
                   <span>Discount:</span>
-                  <span>-₹{selectedInvoice.discount}</span>
+                  <span>
+                    -{currency}
+                    {selectedInvoice.discount}
+                  </span>
+                </div>
+              )}
+              {selectedInvoice.tax > 0 && (
+                <div className="flex justify-between text-zinc-500">
+                  <span>Tax ({billingConfig?.taxPercent || 0}%):</span>
+                  <span>
+                    {currency}
+                    {selectedInvoice.tax}
+                  </span>
                 </div>
               )}
               <div className="flex justify-between text-base font-extrabold text-teal-800 pt-1 border-t">
                 <span>Total Bill Amount:</span>
-                <span>₹{selectedInvoice.totalAmount}</span>
+                <span>
+                  {currency}
+                  {selectedInvoice.totalAmount}
+                </span>
               </div>
               <div className="flex justify-between text-xs text-zinc-600 pt-1">
                 <span>Paid ({selectedInvoice.paymentMethod}):</span>
-                <span className="text-emerald-600">₹{selectedInvoice.amountPaid}</span>
+                <span className="text-emerald-600">
+                  {currency}
+                  {selectedInvoice.amountPaid}
+                </span>
               </div>
+              {selectedInvoice.balanceDue > 0 && (
+                <div className="flex justify-between text-xs text-amber-600">
+                  <span>Balance Due:</span>
+                  <span>
+                    {currency}
+                    {selectedInvoice.balanceDue}
+                  </span>
+                </div>
+              )}
+              {selectedInvoice.notes && (
+                <p className="text-[10px] text-zinc-500 font-medium text-left pt-2 border-t mt-2">
+                  Remarks: {selectedInvoice.notes}
+                </p>
+              )}
+              <p className="text-[10px] text-zinc-400 font-medium text-center pt-3">
+                {billingConfig?.footerNote || 'Thank you. Get well soon!'}
+              </p>
             </div>
 
             {/* Footer Buttons */}
@@ -2686,6 +2937,337 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               <button
                 onClick={() => setShowReceiptModal(false)}
                 className="px-5 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-500"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Open a Bill for Any Patient (registered or walk-in) */}
+      {showNewBillModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl max-w-lg w-full p-6 shadow-2xl animate-fade-in relative text-[var(--text-color)] text-left max-h-[90vh] overflow-y-auto">
+            <h3 className="font-extrabold text-base mb-1 flex items-center space-x-2 text-emerald-600">
+              <span className="material-symbols-outlined text-[22px]">receipt_long</span>
+              <span>Open a New Bill</span>
+            </h3>
+            <p className="text-[11px] text-[var(--text-secondary)] font-medium mb-4 pb-3 border-b border-[var(--border-color)]/30">
+              For any patient — someone already on file, or a walk-in who only needs a dressing, an injection
+              or a test and has no token.
+            </p>
+
+            {newBillError && (
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl font-bold">
+                {newBillError}
+              </div>
+            )}
+
+            <div className="flex gap-2 mb-4 text-xs font-bold">
+              {[
+                { id: 'existing', label: 'Existing Patient' },
+                { id: 'new', label: 'New Walk-in' }
+              ].map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => setNewBillMode(mode.id)}
+                  className={`flex-1 py-2 rounded-xl border transition-all ${
+                    newBillMode === mode.id
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-[var(--bg-color)] border-[var(--border-color)] text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleCreateInvoice} className="space-y-4 text-xs">
+              {newBillMode === 'existing' ? (
+                <div className="space-y-2">
+                  <label className="block font-bold">Find Patient</label>
+                  <input
+                    type="text"
+                    placeholder="Search by name or phone..."
+                    value={newBillSearch}
+                    onChange={(e) => setNewBillSearch(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                  />
+                  <div className="max-h-48 overflow-y-auto border border-[var(--border-color)]/40 rounded-xl divide-y divide-[var(--border-color)]/20">
+                    {patients
+                      .filter((p) => {
+                        const q = newBillSearch.toLowerCase();
+                        if (!q) return true;
+                        return (p.name || '').toLowerCase().includes(q) || (p.phone || '').includes(q);
+                      })
+                      .slice(0, 40)
+                      .map((p) => (
+                        <button
+                          key={p._id}
+                          type="button"
+                          onClick={() => setNewBillPatientId(p._id)}
+                          className={`w-full text-left p-2.5 transition-colors ${
+                            newBillPatientId === p._id
+                              ? 'bg-emerald-500/10 text-emerald-600'
+                              : 'hover:bg-[var(--bg-color)]'
+                          }`}
+                        >
+                          <span className="font-extrabold">{p.name}</span>
+                          <span className="text-[10px] text-[var(--text-secondary)] block">
+                            {p.phone} • {p.age}y • {p.gender}
+                          </span>
+                        </button>
+                      ))}
+                    {patients.length === 0 && (
+                      <p className="p-4 text-center text-[var(--text-secondary)] italic">
+                        No patients registered yet.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block font-bold mb-1">Patient Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={newBillName}
+                      onChange={(e) => setNewBillName(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold mb-1">Phone Number</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="+91..."
+                      value={newBillPhone}
+                      onChange={(e) => setNewBillPhone(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold mb-1">Age</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="130"
+                        required
+                        value={newBillAge}
+                        onChange={(e) => setNewBillAge(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold mb-1">Gender</label>
+                      <select
+                        value={newBillGender}
+                        onChange={(e) => setNewBillGender(e.target.value)}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                      >
+                        <option>Male</option>
+                        <option>Female</option>
+                        <option>Other</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 font-bold cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newBillConsult}
+                  onChange={(e) => setNewBillConsult(e.target.checked)}
+                  className="accent-emerald-600 w-4 h-4"
+                />
+                <span>
+                  Start with the consultation fee ({currency}
+                  {billingConfig?.consultationFee ?? 0})
+                </span>
+              </label>
+
+              <div className="flex justify-end space-x-3 pt-4 border-t border-[var(--border-color)]/30">
+                <button
+                  type="button"
+                  onClick={() => setShowNewBillModal(false)}
+                  className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] font-bold rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-md"
+                >
+                  Open Bill
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 9. Facility Rate Card — this hospital's own billing environment */}
+      {showRateCardModal && rateForm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl max-w-2xl w-full p-6 shadow-2xl animate-fade-in relative text-[var(--text-color)] text-left max-h-[90vh] overflow-y-auto">
+            <h3 className="font-extrabold text-base mb-1 flex items-center space-x-2 text-teal-600">
+              <span className="material-symbols-outlined text-[22px]">price_change</span>
+              <span>Rate Card — {billingConfig?.displayName || staffUser?.hospital}</span>
+            </h3>
+            <p className="text-[11px] text-[var(--text-secondary)] font-medium mb-4 pb-3 border-b border-[var(--border-color)]/30">
+              These prices, tax and letterhead apply to this hospital only. Other facilities on the platform
+              keep their own.
+            </p>
+
+            {rateError && (
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl font-bold">
+                {rateError}
+              </div>
+            )}
+            {rateSuccess && (
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-xs rounded-xl font-bold">
+                {rateSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveRateCard} className="space-y-4 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {[
+                  { key: 'consultationFee', label: 'Doctor Consultation Fee' },
+                  { key: 'labTestPrice', label: 'Lab Test (Routine)' },
+                  { key: 'urgentLabTestPrice', label: 'Lab Test (Urgent)' },
+                  { key: 'defaultMedicinePrice', label: 'Default Medicine Price' },
+                  { key: 'registrationFee', label: 'Registration / File Fee' },
+                  { key: 'taxPercent', label: 'Tax on Bill (%)' }
+                ].map((field) => (
+                  <div key={field.key}>
+                    <label className="block font-bold mb-1">{field.label}</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={rateForm[field.key] ?? 0}
+                      onChange={(e) => setRateForm({ ...rateForm, [field.key]: e.target.value })}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { key: 'displayName', label: 'Name on Invoice' },
+                  { key: 'phone', label: 'Contact Phone' },
+                  { key: 'address', label: 'Address on Invoice' },
+                  { key: 'gstin', label: 'GSTIN / Tax ID' },
+                  { key: 'footerNote', label: 'Invoice Footer Note' },
+                  { key: 'invoicePrefix', label: 'Invoice Number Prefix' }
+                ].map((field) => (
+                  <div key={field.key}>
+                    <label className="block font-bold mb-1">{field.label}</label>
+                    <input
+                      type="text"
+                      value={rateForm[field.key] || ''}
+                      onChange={(e) => setRateForm({ ...rateForm, [field.key]: e.target.value })}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl shadow-md"
+                >
+                  Save Rates
+                </button>
+              </div>
+            </form>
+
+            {/* Service catalogue */}
+            <div className="mt-6 pt-4 border-t border-[var(--border-color)]/30 space-y-3">
+              <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
+                Chargeable Services ({(billingConfig?.services || []).length})
+              </h4>
+
+              <div className="max-h-56 overflow-y-auto border border-[var(--border-color)]/40 rounded-xl divide-y divide-[var(--border-color)]/20 text-xs">
+                {(billingConfig?.services || []).map((svc) => (
+                  <div key={svc._id || svc.name} className="flex items-center justify-between p-2.5 gap-2">
+                    <div className="min-w-0">
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${CATEGORY_CHIP[svc.category] || CATEGORY_CHIP.Other}`}
+                      >
+                        {svc.category}
+                      </span>
+                      <span className="font-bold block truncate">{svc.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="font-extrabold text-teal-600">
+                        {currency}
+                        {svc.price}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteService(svc._id)}
+                        className="text-rose-500 hover:bg-rose-500/10 p-1 rounded"
+                        title="Remove from rate card"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">delete</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <form onSubmit={handleAddService} className="flex flex-col sm:flex-row gap-2 text-xs">
+                <select
+                  value={newSvcCategory}
+                  onChange={(e) => setNewSvcCategory(e.target.value)}
+                  className="bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                >
+                  {BILLING_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  required
+                  placeholder="Service name (e.g. Plaster / POD Cast)"
+                  value={newSvcName}
+                  onChange={(e) => setNewSvcName(e.target.value)}
+                  className="flex-1 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  required
+                  placeholder="Price"
+                  value={newSvcPrice}
+                  onChange={(e) => setNewSvcPrice(e.target.value)}
+                  className="sm:w-28 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl"
+                >
+                  Add
+                </button>
+              </form>
+            </div>
+
+            <div className="flex justify-end pt-4 mt-4 border-t border-[var(--border-color)]/30">
+              <button
+                type="button"
+                onClick={() => setShowRateCardModal(false)}
+                className="px-5 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-xs font-bold rounded-xl"
               >
                 Close
               </button>

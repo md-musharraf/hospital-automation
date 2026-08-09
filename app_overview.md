@@ -111,6 +111,26 @@ straight into the **existing pharmacy dispense list** — reusing that workflow 
 the patient is WhatsApped to collect from the pharmacy. The biggest doctor-load
 reducer for routine follow-ups.
 
+### A8. Reception Billing & the Per-Facility Rate Card (`BillingConfig`)
+
+Reception opens a bill for **any** patient — one already on file, or a walk-in with
+no token who only needs a dressing, an injection or a test — and charges it up
+through the visit: medicines (dawa), lab tests, bandages, bed/room days, equipment
+and one-off expenses. Doctor prescriptions and lab orders can be pulled in with one
+tap. At discharge the counter collects payment and the patient gets a fully itemised
+invoice: on screen, as a printable receipt, and over WhatsApp.
+
+The prices behind all of that live in **one `BillingConfig` document per hospital**,
+never in code. It holds that facility's consultation / lab / medicine defaults, its
+tax percentage, its invoice number prefix and the letterhead (name, address, phone,
+GSTIN, footer) printed on the bill, plus a catalogue of named chargeable services the
+counter adds with one click. A facility that has never opened the screen is seeded a
+starter rate card on first use, with its letterhead pre-filled from its `Hospital`
+record. **Two hospitals on the platform therefore bill in completely separate
+environments** — Sunrise can charge ₹400 for a dressing with 5% tax while the
+district hospital charges ₹90 and nothing for consultation, and neither can see or
+change the other's rates, catalogue or invoices.
+
 ### B. Emergency Queue Prioritization (SOS)
 * **Logic:** Staff members can trigger an **Emergency Override** flag during registration, or change an existing ticket to SOS.
 * **Priority Routing:** Emergency tokens are pushed to **Index 0** of the doctor's `activeQueue` array, instantly routing them to the top of the waitlist.
@@ -171,6 +191,14 @@ reducer for routine follow-ups.
 * Holds pending and sent patient re-visit reminders.
 * Fields: `patient` (Reference), `doctor` (Reference), `token` (Reference), `scheduledDate` (Date), `revisitDays` (Number), `status` (`Pending`, `Sent`, `Cancelled`), `message` (String), `sentAt` (Date).
 
+### 8. Invoice (`InvoiceSchema`)
+* One patient bill, itemised. Scoped by `hospital`; `token` is optional so walk-ins can be billed without a queue ticket.
+* Fields: `invoiceNumber`, `hospital`, `patient` (Reference), `token` (Reference), `status` (`Pending`, `Paid`, `Discharged`, `Cancelled`), `items[]` (category, itemName, quantity, unitPrice, totalPrice, addedBy), `subtotal`, `discount`, `tax`, `totalAmount`, `amountPaid`, `balanceDue`, `paymentMethod`, `dischargedAt`, `dischargedBy`, `notes`.
+
+### 9. BillingConfig (`BillingConfigSchema`)
+* **One per hospital** — that facility's billing environment. Nothing here is shared between tenants.
+* Fields: `hospital` (unique), letterhead (`displayName`, `address`, `phone`, `gstin`, `footerNote`), `currencySymbol`, `invoicePrefix`, `taxPercent`, default rates (`consultationFee`, `labTestPrice`, `urgentLabTestPrice`, `defaultMedicinePrice`, `registrationFee`), `services[]` (category, name, price, active), `updatedBy`.
+
 ---
 
 ## 3. Core API Endpoints
@@ -189,6 +217,18 @@ reducer for routine follow-ups.
 * `PUT /tokens/:id/override` - Elevates a regular token to SOS.
 * `GET /reminders` - Fetches all scheduled reminders.
 * `POST /reminders/trigger` - Instantly processes and triggers pending reminders for testing.
+
+### Reception Billing (`/api/v1/billing`)
+* `GET /config` - This facility's rate card (auto-seeded on first call).
+* `PUT /config` - Updates its fees, tax percentage and invoice letterhead.
+* `POST|PUT|DELETE /config/services[/:serviceId]` - Maintains its chargeable-service catalogue.
+* `GET /invoices` - All bills for this facility only.
+* `GET /token/:tokenId` - Fetches (or opens) the bill attached to a queue token.
+* `POST /invoices` - Opens a bill for any patient; accepts `newPatient` for an unregistered walk-in.
+* `POST /invoices/:id/items` - Charges an item, either by `serviceId` off the rate card or as a one-off.
+* `DELETE /invoices/:id/items/:itemId` - Removes a charge.
+* `POST /invoices/:id/sync-prescriptions` - Pulls doctor Rx and lab orders into the bill at facility rates.
+* `POST /invoices/:id/discharge` - Applies discount, collects payment, discharges, and WhatsApps the itemised receipt.
 
 ### Doctor Controls (`/api/v1/doctor`)
 * `GET /my-queue` - Fetches doctor's specific cabin status.

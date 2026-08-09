@@ -137,7 +137,8 @@ const MODELS = [
   ['RefillRequest', 'rf'],
   ['Medicine', 'med'],
   ['ActivityLog', 'act'],
-  ['Invoice', 'inv']
+  ['Invoice', 'inv'],
+  ['BillingConfig', 'bcfg']
 ];
 
 /**
