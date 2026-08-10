@@ -1,9 +1,7 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import io from 'socket.io-client';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { 
-  MessageSquare, Shield, Stethoscope, Activity
-} from 'lucide-react';
+import { MessageSquare, Shield, Stethoscope, Activity } from 'lucide-react';
 
 const getBackendUrl = () => {
   if (import.meta.env.VITE_BACKEND_URL) {
@@ -44,6 +42,7 @@ export const socket = io(BACKEND_URL, {
 
 // Lazy load components
 const HospitalHub = React.lazy(() => import('./components/HospitalHub'));
+const FacilityLanding = React.lazy(() => import('./components/FacilityLanding'));
 const PatientPortal = React.lazy(() => import('./components/PatientPortal'));
 const PatientLiveTracker = React.lazy(() => import('./components/PatientLiveTracker'));
 const DigitalPrescriptionViewer = React.lazy(() => import('./components/DigitalPrescriptionViewer'));
@@ -51,18 +50,36 @@ const PublicTVDisplay = React.lazy(() => import('./components/PublicTVDisplay'))
 const SuperAdminPortal = React.lazy(() => import('./components/SuperAdminPortal'));
 
 // Named imports for lazy loaded modules
-const StaffLogin = React.lazy(() => import('./components/StaffPortal').then(module => ({ default: module.StaffLogin })));
-const StaffDashboard = React.lazy(() => import('./components/StaffPortal').then(module => ({ default: module.StaffDashboard })));
-const DoctorLogin = React.lazy(() => import('./components/DoctorPortal').then(module => ({ default: module.DoctorLogin })));
-const DoctorDashboard = React.lazy(() => import('./components/DoctorPortal').then(module => ({ default: module.DoctorDashboard })));
-const LabLogin = React.lazy(() => import('./components/LabPortal').then(module => ({ default: module.LabLogin })));
-const LabDashboard = React.lazy(() => import('./components/LabPortal').then(module => ({ default: module.LabDashboard })));
-const PharmacyLogin = React.lazy(() => import('./components/PharmacyPortal').then(module => ({ default: module.PharmacyLogin })));
-const PharmacyDashboard = React.lazy(() => import('./components/PharmacyPortal').then(module => ({ default: module.PharmacyDashboard })));
+const StaffLogin = React.lazy(() =>
+  import('./components/StaffPortal').then((module) => ({ default: module.StaffLogin }))
+);
+const StaffDashboard = React.lazy(() =>
+  import('./components/StaffPortal').then((module) => ({ default: module.StaffDashboard }))
+);
+const DoctorLogin = React.lazy(() =>
+  import('./components/DoctorPortal').then((module) => ({ default: module.DoctorLogin }))
+);
+const DoctorDashboard = React.lazy(() =>
+  import('./components/DoctorPortal').then((module) => ({ default: module.DoctorDashboard }))
+);
+const LabLogin = React.lazy(() =>
+  import('./components/LabPortal').then((module) => ({ default: module.LabLogin }))
+);
+const LabDashboard = React.lazy(() =>
+  import('./components/LabPortal').then((module) => ({ default: module.LabDashboard }))
+);
+const PharmacyLogin = React.lazy(() =>
+  import('./components/PharmacyPortal').then((module) => ({ default: module.PharmacyLogin }))
+);
+const PharmacyDashboard = React.lazy(() =>
+  import('./components/PharmacyPortal').then((module) => ({ default: module.PharmacyDashboard }))
+);
 
 const LoadingFallback = () => (
   <div className="flex-1 flex flex-col items-center justify-center bg-[var(--bg-color)] space-y-4 min-h-[400px]">
-    <span className="material-symbols-outlined text-[48px] text-[var(--primary-color)] animate-spin">refresh</span>
+    <span className="material-symbols-outlined text-[48px] text-[var(--primary-color)] animate-spin">
+      refresh
+    </span>
     <p className="text-sm font-bold text-[var(--text-secondary)]">Loading session...</p>
   </div>
 );
@@ -178,13 +195,15 @@ function AppContent() {
           <div className="bg-[var(--primary-color)] p-1.5 rounded-lg shadow-sm shadow-[var(--primary-color)]/20">
             <Activity className="h-5 w-5 text-white animate-pulse" />
           </div>
-          <span className="font-extrabold tracking-tight text-lg text-[var(--text-color)]">CareeAi <span className="text-xs text-[var(--primary-color)] font-semibold">DEMO</span></span>
+          <span className="font-extrabold tracking-tight text-lg text-[var(--text-color)]">
+            CareeAi <span className="text-xs text-[var(--primary-color)] font-semibold">DEMO</span>
+          </span>
         </div>
-        
+
         <div className="flex items-center space-x-2 text-xs md:text-sm">
           {/* Light/Dark Toggle Button */}
-          <button 
-            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} 
+          <button
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
             className="p-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--text-color)] hover:bg-[var(--border-color)]/25 transition-colors flex items-center justify-center mr-2 active:scale-95 duration-100"
             title="Toggle Theme Mode"
           >
@@ -195,32 +214,32 @@ function AppContent() {
             )}
           </button>
 
-          <button 
-            onClick={() => navigate('/')} 
+          <button
+            onClick={() => navigate('/')}
             className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname === '/' ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
             <MessageSquare className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline-block">Patient Portal</span>
           </button>
-          
-          <button 
-            onClick={() => navigate(staffToken ? '/staff/dashboard' : '/staff/login')} 
+
+          <button
+            onClick={() => navigate(staffToken ? '/staff/dashboard' : '/staff/login')}
             className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/staff') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
             <Shield className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline-block">Staff Dashboard</span>
           </button>
-          
-          <button 
-            onClick={() => navigate(doctorToken ? '/doctor/dashboard' : '/doctor/login')} 
+
+          <button
+            onClick={() => navigate(doctorToken ? '/doctor/dashboard' : '/doctor/login')}
             className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/doctor') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
             <Stethoscope className="h-4 w-4 shrink-0" />
             <span className="hidden sm:inline-block">Doctor Console</span>
           </button>
 
-          <button 
-            onClick={() => navigate(labToken ? '/lab/dashboard' : '/lab/login')} 
+          <button
+            onClick={() => navigate(labToken ? '/lab/dashboard' : '/lab/login')}
             className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/lab') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
           >
             <span className="material-symbols-outlined text-[16px] shrink-0">science</span>
@@ -242,90 +261,90 @@ function AppContent() {
         <Suspense fallback={<LoadingFallback />}>
           <Routes>
             <Route path="/" element={<HospitalHub />} />
+            {/* Each partner's generated public website. `/h/:id` is the front
+                door we hand out; `/hospital/:id` stays the booking portal it
+                links into, so existing WhatsApp links and QR codes still work. */}
+            <Route path="/h/:hospitalId" element={<FacilityLanding />} />
             <Route path="/hospital/:hospitalId" element={<PatientPortal />} />
-            <Route 
-              path="/staff/login" 
+            <Route
+              path="/staff/login"
               element={
                 staffToken ? (
                   <Navigate to="/staff/dashboard" replace />
                 ) : (
-                  <StaffLogin 
-                    setStaffToken={setStaffToken} 
-                    setStaffUser={setStaffUser} 
-                    onSuccess={() => navigate('/staff/dashboard')} 
+                  <StaffLogin
+                    setStaffToken={setStaffToken}
+                    setStaffUser={setStaffUser}
+                    onSuccess={() => navigate('/staff/dashboard')}
                   />
                 )
-              } 
+              }
             />
-            <Route 
-              path="/staff/dashboard" 
+            <Route
+              path="/staff/dashboard"
               element={
                 staffToken ? (
-                  <StaffDashboard 
-                    staffToken={staffToken} 
-                    staffUser={staffUser} 
-                    onLogout={handleStaffLogout} 
+                  <StaffDashboard
+                    staffToken={staffToken}
+                    staffUser={staffUser}
+                    onLogout={handleStaffLogout}
                   />
                 ) : (
                   <Navigate to="/staff/login" replace />
                 )
-              } 
+              }
             />
-            <Route 
-              path="/doctor/login" 
+            <Route
+              path="/doctor/login"
               element={
                 doctorToken ? (
                   <Navigate to="/doctor/dashboard" replace />
                 ) : (
-                  <DoctorLogin 
-                    setDoctorToken={setDoctorToken} 
-                    setDoctorUser={setDoctorUser} 
-                    onSuccess={() => navigate('/doctor/dashboard')} 
+                  <DoctorLogin
+                    setDoctorToken={setDoctorToken}
+                    setDoctorUser={setDoctorUser}
+                    onSuccess={() => navigate('/doctor/dashboard')}
                   />
                 )
-              } 
+              }
             />
-            <Route 
-              path="/doctor/dashboard" 
+            <Route
+              path="/doctor/dashboard"
               element={
                 doctorToken ? (
-                  <DoctorDashboard 
-                    doctorToken={doctorToken} 
-                    doctorUser={doctorUser} 
-                    onLogout={handleDoctorLogout} 
+                  <DoctorDashboard
+                    doctorToken={doctorToken}
+                    doctorUser={doctorUser}
+                    onLogout={handleDoctorLogout}
                   />
                 ) : (
                   <Navigate to="/doctor/login" replace />
                 )
-              } 
+              }
             />
-            <Route 
-              path="/lab/login" 
+            <Route
+              path="/lab/login"
               element={
                 labToken ? (
                   <Navigate to="/lab/dashboard" replace />
                 ) : (
-                  <LabLogin 
-                    setLabToken={setLabToken} 
-                    setLabUser={setLabUser} 
-                    onSuccess={() => navigate('/lab/dashboard')} 
+                  <LabLogin
+                    setLabToken={setLabToken}
+                    setLabUser={setLabUser}
+                    onSuccess={() => navigate('/lab/dashboard')}
                   />
                 )
-              } 
+              }
             />
-            <Route 
-              path="/lab/dashboard" 
+            <Route
+              path="/lab/dashboard"
               element={
                 labToken ? (
-                  <LabDashboard 
-                    labToken={labToken} 
-                    labUser={labUser} 
-                    onLogout={handleLabLogout} 
-                  />
+                  <LabDashboard labToken={labToken} labUser={labUser} onLogout={handleLabLogout} />
                 ) : (
                   <Navigate to="/lab/login" replace />
                 )
-              } 
+              }
             />
             <Route
               path="/pharmacy/login"

@@ -3,6 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { BACKEND_URL } from '../App';
 import { Activity, ShieldAlert, ArrowLeft } from 'lucide-react';
 import WhatsAppTester from './WhatsAppTester';
+import {
+  ModuleGrid,
+  LandingEditor,
+  FALLBACK_MODULES,
+  FALLBACK_TEMPLATES,
+  blankLanding,
+  landingFrom,
+  modulesFrom
+} from './FacilityProfileEditor';
 
 /**
  * What each kind of facility IS, and which login accounts it needs.
@@ -238,12 +247,19 @@ export default function SuperAdminPortal() {
 
   // Sub-facility and Directory filter states
   const [parentHospital, setParentHospital] = useState('');
-  const [hasInternalLab, setHasInternalLab] = useState(true);
-  const [hasInternalPharmacy, setHasInternalPharmacy] = useState(true);
 
   const [editParentHospital, setEditParentHospital] = useState('');
-  const [editHasInternalLab, setEditHasInternalLab] = useState(true);
-  const [editHasInternalPharmacy, setEditHasInternalPharmacy] = useState(true);
+
+  // Which units the facility runs, and what its public landing page says. Both
+  // are edited through the shared <ModuleGrid> / <LandingEditor> so onboarding
+  // and editing can never drift apart. The catalogue is refreshed from the API
+  // on unlock; the fallbacks keep the form usable if that call fails.
+  const [moduleCatalogue, setModuleCatalogue] = useState(FALLBACK_MODULES);
+  const [landingTemplates, setLandingTemplates] = useState(FALLBACK_TEMPLATES);
+  const [modules, setModules] = useState(() => modulesFrom(FALLBACK_MODULES, 'Hospital'));
+  const [landing, setLanding] = useState(blankLanding());
+  const [editModules, setEditModules] = useState({});
+  const [editLanding, setEditLanding] = useState(blankLanding());
 
   const [facilityFilterType, setFacilityFilterType] = useState('All');
   const [facilitySearchQuery, setFacilitySearchQuery] = useState('');
@@ -395,9 +411,18 @@ export default function SuperAdminPortal() {
       setEditCustomServices(hosp.customServices || []);
       setEditFeatures(hosp.features || []);
       setEditParentHospital(hosp.parentHospital || '');
-      setEditHasInternalLab(hosp.hasInternalLab !== undefined ? hosp.hasInternalLab : true);
-      setEditHasInternalPharmacy(hosp.hasInternalPharmacy !== undefined ? hosp.hasInternalPharmacy : true);
+      // A facility onboarded before a module existed simply has no entry for it;
+      // modulesFrom() merges what it stored over the current catalogue so the new
+      // unit appears switched off instead of missing from the form.
+      setEditModules(modulesFrom(moduleCatalogue, hosp.type || 'Hospital', hosp.modules));
+      setEditLanding(landingFrom(hosp.landing));
     }
+  };
+
+  /** Same type-change reshaping as the register form, for the edit modal. */
+  const handleEditTypeChange = (nextType) => {
+    setEditType(nextType);
+    setEditModules((prev) => modulesFrom(moduleCatalogue, nextType, prev));
   };
 
   const handleDeleteHospital = async (hospIdToDelete) => {
@@ -559,6 +584,15 @@ export default function SuperAdminPortal() {
         );
       }
       if (Array.isArray(data.doctorTypes) && data.doctorTypes.length) setDoctorTypes(data.doctorTypes);
+      // The module catalogue drives the whole "what does this facility have?"
+      // grid, so a unit added on the backend shows up here without a release.
+      if (Array.isArray(data.modules) && data.modules.length) {
+        setModuleCatalogue(data.modules);
+        setModules((prev) => modulesFrom(data.modules, type, prev));
+      }
+      if (Array.isArray(data.landingTemplates) && data.landingTemplates.length) {
+        setLandingTemplates(data.landingTemplates);
+      }
     } catch (err) {
       console.error('Could not load facility type rules, using built-in defaults:', err);
     }
@@ -568,14 +602,30 @@ export default function SuperAdminPortal() {
   const activeType = facilityTypes.find((t) => t.name === type) || facilityTypes[0];
 
   /**
-   * Does this facility type use this kind of account? Lab and pharmacy are gated
-   * on the "runs its own lab / pharmacy" toggles too — a clinic that sends its
-   * blood work out should never be asked to create a lab login.
+   * Changing what you are registering re-shapes the module grid: a Clinic loses
+   * the ICU-beds question a Hospital had, a Lab loses the pharmacy counter.
+   * Answers to modules that survive the change are carried over, so switching
+   * type by mistake does not wipe what has already been filled in.
+   */
+  const handleTypeChange = (nextType) => {
+    setType(nextType);
+    setModules((prev) => modulesFrom(moduleCatalogue, nextType, prev));
+  };
+
+  /** Is this unit switched on in the module grid? */
+  const moduleOn = (key) => Boolean(modules[key] && modules[key].enabled);
+
+  /**
+   * Does this facility type use this kind of account? Lab and pharmacy accounts
+   * follow the module checkbox — a clinic that sends its blood work out should
+   * never be asked to create a lab login, and ticking "Pathology Lab" is what
+   * makes the lab account section appear. One decision, not two that can
+   * disagree.
    */
   const sectionApplies = (kind) => {
     if (!activeType || !(activeType.offers || []).includes(kind)) return false;
-    if (kind === 'lab') return hasInternalLab;
-    if (kind === 'pharmacy') return hasInternalPharmacy;
+    if (kind === 'lab') return moduleOn('lab');
+    if (kind === 'pharmacy') return moduleOn('pharmacy');
     return true;
   };
 
@@ -650,8 +700,13 @@ export default function SuperAdminPortal() {
       },
       type,
       parentHospital: parentHospital || null,
-      hasInternalLab,
-      hasInternalPharmacy,
+      // The module grid is the single source of truth for which units exist;
+      // the two legacy booleans the rest of the app reads are derived from it
+      // here (and again on the server) so they can never contradict it.
+      modules,
+      hasInternalLab: moduleOn('lab'),
+      hasInternalPharmacy: moduleOn('pharmacy'),
+      landing,
       clinicSubtype,
       customServices,
       features,
@@ -801,8 +856,12 @@ export default function SuperAdminPortal() {
       },
       type: editType,
       parentHospital: editParentHospital || null,
-      hasInternalLab: editHasInternalLab,
-      hasInternalPharmacy: editHasInternalPharmacy,
+      modules: editModules,
+      landing: editLanding,
+      // Derived from the module grid, same as onboarding — the server re-derives
+      // them too, so these two can never drift from the checkboxes.
+      hasInternalLab: Boolean(editModules.lab && editModules.lab.enabled),
+      hasInternalPharmacy: Boolean(editModules.pharmacy && editModules.pharmacy.enabled),
       heroImage: editCoverImage,
       primaryColor: editPrimaryColor,
       secondaryColor: editSecondaryColor,
@@ -1048,6 +1107,18 @@ export default function SuperAdminPortal() {
                     >
                       + Accs
                     </button>
+                    {/* The facility's generated public website, one click away —
+                        the fastest way to see what a profile edit actually did. */}
+                    <a
+                      href={`/h/${h.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-1 bg-[var(--bg-color)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--primary-color)] rounded-lg transition-all flex items-center"
+                      title="Open public landing page"
+                    >
+                      <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                    </a>
                     <button
                       type="button"
                       onClick={() => handleDeleteHospital(h.id)}
@@ -1187,6 +1258,10 @@ export default function SuperAdminPortal() {
                       setDoctorRows([blankDoctor()]);
                       setLabRows([blankLab()]);
                       setPharmacyRows([]);
+                      // Landing copy is facility-specific — carrying the last
+                      // hospital's headline into the next one is worse than blank.
+                      setLanding(blankLanding());
+                      setModules(modulesFrom(moduleCatalogue, type));
                     }
                   }}
                   className="px-4 py-2 border border-[var(--border-color)] hover:bg-[var(--border-color)]/25 rounded-xl font-black transition-all"
@@ -1194,12 +1269,20 @@ export default function SuperAdminPortal() {
                   {activeTab === 'hospital' ? 'Onboard Another' : 'Register Another'}
                 </button>
                 {activeTab === 'hospital' && (
-                  <button
-                    onClick={() => navigate(`/hospital/${hospId}`)}
-                    className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white rounded-xl font-black transition-all transition-all-custom shadow-md"
-                  >
-                    Visit Patient Portal
-                  </button>
+                  <>
+                    <button
+                      onClick={() => navigate(`/h/${hospId}`)}
+                      className="px-4 py-2 bg-[var(--primary-color)] hover:opacity-90 text-white rounded-xl font-black transition-all shadow-md"
+                    >
+                      View Landing Page
+                    </button>
+                    <button
+                      onClick={() => navigate(`/hospital/${hospId}`)}
+                      className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white rounded-xl font-black transition-all transition-all-custom shadow-md"
+                    >
+                      Visit Patient Portal
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -1253,7 +1336,7 @@ export default function SuperAdminPortal() {
                         <button
                           key={ft.name}
                           type="button"
-                          onClick={() => setType(ft.name)}
+                          onClick={() => handleTypeChange(ft.name)}
                           className={`text-left p-3 rounded-xl border transition-all ${
                             selected
                               ? 'bg-[var(--primary-color)]/10 border-[var(--primary-color)] shadow-sm'
@@ -1495,37 +1578,31 @@ export default function SuperAdminPortal() {
                         ))}
                     </select>
                   </div>
-                  <div className="flex items-center space-x-2 pt-4 md:pt-6">
-                    <input
-                      type="checkbox"
-                      id="hasInternalLab"
-                      checked={hasInternalLab}
-                      onChange={(e) => setHasInternalLab(e.target.checked)}
-                      className="w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer"
-                    />
-                    <label
-                      htmlFor="hasInternalLab"
-                      className="text-xs font-bold text-[var(--text-color)] cursor-pointer"
-                    >
-                      Has Internal Pathology Lab
-                    </label>
-                  </div>
-                  <div className="flex items-center space-x-2 pt-4 md:pt-6">
-                    <input
-                      type="checkbox"
-                      id="hasInternalPharmacy"
-                      checked={hasInternalPharmacy}
-                      onChange={(e) => setHasInternalPharmacy(e.target.checked)}
-                      className="w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer"
-                    />
-                    <label
-                      htmlFor="hasInternalPharmacy"
-                      className="text-xs font-bold text-[var(--text-color)] cursor-pointer"
-                    >
-                      Has Internal Pharmacy Store
-                    </label>
+                  <div className="md:col-span-2 flex items-center text-[11px] font-semibold text-[var(--text-secondary)] leading-relaxed pt-2">
+                    Units like the lab and pharmacy are configured in step 2 below — ticking one there is what
+                    creates its login section and its card on the public page.
                   </div>
                 </div>
+              </div>
+
+              {/* SECTION A.2: What this facility actually HAS. Everything is a
+                  checkbox; ticking one asks for exactly that unit's details and
+                  nothing else, and lab/pharmacy also decide whether the matching
+                  account section appears further down. */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-black text-[var(--text-color)] flex items-center space-x-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                  <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
+                    checklist
+                  </span>
+                  <span>2. Units &amp; Services this {type} runs</span>
+                </h3>
+                <ModuleGrid
+                  catalogue={moduleCatalogue}
+                  type={type}
+                  value={modules}
+                  onChange={setModules}
+                  idPrefix="new"
+                />
               </div>
 
               {/* SECTION A.5: Landing Page custom content */}
@@ -1534,7 +1611,7 @@ export default function SuperAdminPortal() {
                   <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
                     style
                   </span>
-                  <span>1b. Custom Landing Page Services & Features</span>
+                  <span>3. Public landing page — {hospId ? `/h/${hospId}` : 'auto-generated'}</span>
                 </h3>
 
                 {/* Services List */}
@@ -1671,6 +1748,17 @@ export default function SuperAdminPortal() {
                     </div>
                   ))}
                 </div>
+
+                {/* The rest of the generated website. Every field optional —
+                    whatever is left blank the template writes for them, so this
+                    whole block can be skipped and the facility still gets a
+                    complete page at /h/{slug}. */}
+                <LandingEditor
+                  value={landing}
+                  onChange={setLanding}
+                  templates={landingTemplates}
+                  facilityName={name}
+                />
               </div>
 
               {/* SECTIONS 2-5: PERSONNEL.
@@ -2492,7 +2580,7 @@ export default function SuperAdminPortal() {
                     <label className="block mb-1">Service Type *</label>
                     <select
                       value={editType}
-                      onChange={(e) => setEditType(e.target.value)}
+                      onChange={(e) => handleEditTypeChange(e.target.value)}
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-bold transition-all cursor-pointer"
                     >
                       <option>Hospital</option>
@@ -2683,36 +2771,51 @@ export default function SuperAdminPortal() {
                         ))}
                     </select>
                   </div>
-                  <div className="flex items-center space-x-2 pt-4 md:pt-6">
-                    <input
-                      type="checkbox"
-                      id="editHasInternalLab"
-                      checked={editHasInternalLab}
-                      onChange={(e) => setEditHasInternalLab(e.target.checked)}
-                      className="w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer"
-                    />
-                    <label
-                      htmlFor="editHasInternalLab"
-                      className="text-xs font-bold text-[var(--text-color)] cursor-pointer"
-                    >
-                      Has Internal Pathology Lab
-                    </label>
+                  <div className="md:col-span-2 flex items-center text-[11px] font-semibold text-[var(--text-secondary)] leading-relaxed pt-2">
+                    Lab, pharmacy and every other unit are switched on in the Units &amp; Services grid below.
                   </div>
-                  <div className="flex items-center space-x-2 pt-4 md:pt-6">
-                    <input
-                      type="checkbox"
-                      id="editHasInternalPharmacy"
-                      checked={editHasInternalPharmacy}
-                      onChange={(e) => setEditHasInternalPharmacy(e.target.checked)}
-                      className="w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer"
-                    />
-                    <label
-                      htmlFor="editHasInternalPharmacy"
-                      className="text-xs font-bold text-[var(--text-color)] cursor-pointer"
+                </div>
+
+                {/* Units this facility runs — same grid as onboarding, so what
+                    an admin learns once works in both places. */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-[var(--text-color)] flex items-center gap-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                    <span className="material-symbols-outlined text-[17px] text-[var(--primary-color)]">
+                      checklist
+                    </span>
+                    <span>Units &amp; Services</span>
+                  </h4>
+                  <ModuleGrid
+                    catalogue={moduleCatalogue}
+                    type={editType}
+                    value={editModules}
+                    onChange={setEditModules}
+                    idPrefix="edit"
+                  />
+                </div>
+
+                {/* The public landing page for this facility. */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-[var(--text-color)] flex items-center gap-1.5 border-b border-[var(--border-color)]/20 pb-2">
+                    <span className="material-symbols-outlined text-[17px] text-[var(--primary-color)]">
+                      style
+                    </span>
+                    <span>Landing page content</span>
+                    <a
+                      href={`/h/${editHospId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-auto text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg bg-[var(--primary-color)]/10 text-[var(--primary-color)] hover:bg-[var(--primary-color)]/25 transition-colors"
                     >
-                      Has Internal Pharmacy Store
-                    </label>
-                  </div>
+                      Open /h/{editHospId}
+                    </a>
+                  </h4>
+                  <LandingEditor
+                    value={editLanding}
+                    onChange={setEditLanding}
+                    templates={landingTemplates}
+                    facilityName={editName}
+                  />
                 </div>
 
                 <div>

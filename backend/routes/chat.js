@@ -22,6 +22,7 @@ const {
 } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { resolveLocation } = require('../utils/locationHelper');
+const { buildLandingPage } = require('../utils/facilityProfile');
 const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
 const logger = require('../utils/logger');
 
@@ -1940,6 +1941,47 @@ router.get('/hospital/:hospitalId', async (req, res) => {
     });
   } catch (err) {
     logger.error('Error fetching hospital details', { err: err });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET the facility's public landing page — the whole page as data.
+//
+// Every partner we onboard gets a real website without anyone building one:
+// this composes the facility record, its enabled modules and its doctor roster
+// into a finished page model (hero copy, services, departments, timings, FAQs),
+// filling every blank from the template. A facility that registered in 90
+// seconds and typed nothing optional still gets a complete page.
+//
+// Public and unauthenticated by design — it is a marketing page — so it must
+// only ever expose what a visitor could read off a signboard. The doctor
+// projection below is an allow-list for exactly that reason.
+router.get('/hospital/:hospitalId/landing', async (req, res) => {
+  try {
+    const { hospitalId } = req.params;
+    const hospital = await Hospital.findOne({ id: hospitalId });
+    if (!hospital) {
+      return res.status(404).json({ message: 'Facility not found' });
+    }
+
+    const doctors = await Doctor.find({ hospital: hospitalId }, '-passwordHash');
+    const page = buildLandingPage(hospital, doctors);
+
+    // Same WhatsApp normalization the other public endpoints do, so the "Book on
+    // WhatsApp" button on the landing page dials the same number the portal does.
+    const rawWhatsapp =
+      hospital.id === 'general-hospital' ? getPrimaryWhatsAppNumber() : hospital.whatsappNumber;
+    const whatsappNumber = (rawWhatsapp || '').replace(/^whatsapp:/i, '');
+    const loc = resolveLocation(hospital.toObject());
+
+    page.facility.whatsappNumber = whatsappNumber;
+    page.facility.state = loc.state;
+    page.facility.district = loc.district;
+    page.contact.whatsappNumber = whatsappNumber;
+
+    res.json(page);
+  } catch (err) {
+    logger.error('Error building facility landing page', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });

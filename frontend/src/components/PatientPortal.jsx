@@ -597,6 +597,18 @@ export default function PatientPortal() {
             <a href="#contact" className="hover:text-[var(--primary-color)] transition-colors">
               {currentLang === 'hi' ? 'সম্পর্ক' : currentLang === 'bn' ? 'যোগাযোগ' : 'Contact'}
             </a>
+            {/* The facility's full generated website — departments, units,
+                timings, FAQs. This portal stays focused on booking. */}
+            <button
+              onClick={() => navigate(`/h/${hospitalId}`)}
+              className="hover:text-[var(--primary-color)] transition-colors uppercase tracking-wider font-black"
+            >
+              {currentLang === 'hi'
+                ? 'सुविधा पेज'
+                : currentLang === 'bn'
+                  ? 'ফ্যাসিলিটি পেজ'
+                  : 'Facility Page'}
+            </button>
           </nav>
 
           <div className="flex items-center space-x-3">

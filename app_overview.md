@@ -202,6 +202,63 @@ no OPD doctors and a medical store has no lab bench:
 * A live **"about to create"** tally shows the facility and the exact number of each
   account the button is about to bring into existence.
 
+### A12. Facility Modules — the checkbox grid that configures a tenant
+
+What a facility *has* is now data, not a pair of booleans. `FACILITY_MODULES`
+(`backend/utils/facilityProfile.js`) is the catalogue of units a tenant can switch on
+— OPD, 24×7 emergency, IPD/beds, pharmacy, pathology lab, radiology, ambulance, blood
+bank, physiotherapy, vaccination, day-care/minor OT, tele-consultation, preventive
+health packages and insurance/TPA — and every one of them carries:
+
+* **`appliesTo`** — the facility types allowed to offer it. A dental clinic is never
+  asked how many ICU beds it runs; a medical store never sees a lab bench.
+* **`fields`** — exactly what to ask for *once the box is ticked*, and nothing before:
+  bed and ICU counts for IPD, report turnaround and home collection for the lab, a
+  contact number and fleet size for the ambulance, empanelled insurers for TPA.
+* **`createsAccounts`** — ticking "Pathology Lab" is what makes the lab **login**
+  section appear. One decision instead of two switches that could disagree; the legacy
+  `hasInternalLab` / `hasInternalPharmacy` columns the queue routing and directory
+  badges read are derived from the grid (on the client *and* re-derived server-side).
+
+The super-admin panel renders the whole grid from `GET /super-admin/facility-types`,
+so **adding a unit means adding one entry to that array** — the onboarding form, the
+edit modal, the validation and the public page all learn about it with no frontend
+release. `Hospital.modules` is `Mixed` and validated by `normalizeModules()` for the
+same reason `ChatSession.tempData` is: a declared sub-schema silently drops keys a
+later version adds, so every existing facility would lose its details on the next save
+the day a module is added.
+
+### A13. Generated Landing Page per Facility (`/h/:id`)
+
+Every partner we onboard gets a real website, with no one building one. `GET
+/api/v1/chat/hospital/:id/landing` composes the facility record, its enabled modules
+and its doctor roster into a finished page model — hero copy, services, departments,
+timings, amenities, insurers, packages, FAQs, testimonials, contact — and
+`FacilityLanding.jsx` renders it. `/hospital/:id` remains the booking portal the
+landing page links into, so existing WhatsApp links and QR codes still work.
+
+* **Nothing to fill in.** Every landing field is optional; `buildLandingPage()` fills
+  each gap from the template and the facility type. A hospital registered in 90 seconds
+  gets a complete, non-embarrassing page — headline, stat strip, opening hours, SEO
+  title — composed from facts the record already holds (beds, doctors, years open).
+* **One template component, five templates.** `care-classic`, `clinic-warm`,
+  `lab-precision`, `pharma-fresh`, `civic-trust` — auto-selected from the facility type
+  unless the admin picks one. A template is a **section order plus default copy**, and
+  every template lists *every* section on purpose: ordering is what distinguishes a
+  hospital site from a lab site, but a template must never silently swallow content the
+  admin took the trouble to type. (It did once — the clinic layout had no slot for
+  amenities or empanelled insurers, so both vanished. `tests/facility-landing.test.js`
+  now guards it.)
+* **Branded per tenant.** The page themes itself from `facilityThemes` plus the
+  facility's own primary/secondary colours, sets the browser title and meta description
+  from its SEO block, and sections self-hide when empty — which is what lets a
+  three-doctor dental clinic and a 400-bed government hospital share one layout without
+  either looking padded or truncated.
+* **Safe by construction.** The endpoint is public, so the doctor projection is an
+  allow-list and `safeUrl()` rejects anything that is not `http(s)` — every landing
+  string ends up in a `src` or `href`, where a `javascript:` value typed into the admin
+  panel would be stored XSS waiting for the first visitor.
+
 ### B. Emergency Queue Prioritization (SOS)
 * **Logic:** Staff members can trigger an **Emergency Override** flag during registration, or change an existing ticket to SOS.
 * **Priority Routing:** Emergency tokens are pushed to **Index 0** of the doctor's `activeQueue` array, instantly routing them to the top of the waitlist.
@@ -279,13 +336,14 @@ no OPD doctors and a medical store has no lab bench:
 * `POST /doctor/login` - Authenticates clinical doctors.
 
 ### Super Admin Onboarding (`/api/v1/auth/super-admin`, admin secret header)
-* `GET /facility-types` - The onboarding vocabulary the admin panel builds its form from: every facility type with the accounts it `requires` vs. merely `offers`, plus the doctor types.
+* `GET /facility-types` - The onboarding vocabulary the admin panel builds its form from: every facility type with the accounts it `requires` vs. merely `offers`, the doctor types, the **module catalogue** (which units each type may switch on and what to ask for once ticked) and the landing-page templates.
 * `POST /register-hospital` - Onboards a facility **and** its whole starting roster in one call: `staffMembers[]`, `doctors[]`, `labAssistants[]`, `pharmacists[]`.
 * `POST /register-doctor` / `register-staff` / `register-lab` / `register-pharmacist` - Adds one more account to an existing facility.
 * `GET /facility-data/:hospitalId` - Everyone registered at a facility (doctors, staff, lab, pharmacy, patients).
 
 ### Chat Routes (`/api/v1/chat`)
 * `POST /message` - Feeds client messages to the chatbot state machine and returns responses.
+* `GET /hospital/:hospitalId/landing` - Public. The facility's whole generated website as data: template + section order, hero copy, services, enabled modules, departments, doctor roster, timings, amenities, insurers, packages, FAQs, testimonials, contact and SEO. Gaps are filled from the template, so it never returns a half-empty page.
 
 ### Staff Actions (`/api/v1/staff`)
 * `GET /queues` - Fetches global queues and doctor parameters.

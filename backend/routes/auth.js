@@ -9,6 +9,14 @@ const Pharmacist = require('../models/Pharmacist');
 const Hospital = require('../models/Hospital');
 const Queue = require('../models/Queue');
 const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
+const {
+  FACILITY_MODULES,
+  LANDING_TEMPLATES,
+  normalizeModules,
+  normalizeLanding,
+  reconcileLegacyFlags,
+  legacyModulesFrom
+} = require('../utils/facilityProfile');
 const rateLimit = require('express-rate-limit');
 
 // Login rate limiter: 10 attempts per 15 minutes per IP to prevent brute-force
@@ -274,7 +282,17 @@ function buildDoctorFields(d, hospitalId) {
 router.get('/super-admin/facility-types', verifyAdminSecret, (req, res) => {
   res.json({
     facilityTypes: Object.entries(FACILITY_TYPE_RULES).map(([name, rule]) => ({ name, ...rule })),
-    doctorTypes: DOCTOR_TYPES
+    doctorTypes: DOCTOR_TYPES,
+    // The module catalogue and landing templates are served from the same
+    // source the API validates against, so the admin panel's checkbox grid can
+    // grow a new unit (or a new template) without a frontend release.
+    modules: FACILITY_MODULES,
+    landingTemplates: Object.values(LANDING_TEMPLATES).map((t) => ({
+      key: t.key,
+      label: t.label,
+      blurb: t.blurb,
+      sections: t.sections
+    }))
   });
 });
 
@@ -306,8 +324,20 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       });
     }
 
-    const hasInternalLab = b.hasInternalLab !== undefined ? b.hasInternalLab : true;
-    const hasInternalPharmacy = b.hasInternalPharmacy !== undefined ? b.hasInternalPharmacy : true;
+    // Which units this facility runs. The admin panel posts a module map
+    // ("runs its own lab? has an ambulance? how many ICU beds?"); an older
+    // client posts only the two booleans. Either way we end up with one
+    // normalized map, and the legacy columns are kept in lockstep with it so
+    // queue routing / portals / directory badges never disagree with the
+    // checkbox the admin actually ticked.
+    const modules = normalizeModules(
+      b.modules && typeof b.modules === 'object' ? b.modules : legacyModulesFrom({ ...b, type }),
+      type
+    );
+    const legacyFlags = reconcileLegacyFlags(modules, b);
+    const hasInternalLab = legacyFlags.hasInternalLab;
+    const hasInternalPharmacy = legacyFlags.hasInternalPharmacy;
+    const landing = normalizeLanding(b.landing);
 
     // Normalize personnel: accept either the new ARRAY form (doctors[],
     // staffMembers[], labAssistants[], pharmacists[]) or the legacy single-account
@@ -502,7 +532,9 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       hasInternalPharmacy,
       clinicSubtype: clinicSubtype || 'General',
       customServices: customServices || [],
-      features: features || []
+      features: features || [],
+      modules,
+      landing
     });
     await newHospital.save();
 
@@ -826,6 +858,23 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     if (clinicSubtype !== undefined) hospital.clinicSubtype = clinicSubtype;
     if (customServices !== undefined) hospital.customServices = customServices;
     if (features !== undefined) hospital.features = features;
+
+    // Modules and landing content are Mixed paths — assign the whole normalized
+    // object and mark it, because Mongoose cannot see changes inside a Mixed
+    // value and would otherwise save nothing at all.
+    if (req.body.modules !== undefined) {
+      const effectiveType = type !== undefined ? type : hospital.type;
+      hospital.modules = normalizeModules(req.body.modules, effectiveType);
+      hospital.markModified('modules');
+      // Re-derive the legacy booleans unless this same request set them itself.
+      const flags = reconcileLegacyFlags(hospital.modules, req.body);
+      hospital.hasInternalLab = flags.hasInternalLab;
+      hospital.hasInternalPharmacy = flags.hasInternalPharmacy;
+    }
+    if (req.body.landing !== undefined) {
+      hospital.landing = normalizeLanding(req.body.landing);
+      hospital.markModified('landing');
+    }
 
     await hospital.save();
 
