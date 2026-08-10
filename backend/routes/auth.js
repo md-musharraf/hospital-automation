@@ -10,6 +10,7 @@ const Hospital = require('../models/Hospital');
 const Queue = require('../models/Queue');
 const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
 const {
+  FACILITY_TYPE_RULES,
   FACILITY_MODULES,
   LANDING_TEMPLATES,
   normalizeModules,
@@ -240,15 +241,11 @@ router.post('/super-admin/verify', verifyAdminSecret, (req, res) => {
 // actually needs. A pathology lab has no OPD doctors and a medical store has no
 // lab bench — asking for those accounts (or accepting a facility without the one
 // account that makes it operable) is how half-configured tenants get created.
-const FACILITY_TYPE_RULES = {
-  Hospital: { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
-  'Government Hospital': { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
-  Clinic: { requires: ['doctors'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
-  Lab: { requires: ['lab'], offers: ['staff', 'lab'] },
-  'Government Lab': { requires: ['lab'], offers: ['staff', 'lab'] },
-  Medical: { requires: ['pharmacy'], offers: ['staff', 'pharmacy'] },
-  Government: { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] }
-};
+// FACILITY_TYPE_RULES now lives in utils/facilityProfile.js, next to the module
+// catalogue — the two answer the same question from opposite ends (a Lab
+// `requires` a lab account precisely because a lab bench is the thing it has),
+// and normalizeModules() needs the rules to refuse to switch off the one unit
+// that makes a tenant operable. Keeping a second copy here is how they drift.
 
 const DOCTOR_TYPES = [
   'Consultant',

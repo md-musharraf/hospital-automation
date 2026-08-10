@@ -6,6 +6,7 @@ import useLiveRefresh from '../hooks/useLiveRefresh';
 import LiveActivityFeed from './LiveActivityFeed';
 import HelpPanel from './HelpPanel';
 import EmptyState from './EmptyState';
+import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
 
 export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
   const [username, setUsername] = useState('lab_assistant');
@@ -14,7 +15,8 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
     { id: 'general-hospital', name: 'CareeAi General Hospital' },
     { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
   ]);
-  const [selectedHospital, setSelectedHospital] = useState('general-hospital');
+  const requestedFacility = useFacilityFromUrl();
+  const [selectedHospital, setSelectedHospital] = useState(requestedFacility || 'general-hospital');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 

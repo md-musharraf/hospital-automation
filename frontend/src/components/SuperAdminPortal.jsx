@@ -624,9 +624,14 @@ export default function SuperAdminPortal() {
    */
   const sectionApplies = (kind) => {
     if (!activeType || !(activeType.offers || []).includes(kind)) return false;
-    if (kind === 'lab') return moduleOn('lab');
-    if (kind === 'pharmacy') return moduleOn('pharmacy');
-    return true;
+    // Each account section follows the module that implies it, so ticking
+    // "Reception / Front Desk" is what asks for counter logins and ticking
+    // "OPD / Doctor Consultation" is what asks for doctors. The module the type
+    // *requires* is locked on, so a section can never disappear and leave a
+    // tenant with no way in.
+    const MODULE_FOR_ACCOUNT = { staff: 'staffDesk', doctors: 'opd', lab: 'lab', pharmacy: 'pharmacy' };
+    const moduleKey = MODULE_FOR_ACCOUNT[kind];
+    return moduleKey ? moduleOn(moduleKey) : true;
   };
 
   // A blank row left at the bottom of a list is not a half-made account.
@@ -1602,6 +1607,7 @@ export default function SuperAdminPortal() {
                   value={modules}
                   onChange={setModules}
                   idPrefix="new"
+                  requiredKinds={activeType?.requires || []}
                 />
               </div>
 
@@ -2791,6 +2797,7 @@ export default function SuperAdminPortal() {
                     value={editModules}
                     onChange={setEditModules}
                     idPrefix="edit"
+                    requiredKinds={(facilityTypes.find((t) => t.name === editType) || {}).requires || []}
                   />
                 </div>
 

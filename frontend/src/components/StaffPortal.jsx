@@ -6,6 +6,8 @@ import LiveActivityFeed from './LiveActivityFeed';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
 import HelpPanel from './HelpPanel';
+import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
+import useFacilityBranding from '../hooks/useFacilityBranding';
 
 /** Colour per billing category, so the counter can pick a charge by shape as
  *  well as by reading it — the same categories the Invoice schema allows. */
@@ -28,7 +30,8 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
     { id: 'general-hospital', name: 'CareeAi General Hospital' },
     { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
   ]);
-  const [selectedHospital, setSelectedHospital] = useState('general-hospital');
+  const requestedFacility = useFacilityFromUrl();
+  const [selectedHospital, setSelectedHospital] = useState(requestedFacility || 'general-hospital');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -165,6 +168,7 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
 }
 
 export function StaffDashboard({ staffToken, staffUser, onLogout }) {
+  const branding = useFacilityBranding(staffUser?.hospital);
   const [queues, setQueues] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [patients, setPatients] = useState([]);
@@ -999,21 +1003,43 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     : [];
 
   return (
-    <div className="flex-1 flex overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] font-sans transition-colors duration-200">
+    <div
+      style={branding.vars}
+      className="flex-1 flex overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] font-sans transition-colors duration-200"
+    >
       {/* 1. Left Sidebar Navigation Panel */}
       <div className="hidden md:flex w-64 bg-[var(--card-bg)] text-[var(--text-color)] flex-col justify-between shrink-0 shadow-lg border-r border-[var(--border-color)]/30">
         <div className="flex flex-col">
-          {/* CareeAi Sidebar Logo header */}
+          {/* The facility this desk belongs to — its real name, logo and
+              colours. This used to read "CareeAi Admin / General Hospital" for
+              every tenant, so a receptionist at any other facility spent their
+              shift looking at the wrong hospital's name in the one place you
+              check before taking a payment. */}
           <div className="p-6 border-b border-[var(--border-color)]/30 flex items-center space-x-3">
-            <span className="material-symbols-outlined text-[var(--primary-color)] text-[32px]">
-              local_hospital
-            </span>
-            <div>
-              <h1 className="font-extrabold text-sm text-[var(--primary-color)] dark:text-zinc-300 leading-tight tracking-tight">
-                CareeAi Admin
+            {branding.facility?.logoUrl ? (
+              <img
+                src={branding.facility.logoUrl}
+                alt=""
+                className="w-9 h-9 rounded-xl object-cover border border-[var(--border-color)]/40 shrink-0"
+              />
+            ) : (
+              <span
+                className="material-symbols-outlined text-[32px] shrink-0"
+                style={{ color: branding.theme.primary }}
+              >
+                {branding.theme.icon}
+              </span>
+            )}
+            <div className="min-w-0">
+              <h1
+                className="font-extrabold text-sm leading-tight tracking-tight truncate"
+                style={{ color: branding.theme.primary }}
+                title={branding.name}
+              >
+                {branding.name}
               </h1>
-              <p className="text-[10px] text-[var(--text-secondary)] font-semibold leading-none">
-                General Hospital
+              <p className="text-[10px] text-[var(--text-secondary)] font-semibold leading-none truncate">
+                {branding.kind} · Reception
               </p>
             </div>
           </div>

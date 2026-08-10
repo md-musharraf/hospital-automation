@@ -10,6 +10,7 @@ const {
   buildLandingPage,
   templateForType,
   modulesForType,
+  accountKindsFor,
   LANDING_TEMPLATES,
   ALL_SECTIONS
 } = require(path.resolve(__dirname, '..', 'backend', 'utils', 'facilityProfile'));
@@ -238,6 +239,85 @@ const {
   for (const template of Object.values(LANDING_TEMPLATES)) {
     const missing = ALL_SECTIONS.filter((s) => !template.sections.includes(s));
     check(`${template.key} can render every section`, missing.length === 0, missing);
+  }
+
+  section('A facility can never be left with no way in');
+
+  // The unit that makes a type operable is force-enabled whatever the request
+  // says. The admin panel shows these locked, but the panel is not the only
+  // thing that can POST — a hand-written call must not be able to create a Lab
+  // with its lab bench switched off, because nobody could then sign in to run
+  // a single test at that tenant.
+  const strippedLab = normalizeModules({ lab: { enabled: false }, staffDesk: { enabled: false } }, 'Lab');
+  check('A Lab cannot switch off its lab', strippedLab.lab.enabled === true, strippedLab.lab);
+  check(
+    '...but may still drop its front desk',
+    strippedLab.staffDesk.enabled === false,
+    strippedLab.staffDesk
+  );
+
+  const strippedClinic = normalizeModules({ opd: { enabled: false } }, 'Clinic');
+  check('A Clinic cannot switch off consultation', strippedClinic.opd.enabled === true, strippedClinic.opd);
+
+  const strippedStore = normalizeModules({ pharmacy: { enabled: false } }, 'Medical');
+  check(
+    'A Medical store cannot switch off its counter',
+    strippedStore.pharmacy.enabled === true,
+    strippedStore.pharmacy
+  );
+
+  const strippedHospital = normalizeModules({ staffDesk: { enabled: false } }, 'Hospital');
+  check(
+    'A Hospital cannot switch off reception',
+    strippedHospital.staffDesk.enabled === true,
+    strippedHospital.staffDesk
+  );
+
+  section('Modules decide which team portals a facility links to');
+
+  // The landing page offers its own staff a login only for the units it runs —
+  // a clinic with no lab should never show a lab login nobody can use.
+  const kinds = accountKindsFor(
+    normalizeModules(
+      {
+        opd: { enabled: true },
+        staffDesk: { enabled: true },
+        lab: { enabled: false },
+        pharmacy: { enabled: true }
+      },
+      'Hospital'
+    ),
+    'Hospital'
+  );
+  check('Doctor console offered when OPD is on', kinds.includes('doctors'), kinds);
+  check('Reception offered when the desk is on', kinds.includes('staff'), kinds);
+  check('Pharmacy offered when the counter is on', kinds.includes('pharmacy'), kinds);
+  check('Lab NOT offered when there is no lab', !kinds.includes('lab'), kinds);
+
+  const labOnly = accountKindsFor(normalizeModules({ staffDesk: { enabled: false } }, 'Lab'), 'Lab');
+  check('A Lab never offers a doctor console it cannot have', !labOnly.includes('doctors'), labOnly);
+
+  const bookable = buildLandingPage(
+    { id: 'x', name: 'X', type: 'Clinic', city: 'Patna', modules: normalizeModules({}, 'Clinic') },
+    []
+  );
+  check('Landing payload carries the portal list', Array.isArray(bookable.logins), bookable.logins);
+  check(
+    'Landing payload never carries credentials',
+    !JSON.stringify(bookable.logins).match(/password|username/i),
+    bookable.logins
+  );
+
+  section('Every landing page can be booked from');
+
+  // The booking assistant is the point of the page. A template that forgot the
+  // section would render a beautiful brochure with no way to get a token.
+  for (const template of Object.values(LANDING_TEMPLATES)) {
+    check(
+      `${template.key} includes the booking section`,
+      template.sections.includes('booking'),
+      template.sections
+    );
   }
 
   section('Template routing per facility type');

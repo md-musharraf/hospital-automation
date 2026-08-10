@@ -6,12 +6,14 @@ import useLiveRefresh from '../hooks/useLiveRefresh';
 import LiveActivityFeed from './LiveActivityFeed';
 import HelpPanel from './HelpPanel';
 import EmptyState from './EmptyState';
+import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
 
 export function PharmacyLogin({ setPharmacyToken, setPharmacyUser, onSuccess }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [hospitals, setHospitals] = useState([{ id: 'general-hospital', name: 'CareeAi General Hospital' }]);
-  const [selectedHospital, setSelectedHospital] = useState('general-hospital');
+  const requestedFacility = useFacilityFromUrl();
+  const [selectedHospital, setSelectedHospital] = useState(requestedFacility || 'general-hospital');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 

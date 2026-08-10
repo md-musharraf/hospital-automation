@@ -4,6 +4,8 @@ import InternalChatBox from './InternalChatBox';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
 import HelpPanel from './HelpPanel';
+import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
+import useFacilityBranding from '../hooks/useFacilityBranding';
 
 export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
   const [email, setEmail] = useState('sarah.jenkins@hospital.com');
@@ -12,7 +14,8 @@ export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
     { id: 'general-hospital', name: 'CareeAi General Hospital' },
     { id: 'pediatrics-clinic', name: 'St. Jude Pediatrics Clinic' }
   ]);
-  const [selectedHospital, setSelectedHospital] = useState('general-hospital');
+  const requestedFacility = useFacilityFromUrl();
+  const [selectedHospital, setSelectedHospital] = useState(requestedFacility || 'general-hospital');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -146,6 +149,7 @@ export function DoctorLogin({ setDoctorToken, setDoctorUser, onSuccess }) {
 }
 
 export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
+  const branding = useFacilityBranding(doctorUser?.hospital);
   const [queue, setQueue] = useState(null);
   const [loading, setLoading] = useState(true);
   const [availability, setAvailability] = useState(doctorUser?.availabilityStatus || 'Available');
@@ -531,9 +535,47 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
   };
 
   return (
-    <div className="flex-1 flex flex-col md:flex-row overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
+    <div
+      style={branding.vars}
+      className="flex-1 flex flex-col md:flex-row overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200"
+    >
       {/* Left Sidebar - Doctor status & Live queue list */}
       <div className="w-full md:w-80 max-h-[35vh] md:max-h-none bg-[var(--card-bg)] border-b md:border-b-0 md:border-r border-[var(--border-color)]/30 p-5 flex flex-col space-y-5 overflow-y-auto shadow-inner shrink-0">
+        {/* Which facility this console belongs to. A visiting consultant may
+            hold logins at two hospitals; the name they are currently signed
+            into has to be visible before they write a prescription. */}
+        <div
+          className="-mx-5 -mt-5 px-5 py-3 flex items-center gap-2.5 border-b border-[var(--border-color)]/30"
+          style={{ background: `${branding.theme.primary}0f` }}
+        >
+          {branding.facility?.logoUrl ? (
+            <img
+              src={branding.facility.logoUrl}
+              alt=""
+              className="w-8 h-8 rounded-lg object-cover border border-[var(--border-color)]/40 shrink-0"
+            />
+          ) : (
+            <span
+              className="material-symbols-outlined text-[24px] shrink-0"
+              style={{ color: branding.theme.primary }}
+            >
+              {branding.theme.icon}
+            </span>
+          )}
+          <span className="min-w-0">
+            <span
+              className="block text-xs font-black leading-tight truncate"
+              style={{ color: branding.theme.primary }}
+              title={branding.name}
+            >
+              {branding.name}
+            </span>
+            <span className="block text-[10px] font-semibold text-[var(--text-secondary)] truncate">
+              {branding.kind} · Doctor Console
+            </span>
+          </span>
+        </div>
+
         <div className="flex justify-between items-center pb-2 border-b border-[var(--border-color)]/30">
           <div>
             <h3 className="font-extrabold text-[var(--text-color)] text-base">{doctorUser?.name}</h3>

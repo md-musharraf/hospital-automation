@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { BACKEND_URL } from '../App';
 import { getFacilityTheme, themeVars, patternDataUri } from '../theme/facilityThemes';
 import useScrollReveal from '../hooks/useScrollReveal';
+import FacilityBookingBot from './FacilityBookingBot';
 
 /**
  * The generated landing page every partner facility gets.
@@ -177,9 +178,10 @@ function Icon({ name, className = '', style }) {
 /* Chrome                                                              */
 /* ------------------------------------------------------------------ */
 
-function FacilityNav({ page, theme, bookingHref }) {
+function FacilityNav({ page, theme }) {
   const { facility, template, hero } = page;
   const anchors = [
+    { id: 'book', label: 'Book', when: template.sections.includes('booking') },
     { id: 'services', label: 'Services', when: page.services.length },
     { id: 'doctors', label: 'Doctors', when: page.doctors.length && template.sections.includes('doctors') },
     { id: 'timings', label: 'Timings', when: page.timings.length },
@@ -228,17 +230,27 @@ function FacilityNav({ page, theme, bookingHref }) {
           ))}
         </nav>
 
-        <Link
-          to={bookingHref}
+        {/* Scrolls to the assistant on this page rather than navigating away —
+            the booking lives here now. */}
+        <a
+          href="#book"
           className="ml-auto md:ml-2 shrink-0 px-4 py-2 rounded-xl text-white text-xs font-black shadow-md active:scale-95 transition-all"
           style={{ background: theme.primary }}
         >
           {hero.ctaLabel}
-        </Link>
+        </a>
       </div>
     </header>
   );
 }
+
+/** Which portal each account kind signs into. */
+const TEAM_PORTALS = {
+  staff: { path: '/staff/login', label: 'Reception Desk', icon: 'support_agent' },
+  doctors: { path: '/doctor/login', label: 'Doctor Console', icon: 'stethoscope' },
+  lab: { path: '/lab/login', label: 'Lab Console', icon: 'science' },
+  pharmacy: { path: '/pharmacy/login', label: 'Pharmacy Counter', icon: 'local_pharmacy' }
+};
 
 function FacilityFooter({ page, theme }) {
   const { facility, social } = page;
@@ -250,9 +262,37 @@ function FacilityFooter({ page, theme }) {
     { key: 'x', icon: 'tag', url: social.x }
   ].filter((l) => l.url);
 
+  // Only the portals this facility actually runs. A dental clinic with no lab
+  // should not offer its staff a lab login they can never sign into, and the
+  // `?facility=` param means nobody has to find their own employer in a
+  // dropdown of every partner on the platform.
+  const portals = (page.logins || [])
+    .map((kind) => TEAM_PORTALS[kind])
+    .filter(Boolean)
+    .map((p) => ({ ...p, href: `${p.path}?facility=${encodeURIComponent(facility.id)}` }));
+
   return (
     <footer className="border-t border-[var(--border-color)]/30 bg-[var(--card-bg)] py-10 px-6 sm:px-10">
       <div className="max-w-[1200px] mx-auto space-y-6 text-center">
+        {portals.length > 0 && (
+          <div className="pb-2 space-y-2.5">
+            <p className="text-[10px] uppercase font-black tracking-widest text-[var(--text-secondary)]">
+              For our team
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {portals.map((p) => (
+                <Link
+                  key={p.path}
+                  to={p.href}
+                  className="px-3.5 py-2 rounded-xl text-[11px] font-black border border-[var(--border-color)]/50 text-[var(--text-secondary)] hover:border-[var(--primary-color)]/50 hover:text-[var(--primary-color)] transition-colors flex items-center gap-1.5"
+                >
+                  <Icon name={p.icon} className="text-[15px]" />
+                  {p.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
         {links.length > 0 && (
           <div className="flex justify-center gap-2">
             {links.map((l) => (
@@ -303,20 +343,20 @@ function FacilityFooter({ page, theme }) {
 /* Sections — keyed by the names the backend template emits            */
 /* ------------------------------------------------------------------ */
 
-function Hero({ page, theme, bookingHref, waHref }) {
+function Hero({ page, theme, waHref }) {
   const { hero, facility, template, contact } = page;
   const centered = template.heroStyle === 'centered';
 
   const actions = (
     <div className={`flex flex-wrap gap-2.5 ${centered ? 'justify-center' : ''}`}>
-      <Link
-        to={bookingHref}
+      <a
+        href="#book"
         className="px-5 py-3 rounded-xl text-white text-xs font-black shadow-lg active:scale-95 transition-all flex items-center gap-1.5"
         style={{ background: theme.primary, boxShadow: `0 10px 30px -12px ${theme.primary}` }}
       >
         <Icon name="confirmation_number" className="text-[18px]" />
         {hero.ctaLabel}
-      </Link>
+      </a>
       {waHref && (
         <a
           href={waHref}
@@ -454,6 +494,32 @@ function Highlights({ page, theme }) {
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * The point of the whole page: book here, now. Placed directly under the hero
+ * because a visitor who has to click through to a separate portal before they
+ * can do anything is a visitor we have already half lost.
+ */
+function Booking({ page, theme }) {
+  return (
+    <SectionShell
+      id="book"
+      tinted
+      kicker="No queue, no phone call"
+      title="Book your visit"
+      subtitle={`Chat with the assistant or message ${page.facility.name} on WhatsApp — either way you get a live queue token.`}
+    >
+      <div className="reveal">
+        <FacilityBookingBot
+          hospitalId={page.facility.id}
+          facilityName={page.facility.name}
+          theme={theme}
+          whatsappNumber={page.facility.whatsappNumber}
+        />
+      </div>
+    </SectionShell>
   );
 }
 
@@ -986,6 +1052,7 @@ function Contact({ page, theme, bookingHref, waHref }) {
 const SECTIONS = {
   hero: Hero,
   highlights: Highlights,
+  booking: Booking,
   about: About,
   services: Services,
   modules: Modules,

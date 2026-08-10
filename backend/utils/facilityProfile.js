@@ -43,19 +43,60 @@ const FIELD = {
  * how "has a pharmacy" and "needs a pharmacist login" stay one decision instead
  * of two that can disagree.
  */
+/**
+ * Which login accounts each facility type needs vs. merely offers. Lives here,
+ * next to the modules, because the two answer the same question from opposite
+ * ends — a Lab `requires` a lab account precisely because a lab bench is the
+ * thing it has. `routes/auth.js` validates registrations against this, and
+ * `normalizeModules()` uses it to refuse to switch off the one unit that makes a
+ * tenant operable.
+ */
+const FACILITY_TYPE_RULES = {
+  Hospital: { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
+  'Government Hospital': { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
+  Clinic: { requires: ['doctors'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] },
+  Lab: { requires: ['lab'], offers: ['staff', 'lab'] },
+  'Government Lab': { requires: ['lab'], offers: ['staff', 'lab'] },
+  Medical: { requires: ['pharmacy'], offers: ['staff', 'pharmacy'] },
+  Government: { requires: ['staff'], offers: ['staff', 'doctors', 'lab', 'pharmacy'] }
+};
+
 const FACILITY_MODULES = [
   {
     key: 'opd',
-    label: 'OPD / Consultation',
+    label: 'OPD / Doctor Consultation',
     icon: 'stethoscope',
     group: 'Clinical',
-    blurb: 'Outpatient cabins with live token queues.',
+    blurb: 'Consultation cabins with live token queues and a doctor console.',
     appliesTo: ['Hospital', 'Clinic', 'Government Hospital', 'Government'],
     defaultOn: true,
+    createsAccounts: 'doctors',
     fields: [
       { key: 'cabinCount', label: 'Consultation cabins', type: FIELD.NUMBER, placeholder: '4' },
       { key: 'openHours', label: 'OPD hours', type: FIELD.TEXT, placeholder: '9:00 AM – 8:00 PM' },
       { key: 'departments', label: 'Departments', type: FIELD.LIST, placeholder: 'Cardiology, ENT, Dental' }
+    ]
+  },
+  {
+    key: 'staffDesk',
+    label: 'Reception / Front Desk',
+    icon: 'support_agent',
+    group: 'Operations',
+    blurb: 'Counter dashboard for walk-ins, billing and queue control.',
+    appliesTo: [
+      'Hospital',
+      'Clinic',
+      'Medical',
+      'Lab',
+      'Government Hospital',
+      'Government Lab',
+      'Government'
+    ],
+    defaultOn: true,
+    createsAccounts: 'staff',
+    fields: [
+      { key: 'counterCount', label: 'Counters', type: FIELD.NUMBER, placeholder: '2' },
+      { key: 'openHours', label: 'Desk hours', type: FIELD.TEXT, placeholder: '8:00 AM – 9:00 PM' }
     ]
   },
   {
@@ -310,6 +351,7 @@ function modulesForType(type) {
 const ALL_SECTIONS = [
   'hero',
   'highlights',
+  'booking',
   'about',
   'services',
   'modules',
@@ -333,6 +375,7 @@ const LANDING_TEMPLATES = {
     sections: [
       'hero',
       'highlights',
+      'booking',
       'services',
       'modules',
       'departments',
@@ -364,6 +407,7 @@ const LANDING_TEMPLATES = {
     sections: [
       'hero',
       'highlights',
+      'booking',
       'about',
       'services',
       'doctors',
@@ -395,6 +439,7 @@ const LANDING_TEMPLATES = {
     sections: [
       'hero',
       'highlights',
+      'booking',
       'services',
       'packages',
       'modules',
@@ -425,6 +470,7 @@ const LANDING_TEMPLATES = {
     sections: [
       'hero',
       'highlights',
+      'booking',
       'services',
       'modules',
       'packages',
@@ -456,6 +502,7 @@ const LANDING_TEMPLATES = {
     sections: [
       'hero',
       'highlights',
+      'booking',
       'services',
       'modules',
       'departments',
@@ -534,14 +581,23 @@ const urlList = (v, max = 12) => {
 function normalizeModules(input, type) {
   const allowed = modulesForType(type);
   const source = input && typeof input === 'object' ? input : {};
+  // The account kinds this type cannot operate without. A Lab with its lab
+  // bench switched off, or a Clinic with no consultation, is a tenant nobody
+  // can sign into to do the actual job — so those modules cannot be turned off,
+  // whatever the request says. The admin panel shows them locked; this is the
+  // half that a hand-written API call cannot get around.
+  const required = (FACILITY_TYPE_RULES[type] || { requires: [] }).requires;
   const out = {};
 
   for (const mod of allowed) {
     const raw = source[mod.key];
     // Absent key falls back to the module's own default (OPD is on for anything
     // that consults patients) rather than silently switching a unit off.
-    const enabled =
-      raw === undefined ? Boolean(mod.defaultOn) : bool(raw && raw.enabled !== undefined ? raw.enabled : raw);
+    const enabled = required.includes(mod.createsAccounts)
+      ? true
+      : raw === undefined
+        ? Boolean(mod.defaultOn)
+        : bool(raw && raw.enabled !== undefined ? raw.enabled : raw);
     const entry = { enabled };
 
     if (enabled && raw && typeof raw === 'object') {
@@ -874,6 +930,11 @@ function buildLandingPage(hospital, doctors = []) {
         landing.seo.description || (h.description || fill(template.copy.subheadline, h)).slice(0, 180)
     },
     languages: landing.languages,
+    // Which team portals this facility actually runs, so its page can link its
+    // own staff and doctors straight to the right login instead of making them
+    // hunt through a global nav and then pick their employer from a dropdown.
+    // Account KINDS only — never usernames, never counts of who works here.
+    logins: accountKindsFor(modules, h.type),
     published: landing.published
   };
 }
@@ -884,18 +945,37 @@ function buildLandingPage(hospital, doctors = []) {
  * rather than empty — no migration script, no half-rendered pages.
  */
 function legacyModulesFrom(hospital) {
-  const consults = ['Hospital', 'Clinic', 'Government Hospital', 'Government'].includes(hospital.type);
+  const offers = (FACILITY_TYPE_RULES[hospital.type] || { offers: [] }).offers;
   return {
-    opd: { enabled: consults },
+    opd: { enabled: offers.includes('doctors') },
+    staffDesk: { enabled: offers.includes('staff') },
     lab: { enabled: hospital.hasInternalLab !== false },
     pharmacy: { enabled: hospital.hasInternalPharmacy !== false }
   };
 }
 
+/**
+ * The login account kinds a facility's switched-on modules imply — the single
+ * answer both the onboarding form (which account sections to show) and the
+ * landing page (which staff logins to link to) are asking for.
+ */
+function accountKindsFor(modules, type) {
+  const normalized = modules && Object.keys(modules).length ? modules : {};
+  const offers = (FACILITY_TYPE_RULES[type] || { offers: [] }).offers;
+  const kinds = new Set();
+  for (const mod of FACILITY_MODULES) {
+    if (!mod.createsAccounts || !offers.includes(mod.createsAccounts)) continue;
+    if (normalized[mod.key] && normalized[mod.key].enabled) kinds.add(mod.createsAccounts);
+  }
+  return Array.from(kinds);
+}
+
 module.exports = {
   FIELD,
   ALL_SECTIONS,
+  FACILITY_TYPE_RULES,
   FACILITY_MODULES,
+  accountKindsFor,
   MODULE_BY_KEY,
   LANDING_TEMPLATES,
   modulesForType,

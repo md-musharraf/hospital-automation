@@ -259,6 +259,53 @@ landing page links into, so existing WhatsApp links and QR codes still work.
   string ends up in a `src` or `href`, where a `javascript:` value typed into the admin
   panel would be stored XSS waiting for the first visitor.
 
+### A14. Booking on the landing page itself (`FacilityBookingBot`)
+
+A visitor who has to click through to a separate portal before they can do anything
+is a visitor half lost, so the landing page carries the real booking assistant rather
+than a link to it. Both the hero and the nav CTA scroll to it instead of navigating
+away.
+
+* **The same engine, not a second copy.** The widget is a thin client over
+  `POST /api/v1/chat/message` — the identical state machine, triage and token issuing
+  that the full portal and WhatsApp already use. A second implementation of the booking
+  flow would drift within a release, and the bug would surface as patients booked into
+  the wrong department.
+* **Verified end to end:** typing Hinglish symptoms (*"seene mein dard ho raha hai"*)
+  on a facility's page routes to Cardiology, escalates to emergency priority, issues a
+  live token and offers a tracking link — without leaving the page.
+* **WhatsApp beside it**, pre-addressed to that facility's own booking number, for the
+  patients who would rather use the channel they already live in.
+* The conversation only opens on the first interaction, so a visitor who merely scrolls
+  past never creates a `ChatSession` row.
+
+### A15. Team portals, per facility
+
+* **The landing page links its own team in.** A footer strip offers exactly the portals
+  that facility runs — reception, doctor console, lab, pharmacy — as
+  `/staff/login?facility=<id>`. The login screen preselects that tenant, so a
+  receptionist at a three-room clinic never hunts for their employer in a dropdown of
+  every partner on the platform. The parameter is a **hint, not an instruction**: it is
+  only honoured if it matches a real facility in the fetched list, so an arbitrary query
+  string falls back to the first genuine tenant.
+* **Reception and the doctor console are modules.** `staffDesk` and `opd` carry
+  `createsAccounts`, so ticking "Reception / Front Desk" is what asks for counter logins
+  and ticking "OPD / Doctor Consultation" is what asks for doctors — the same one
+  decision that already governed lab and pharmacy. The module a type *requires* is
+  force-enabled and shown locked; `normalizeModules()` re-applies that server-side, so
+  no hand-written request can create a Lab with its lab bench switched off.
+* **Dashboards show the tenant they belong to.** The staff sidebar hard-coded
+  "CareeAi Admin / General Hospital" for everyone, so a receptionist at any other
+  facility spent their shift looking at the wrong hospital's name — in the one place you
+  check before taking a payment. Both dashboards now carry their facility's real name,
+  logo and colours via `useFacilityBranding`.
+* **The category palette works again.** `Hospital.primaryColor` is *defaulted* in the
+  schema, so "the partner chose teal" and "nobody picked a colour" were stored
+  identically — and every clinic, lab and pharmacy rendered in the hospital teal.
+  `getFacilityTheme()` now treats an untouched schema default as "not customised", so
+  clinics are indigo, labs sky, pharmacies green, and deliberate white-labelling still
+  wins.
+
 ### B. Emergency Queue Prioritization (SOS)
 * **Logic:** Staff members can trigger an **Emergency Override** flag during registration, or change an existing ticket to SOS.
 * **Priority Routing:** Emergency tokens are pushed to **Index 0** of the doctor's `activeQueue` array, instantly routing them to the top of the waitlist.

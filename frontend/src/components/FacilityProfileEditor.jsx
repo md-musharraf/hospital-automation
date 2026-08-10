@@ -29,16 +29,39 @@ import React from 'react';
 export const FALLBACK_MODULES = [
   {
     key: 'opd',
-    label: 'OPD / Consultation',
+    label: 'OPD / Doctor Consultation',
     icon: 'stethoscope',
     group: 'Clinical',
-    blurb: 'Outpatient cabins with live token queues.',
+    blurb: 'Consultation cabins with live token queues and a doctor console.',
     appliesTo: ['Hospital', 'Clinic', 'Government Hospital', 'Government'],
     defaultOn: true,
+    createsAccounts: 'doctors',
     fields: [
       { key: 'cabinCount', label: 'Consultation cabins', type: 'number', placeholder: '4' },
       { key: 'openHours', label: 'OPD hours', type: 'text', placeholder: '9:00 AM – 8:00 PM' },
       { key: 'departments', label: 'Departments', type: 'list', placeholder: 'Cardiology, ENT, Dental' }
+    ]
+  },
+  {
+    key: 'staffDesk',
+    label: 'Reception / Front Desk',
+    icon: 'support_agent',
+    group: 'Operations',
+    blurb: 'Counter dashboard for walk-ins, billing and queue control.',
+    appliesTo: [
+      'Hospital',
+      'Clinic',
+      'Medical',
+      'Lab',
+      'Government Hospital',
+      'Government Lab',
+      'Government'
+    ],
+    defaultOn: true,
+    createsAccounts: 'staff',
+    fields: [
+      { key: 'counterCount', label: 'Counters', type: 'number', placeholder: '2' },
+      { key: 'openHours', label: 'Desk hours', type: 'text', placeholder: '8:00 AM – 9:00 PM' }
     ]
   },
   {
@@ -262,7 +285,7 @@ function RepeatList({ rows, onChange, blank, addLabel, render }) {
  * `onChange` so the account section below can appear or disappear with it,
  * rather than the admin having to keep two switches in agreement.
  */
-export function ModuleGrid({ catalogue, type, value, onChange, idPrefix = 'mod' }) {
+export function ModuleGrid({ catalogue, type, value, onChange, idPrefix = 'mod', requiredKinds = [] }) {
   const applicable = catalogue.filter((m) => m.appliesTo.includes(type));
   if (!applicable.length) {
     return (
@@ -291,6 +314,10 @@ export function ModuleGrid({ catalogue, type, value, onChange, idPrefix = 'mod' 
             {mods.map((mod) => {
               const state = value[mod.key] || { enabled: false };
               const id = `${idPrefix}-${mod.key}`;
+              // The one unit that makes this facility type operable cannot be
+              // switched off — a Lab with no lab bench is a tenant nobody can
+              // sign into. Shown locked here; the API enforces it regardless.
+              const locked = Boolean(mod.createsAccounts && requiredKinds.includes(mod.createsAccounts));
               return (
                 <div
                   key={mod.key}
@@ -304,9 +331,10 @@ export function ModuleGrid({ catalogue, type, value, onChange, idPrefix = 'mod' 
                     <input
                       id={id}
                       type="checkbox"
-                      checked={Boolean(state.enabled)}
+                      checked={locked ? true : Boolean(state.enabled)}
+                      disabled={locked}
                       onChange={(e) => patch(mod.key, { enabled: e.target.checked })}
-                      className="mt-0.5 w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer shrink-0"
+                      className="mt-0.5 w-4 h-4 accent-[var(--primary-color)] rounded cursor-pointer shrink-0 disabled:opacity-70 disabled:cursor-not-allowed"
                     />
                     <span className="min-w-0">
                       <span className="flex items-center gap-1.5">
@@ -322,6 +350,11 @@ export function ModuleGrid({ catalogue, type, value, onChange, idPrefix = 'mod' 
                       <span className="block text-[10px] text-[var(--text-secondary)] font-medium leading-snug mt-0.5">
                         {mod.blurb}
                       </span>
+                      {locked && (
+                        <span className="inline-block mt-1 mr-1 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--primary-color)]/15 text-[var(--primary-color)]">
+                          required for a {type}
+                        </span>
+                      )}
                       {mod.createsAccounts && (
                         <span className="inline-block mt-1 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
                           needs a {mod.createsAccounts} login
