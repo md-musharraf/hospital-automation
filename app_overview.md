@@ -279,7 +279,38 @@ away.
 * The conversation only opens on the first interaction, so a visitor who merely scrolls
   past never creates a `ChatSession` row.
 
-### A15. Team portals, per facility
+### A15. Doctor profiles on the landing page
+
+Four consultants and four bare names is a directory, not a decision. Every doctor at a
+facility now gets a real profile card on its landing page, and `Doctor` carries the
+fields a patient actually reads before booking:
+
+* **`photoUrl`, `qualification`, `experienceYears`, `registrationNumber`, `languages`,
+  `opdDays`, `opdHours`, `consultationFee`, `about`** — all optional. The card omits
+  what is blank rather than rendering empty rows, so a half-filled profile looks sparse
+  rather than broken, and no existing doctor record needs back-filling.
+* **Live availability.** The landing route joins each doctor's `Queue` and the card
+  shows *"3 waiting · ~36 min"* (waiting × that doctor's own average checkup time), or
+  *"No queue right now"*. Best-effort: if the queue lookup fails the page still renders
+  without the numbers — a marketing page must never fail because a queue read did.
+* **Department filter** appears only once a facility has more than one department, with
+  a count per chip. Every doctor is listed; the filter narrows, it never hides.
+* **A strict allow-list, not a blocklist.** The payload is public, so nothing is
+  published until it is named in the projection — a private field added to the `Doctor`
+  model later cannot leak by simply existing. Email in particular stays out: it is a
+  login credential.
+* **Normalized on read as well as on write.** `normalizeDoctorProfile()` runs over
+  stored values too, so a row that predates this feature (or was seeded straight into
+  the database) can never print a `javascript:` photo, an `opdDays` of `"banana"`, or a
+  900-year career onto a public page.
+* **Existing doctors can be given profiles.** The personnel console flags any doctor
+  with **no profile** and opens the same field set inline; `PUT /super-admin/doctor/:id`
+  updates only the keys the request mentions, so editing a bio never blanks a cabin
+  number. The identical fields appear in the onboarding roster and the "add an account"
+  tab — one shared `<DoctorProfileFields>`, because three copies of nine fields is how
+  one of them quietly ends up missing the field somebody added last month.
+
+### A16. Team portals, per facility
 
 * **The landing page links its own team in.** A footer strip offers exactly the portals
   that facility runs — reception, doctor console, lab, pharmacy — as

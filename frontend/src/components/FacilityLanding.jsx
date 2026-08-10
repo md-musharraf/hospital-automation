@@ -695,68 +695,209 @@ function Departments({ page, theme, bookingHref }) {
   );
 }
 
-function Doctors({ page, theme, bookingHref }) {
+/**
+ * The doctor roster, as profiles rather than a list of names.
+ *
+ * A patient looking at four consultants and four bare names has been given a
+ * directory, not a decision. Qualification, years of practice, the days someone
+ * actually sits, the fee and how many people are waiting right now are what let
+ * them choose — so every field the facility filled in gets shown, and every one
+ * it left blank is quietly omitted rather than rendered as an empty label.
+ */
+function Doctors({ page, theme }) {
+  const [department, setDepartment] = useState('All');
   if (!page.doctors.length) return null;
+
+  const departments = Array.from(new Set(page.doctors.map((d) => d.department).filter(Boolean)));
+  const shown = department === 'All' ? page.doctors : page.doctors.filter((d) => d.department === department);
+
   return (
     <SectionShell
       id="doctors"
       tinted
       kicker="Our team"
-      title="Doctors & Consultants"
-      subtitle="Pick a doctor at booking, or let smart triage route you from your symptoms."
+      title={page.doctors.length === 1 ? 'Your Doctor' : `Meet our ${page.doctors.length} doctors`}
+      subtitle="Pick whoever suits you, or describe your symptoms and let the assistant route you."
     >
-      <div className="reveal grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-        {page.doctors.map((d) => (
-          <div
-            key={d.id}
-            className="card-hover bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-2xl p-5 flex items-start gap-4"
-          >
-            <span
-              className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black shrink-0"
-              style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.accent})` }}
-            >
-              {(d.name || 'Dr')
-                .replace(/^Dr\.?\s*/i, '')
-                .charAt(0)
-                .toUpperCase()}
-            </span>
-            <div className="min-w-0 flex-1 space-y-1">
-              <p className="text-sm font-black leading-tight truncate">{d.name}</p>
-              <p className="text-[11px] font-bold" style={{ color: theme.primary }}>
-                {d.department}
-              </p>
-              {d.specialization && (
-                <p className="text-[11px] text-[var(--text-secondary)] font-medium leading-snug">
-                  {d.specialization}
-                </p>
-              )}
-              <div className="flex items-center gap-2 pt-1">
-                {d.doctorType && (
-                  <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-[var(--card-bg)] border border-[var(--border-color)]/40 text-[var(--text-secondary)]">
-                    {d.doctorType}
+      {/* Only worth a filter once there is actually something to filter. */}
+      {departments.length > 1 && (
+        <div className="reveal flex flex-wrap justify-center gap-1.5 mb-7">
+          {['All', ...departments].map((dep) => {
+            const active = department === dep;
+            return (
+              <button
+                key={dep}
+                type="button"
+                onClick={() => setDepartment(dep)}
+                className="px-3.5 py-1.5 rounded-full text-[11px] font-black border transition-all active:scale-95"
+                style={
+                  active
+                    ? { background: theme.primary, borderColor: theme.primary, color: '#fff' }
+                    : {
+                        background: `${theme.primary}0d`,
+                        borderColor: `${theme.primary}33`,
+                        color: theme.primary
+                      }
+                }
+              >
+                {dep}
+                {dep !== 'All' && (
+                  <span className="ml-1 opacity-70">
+                    {page.doctors.filter((d) => d.department === dep).length}
                   </span>
                 )}
-                {d.availabilityStatus === 'Available' && (
-                  <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                    Available
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="reveal grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        {shown.map((d) => (
+          <DoctorCard key={d.id} doctor={d} theme={theme} />
         ))}
       </div>
+
       <div className="reveal text-center mt-8">
-        <Link
-          to={bookingHref}
+        <a
+          href="#book"
           className="inline-flex items-center gap-1.5 px-5 py-3 rounded-xl text-white text-xs font-black shadow-lg active:scale-95 transition-all"
           style={{ background: theme.primary }}
         >
           <Icon name="event_available" className="text-[18px]" />
-          Book with a doctor
-        </Link>
+          Book an appointment
+        </a>
       </div>
     </SectionShell>
+  );
+}
+
+/** Availability rendered as a colour, so it reads before it is read. */
+const AVAILABILITY_TONE = {
+  Available: { bg: 'rgba(16,185,129,0.12)', fg: '#059669', label: 'Available today' },
+  'In Surgery': { bg: 'rgba(245,158,11,0.12)', fg: '#d97706', label: 'In surgery' },
+  'On Break': { bg: 'rgba(245,158,11,0.12)', fg: '#d97706', label: 'On a break' },
+  Unavailable: { bg: 'rgba(244,63,94,0.12)', fg: '#e11d48', label: 'Not available' }
+};
+
+function DoctorCard({ doctor: d, theme }) {
+  const tone = AVAILABILITY_TONE[d.availabilityStatus] || AVAILABILITY_TONE.Available;
+  const initial = (d.name || 'Dr')
+    .replace(/^Dr\.?\s*/i, '')
+    .charAt(0)
+    .toUpperCase();
+
+  // Waiting count is only meaningful alongside how long each patient takes —
+  // "4 waiting" means something different at 5 minutes a head than at 20.
+  const waitMinutes =
+    typeof d.waiting === 'number' && d.waiting > 0 ? d.waiting * (d.averageCheckupTime || 10) : 0;
+
+  // Facts worth a line each. Anything the facility left blank simply is not here,
+  // rather than showing as an empty row — a half-filled profile should look
+  // sparse, not broken.
+  const facts = [
+    d.experienceYears > 0 && {
+      icon: 'workspace_premium',
+      text: `${d.experienceYears}+ years of experience`
+    },
+    d.opdDays.length > 0 && { icon: 'calendar_month', text: d.opdDays.join(' · ') },
+    d.opdHours && { icon: 'schedule', text: d.opdHours },
+    d.currentRoom && { icon: 'meeting_room', text: d.currentRoom },
+    d.languages.length > 0 && { icon: 'translate', text: d.languages.join(', ') },
+    d.consultationFee > 0 && { icon: 'payments', text: `₹${d.consultationFee} consultation` },
+    d.registrationNumber && { icon: 'verified_user', text: `Reg. ${d.registrationNumber}` }
+  ].filter(Boolean);
+
+  return (
+    <div className="card-hover bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-2xl overflow-hidden flex flex-col">
+      <div className="p-5 flex items-start gap-4">
+        {d.photoUrl ? (
+          <img
+            src={d.photoUrl}
+            alt={d.name}
+            loading="lazy"
+            className="w-16 h-16 rounded-2xl object-cover border border-[var(--border-color)]/40 shrink-0"
+          />
+        ) : (
+          <span
+            className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-xl font-black shrink-0"
+            style={{ background: `linear-gradient(135deg, ${theme.primary}, ${theme.accent})` }}
+          >
+            {initial}
+          </span>
+        )}
+
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-sm font-black leading-tight text-[var(--text-color)]">{d.name}</p>
+          {d.qualification && (
+            <p className="text-[11px] font-bold text-[var(--text-secondary)]">{d.qualification}</p>
+          )}
+          <p className="text-[11px] font-black" style={{ color: theme.primary }}>
+            {d.department}
+          </p>
+          {d.specialization && (
+            <p className="text-[11px] text-[var(--text-secondary)] font-medium leading-snug">
+              {d.specialization}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            {d.doctorType && (
+              <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-[var(--card-bg)] border border-[var(--border-color)]/40 text-[var(--text-secondary)]">
+                {d.doctorType}
+              </span>
+            )}
+            <span
+              className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded"
+              style={{ background: tone.bg, color: tone.fg }}
+            >
+              {tone.label}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {d.about && (
+        <p className="px-5 pb-3 text-[11px] text-[var(--text-secondary)] font-medium leading-relaxed line-clamp-3">
+          {d.about}
+        </p>
+      )}
+
+      {facts.length > 0 && (
+        <div className="px-5 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
+          {facts.map((f) => (
+            <span key={f.icon} className="flex items-center gap-1.5 min-w-0">
+              <Icon name={f.icon} className="text-[15px] shrink-0" style={{ color: theme.primary }} />
+              <span className="text-[11px] font-bold text-[var(--text-secondary)] truncate" title={f.text}>
+                {f.text}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-auto px-5 py-3.5 border-t border-[var(--border-color)]/25 flex items-center justify-between gap-3 bg-[var(--card-bg)]/50">
+        {typeof d.waiting === 'number' ? (
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ background: d.waiting > 0 ? '#f59e0b' : '#10b981' }}
+            />
+            <span className="text-[11px] font-black text-[var(--text-secondary)] truncate">
+              {d.waiting === 0 ? 'No queue right now' : `${d.waiting} waiting · ~${waitMinutes} min`}
+            </span>
+          </span>
+        ) : (
+          <span className="text-[11px] font-bold text-[var(--text-secondary)]">Live token booking</span>
+        )}
+        <a
+          href="#book"
+          className="shrink-0 px-3.5 py-2 rounded-xl text-white text-[11px] font-black active:scale-95 transition-all"
+          style={{ background: theme.primary }}
+        >
+          Book
+        </a>
+      </div>
+    </div>
   );
 }
 

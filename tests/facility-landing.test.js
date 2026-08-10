@@ -320,6 +320,80 @@ const {
     );
   }
 
+  section('Doctor profiles — what a patient is shown to choose on');
+
+  const roster = buildLandingPage({ id: 'multi', name: 'Multi Hospital', type: 'Hospital', city: 'Patna' }, [
+    {
+      _id: 'd1',
+      name: 'Dr. Rao',
+      department: 'Cardiology',
+      qualification: 'MBBS, MD',
+      experienceYears: '14',
+      languages: 'Hindi, English',
+      // Deliberately messy, the way a legacy row or a seed script can be:
+      // a junk day, a numeric string, and a hostile photo URL.
+      opdDays: ['sat', 'banana', 'Mon'],
+      opdHours: '10:00 AM – 1:00 PM',
+      consultationFee: '500',
+      photoUrl: 'javascript:alert(1)',
+      registrationNumber: 'BMC/12345',
+      averageCheckupTime: 12,
+      waiting: 3,
+      email: 'rao@hospital.test',
+      passwordHash: 'SECRET-HASH'
+    },
+    { _id: 'd2', name: 'Dr. Iqbal', department: 'Orthopedics' },
+    { _id: 'd3', name: 'Dr. Sen', department: 'Cardiology', experienceYears: 900 }
+  ]);
+
+  check('Every doctor is listed, not just the first', roster.doctors.length === 3, roster.doctors.length);
+
+  const rao = roster.doctors[0];
+  check('Qualification reaches the page', rao.qualification === 'MBBS, MD', rao);
+  check('Experience is coerced to a number', rao.experienceYears === 14, rao);
+  check('Fee is coerced to a number', rao.consultationFee === 500, rao);
+  check(
+    'Languages are split into a list',
+    JSON.stringify(rao.languages) === JSON.stringify(['Hindi', 'English']),
+    rao.languages
+  );
+  // Normalizing on READ as well as write is what protects the public page from
+  // rows that predate this feature or were seeded straight into the database.
+  check(
+    'OPD days are cleaned and put in week order',
+    JSON.stringify(rao.opdDays) === JSON.stringify(['Mon', 'Sat']),
+    rao.opdDays
+  );
+  check('A javascript: photo never reaches the page', rao.photoUrl === '', rao.photoUrl);
+  check('Live waiting count is carried through', rao.waiting === 3, rao);
+
+  // The projection is an allow-list: a private field added to the Doctor model
+  // later must not become public just by existing.
+  check(
+    'Doctor email is never published',
+    !JSON.stringify(roster.doctors).includes('rao@hospital.test'),
+    Object.keys(rao)
+  );
+  check(
+    'Password hash is never published',
+    !JSON.stringify(roster).includes('SECRET-HASH'),
+    Object.keys(rao)
+  );
+
+  // A doctor with no profile still has to render — every key present, blank.
+  const bare2 = roster.doctors[1];
+  check('A doctor with no profile still has the full shape', Array.isArray(bare2.opdDays), bare2);
+  check('...with sensible zeroes, not undefined', bare2.experienceYears === 0, bare2);
+  check('...and no live count rather than a fake one', bare2.waiting === null, bare2);
+
+  check('A nonsense experience value is capped', roster.doctors[2].experienceYears === 70, roster.doctors[2]);
+
+  check(
+    'Departments still come off the roster',
+    roster.departments.includes('Cardiology') && roster.departments.includes('Orthopedics'),
+    roster.departments
+  );
+
   section('Template routing per facility type');
   check('Government hospital → civic-trust', templateForType('Government Hospital') === 'civic-trust');
   check('Government lab → civic-trust (govt wins)', templateForType('Government Lab') === 'civic-trust');

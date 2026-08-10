@@ -15,6 +15,7 @@ const {
   LANDING_TEMPLATES,
   normalizeModules,
   normalizeLanding,
+  normalizeDoctorProfile,
   reconcileLegacyFlags,
   legacyModulesFrom
 } = require('../utils/facilityProfile');
@@ -268,7 +269,10 @@ function buildDoctorFields(d, hospitalId) {
     averageCheckupTime: d.averageCheckupTime ? parseInt(d.averageCheckupTime) : 10,
     dailyTokenLimit: d.dailyTokenLimit ? parseInt(d.dailyTokenLimit) : 0,
     currentRoom: d.currentRoom || 'Cabin 1',
-    hospital: hospitalId
+    hospital: hospitalId,
+    // The public half of the profile — qualification, experience, OPD days, fee.
+    // Sanitized in facilityProfile because it is rendered on a public page.
+    ...normalizeDoctorProfile(d)
   };
 }
 
@@ -967,6 +971,9 @@ router.put('/super-admin/doctor/:id', verifyAdminSecret, async (req, res) => {
     if (dailyTokenLimit !== undefined && !isNaN(parseInt(dailyTokenLimit))) {
       doctor.dailyTokenLimit = Math.max(0, parseInt(dailyTokenLimit));
     }
+    // Public profile fields — only the ones this request actually mentioned, so
+    // editing a cabin number never silently blanks a doctor's qualifications.
+    Object.assign(doctor, normalizeDoctorProfile(req.body));
     if (password) doctor.passwordHash = await bcrypt.hash(password, 10);
 
     await doctor.save();

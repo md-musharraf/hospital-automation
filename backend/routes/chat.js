@@ -1965,7 +1965,28 @@ router.get('/hospital/:hospitalId/landing', async (req, res) => {
     }
 
     const doctors = await Doctor.find({ hospital: hospitalId }, '-passwordHash');
-    const page = buildLandingPage(hospital, doctors);
+
+    // How many people are waiting for each doctor right now. A patient choosing
+    // between four consultants gets more from "2 waiting" than from any amount
+    // of profile copy. Best-effort: if the queues cannot be read the page still
+    // renders, just without the live numbers — a marketing page must never fail
+    // because a queue lookup did.
+    let withQueues = doctors;
+    try {
+      const queues = await Queue.find({ doctor: { $in: doctors.map((d) => d._id) } });
+      const waitingBy = new Map(
+        queues.map((q) => [String(q.doctor), Array.isArray(q.activeQueue) ? q.activeQueue.length : 0])
+      );
+      withQueues = doctors.map((d) => {
+        const obj = typeof d.toObject === 'function' ? d.toObject() : { ...d };
+        obj.waiting = waitingBy.has(String(d._id)) ? waitingBy.get(String(d._id)) : null;
+        return obj;
+      });
+    } catch (queueErr) {
+      logger.error('Could not attach live queue depth to landing page', { err: queueErr });
+    }
+
+    const page = buildLandingPage(hospital, withQueues);
 
     // Same WhatsApp normalization the other public endpoints do, so the "Book on
     // WhatsApp" button on the landing page dials the same number the portal does.

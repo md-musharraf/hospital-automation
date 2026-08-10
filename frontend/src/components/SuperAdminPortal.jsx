@@ -5,6 +5,9 @@ import { Activity, ShieldAlert, ArrowLeft } from 'lucide-react';
 import WhatsAppTester from './WhatsAppTester';
 import {
   ModuleGrid,
+  DoctorProfileFields,
+  blankDoctorProfile,
+  doctorProfileFrom,
   LandingEditor,
   FALLBACK_MODULES,
   FALLBACK_TEMPLATES,
@@ -137,7 +140,19 @@ const blankDoctor = () => ({
   doctorType: 'Consultant',
   currentRoom: 'Cabin 1',
   averageCheckupTime: 10,
-  dailyTokenLimit: 0
+  dailyTokenLimit: 0,
+  // The half a patient reads on the landing page. All optional — every key is
+  // present so the inputs stay controlled, and blanks are omitted from the
+  // public page rather than rendered as empty rows.
+  qualification: '',
+  experienceYears: '',
+  registrationNumber: '',
+  consultationFee: '',
+  opdDays: [],
+  opdHours: '',
+  languages: [],
+  photoUrl: '',
+  about: ''
 });
 const blankLab = () => ({ name: '', username: '', password: '' });
 const blankPharmacy = () => ({ name: '', username: '', password: '', counterNumber: 'Pharmacy Counter' });
@@ -205,6 +220,11 @@ export default function SuperAdminPortal() {
   const [addSpecialization, setAddSpecialization] = useState('General Consultation');
   const [addAverageCheckupTime, setAddAverageCheckupTime] = useState(10);
   const [addDoctorType, setAddDoctorType] = useState('Consultant');
+  // Public profile for the doctor being added to an existing facility, and for
+  // the one currently being edited in the personnel console.
+  const [addProfile, setAddProfile] = useState(blankDoctorProfile());
+  const [editingDoctorId, setEditingDoctorId] = useState('');
+  const [editingDoctorProfile, setEditingDoctorProfile] = useState(blankDoctorProfile());
   const [addDailyTokenLimit, setAddDailyTokenLimit] = useState(0);
 
   // Edit Hospital States
@@ -288,6 +308,32 @@ export default function SuperAdminPortal() {
       console.error('Error fetching facility personnel:', err);
     } finally {
       setPersonnelLoading(false);
+    }
+  };
+
+  /**
+   * Give an already-registered doctor a public profile.
+   *
+   * Without this, only doctors created after this feature shipped could ever
+   * appear properly on the landing page — every facility already on the
+   * platform would show a wall of bare names with no way to fix it.
+   */
+  const handleSaveDoctorProfile = async (docId) => {
+    setError('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/doctor/${docId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': adminSecret },
+        body: JSON.stringify(editingDoctorProfile)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to update the doctor profile');
+      setSuccessMsg('Doctor profile updated — it is live on the landing page.');
+      setEditingDoctorId('');
+      fetchFacilityPersonnel(editHospId);
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -783,6 +829,7 @@ export default function SuperAdminPortal() {
       payload.averageCheckupTime = addAverageCheckupTime;
       payload.doctorType = addDoctorType;
       payload.dailyTokenLimit = addDailyTokenLimit;
+      Object.assign(payload, addProfile);
     } else if (accountType === 'lab') {
       url = `${BACKEND_URL}/api/v1/auth/super-admin/register-lab`;
       payload.username = addUsername;
@@ -1978,6 +2025,33 @@ export default function SuperAdminPortal() {
                           />
                         </div>
                       </div>
+
+                      {/* What the PATIENT sees on the facility's landing page.
+                          Four bare names give someone choosing a doctor nothing
+                          to choose on; qualification, years and OPD days do.
+                          All optional — blanks are omitted from the page, not
+                          rendered as empty rows. */}
+                      <details className="group rounded-lg border border-[var(--border-color)]/40 bg-[var(--bg-color)]/50">
+                        <summary className="flex items-center gap-1.5 px-3 py-2 cursor-pointer list-none">
+                          <span className="material-symbols-outlined text-[15px] text-[var(--primary-color)]">
+                            badge
+                          </span>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-color)]">
+                            Public profile (shown to patients)
+                          </span>
+                          <span className="material-symbols-outlined text-[16px] ml-auto text-[var(--text-secondary)] transition-transform group-open:rotate-180">
+                            expand_more
+                          </span>
+                        </summary>
+                        <div className="px-3 pb-3 pt-1 border-t border-[var(--border-color)]/25">
+                          <DoctorProfileFields
+                            value={d}
+                            onPatch={(patch) =>
+                              setDoctorRows((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
+                            }
+                          />
+                        </div>
+                      </details>
                     </div>
                   ))}
                   <button
@@ -2357,6 +2431,21 @@ export default function SuperAdminPortal() {
                         className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                       />
                     </div>
+                  </div>
+
+                  {/* Same public profile the onboarding roster asks for, so a
+                      doctor added later is not a bare name on the landing page. */}
+                  <div className="pt-2 border-t border-[var(--border-color)]/20 space-y-3">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-[var(--text-color)] flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-[var(--primary-color)]">
+                        badge
+                      </span>
+                      Public profile (shown to patients)
+                    </span>
+                    <DoctorProfileFields
+                      value={addProfile}
+                      onPatch={(patch) => setAddProfile((prev) => ({ ...prev, ...patch }))}
+                    />
                   </div>
                 </div>
               )}
@@ -3053,30 +3142,77 @@ export default function SuperAdminPortal() {
                       ) : (
                         <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 no-scrollbar">
                           {facilityPersonnel.doctors.map((d) => (
-                            <div
-                              key={d._id}
-                              className="flex justify-between items-center bg-[var(--bg-color)] p-2 rounded-lg text-xs"
-                            >
-                              <div>
-                                <p className="font-extrabold text-[var(--text-color)] flex items-center gap-1.5">
-                                  {d.name}
-                                  <span className="text-[8px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-1.5 py-0.5 rounded-full">
-                                    {d.doctorType || 'Consultant'}
-                                  </span>
-                                </p>
-                                <p className="text-[10px] text-[var(--text-secondary)]">
-                                  {d.department} • {d.currentRoom || 'Cabin'} ({d.availabilityStatus})
-                                  {d.dailyTokenLimit ? ` • cap ${d.dailyTokenLimit}/day` : ''}
-                                </p>
+                            <div key={d._id} className="bg-[var(--bg-color)] rounded-lg text-xs">
+                              <div className="flex justify-between items-center p-2">
+                                <div className="min-w-0">
+                                  <p className="font-extrabold text-[var(--text-color)] flex items-center gap-1.5">
+                                    {d.name}
+                                    <span className="text-[8px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-1.5 py-0.5 rounded-full">
+                                      {d.doctorType || 'Consultant'}
+                                    </span>
+                                    {/* A doctor with no profile is a bare name on
+                                        the public page — worth flagging here. */}
+                                    {!d.qualification && (
+                                      <span className="text-[8px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full">
+                                        no profile
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className="text-[10px] text-[var(--text-secondary)]">
+                                    {d.department} • {d.currentRoom || 'Cabin'} ({d.availabilityStatus})
+                                    {d.dailyTokenLimit ? ` • cap ${d.dailyTokenLimit}/day` : ''}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const opening = editingDoctorId !== d._id;
+                                      setEditingDoctorId(opening ? d._id : '');
+                                      if (opening) setEditingDoctorProfile(doctorProfileFrom(d));
+                                    }}
+                                    className="p-1 text-[var(--primary-color)] hover:bg-[var(--primary-color)]/10 rounded"
+                                    title="Edit public profile"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">badge</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteDoctor(d._id)}
+                                    className="p-1 text-rose-500 hover:bg-rose-500/10 rounded"
+                                    title="Delete Doctor"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">delete</span>
+                                  </button>
+                                </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteDoctor(d._id)}
-                                className="p-1 text-rose-500 hover:bg-rose-500/10 rounded"
-                                title="Delete Doctor"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">delete</span>
-                              </button>
+
+                              {editingDoctorId === d._id && (
+                                <div className="px-2 pb-2 pt-1 border-t border-[var(--border-color)]/30 space-y-2">
+                                  <DoctorProfileFields
+                                    value={editingDoctorProfile}
+                                    onPatch={(patch) =>
+                                      setEditingDoctorProfile((prev) => ({ ...prev, ...patch }))
+                                    }
+                                  />
+                                  <div className="flex gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveDoctorProfile(d._id)}
+                                      className="px-3 py-1.5 rounded-lg bg-[var(--primary-color)] text-white text-[10px] font-black uppercase tracking-wider"
+                                    >
+                                      Save profile
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingDoctorId('')}
+                                      className="px-3 py-1.5 rounded-lg border border-[var(--border-color)] text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>

@@ -573,6 +573,59 @@ const urlList = (v, max = 12) => {
   return raw.map(safeUrl).filter(Boolean).slice(0, max);
 };
 
+/** Days an OPD can sit, in the order a patient reads a week. */
+const OPD_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Every public profile key, blank — so a doctor with no profile still has the
+ *  same shape and the landing page never reads `undefined.length`. */
+const DOCTOR_PROFILE_DEFAULTS = {
+  photoUrl: '',
+  qualification: '',
+  registrationNumber: '',
+  about: '',
+  opdHours: '',
+  languages: [],
+  opdDays: [],
+  experienceYears: 0,
+  consultationFee: 0
+};
+
+/**
+ * The patient-facing half of a doctor record, sanitized.
+ *
+ * Kept here rather than in the auth route because it guards the same thing the
+ * landing normalizers do: `photoUrl` is rendered into an `<img src>` on a public
+ * page, so a `javascript:` value pasted into the admin panel would be stored XSS.
+ * Returns only the keys that were actually supplied, so callers can spread it
+ * over an existing doctor without blanking fields the request never mentioned.
+ */
+function normalizeDoctorProfile(input) {
+  const d = input && typeof input === 'object' ? input : {};
+  const out = {};
+  if (d.photoUrl !== undefined) out.photoUrl = safeUrl(d.photoUrl);
+  if (d.qualification !== undefined) out.qualification = str(d.qualification, 120);
+  if (d.registrationNumber !== undefined) out.registrationNumber = str(d.registrationNumber, 60);
+  if (d.about !== undefined) out.about = str(d.about, 600);
+  if (d.opdHours !== undefined) out.opdHours = str(d.opdHours, 60);
+  if (d.languages !== undefined) out.languages = strList(d.languages, 6);
+  if (d.opdDays !== undefined) {
+    // Keep the week in reading order and drop anything that is not a day, so a
+    // profile can never render "Available: Mon, banana".
+    const asked = strList(d.opdDays, 7).map((s) => s.slice(0, 3).toLowerCase());
+    out.opdDays = OPD_DAYS.filter((day) => asked.includes(day.toLowerCase()));
+  }
+  if (d.experienceYears !== undefined) {
+    const n = num(d.experienceYears);
+    // Nobody has practised for 90 years; a typo should not print a lie.
+    if (n !== undefined) out.experienceYears = Math.min(70, n);
+  }
+  if (d.consultationFee !== undefined) {
+    const n = num(d.consultationFee);
+    if (n !== undefined) out.consultationFee = n;
+  }
+  return out;
+}
+
 /**
  * Coerce whatever the admin panel posted into the stored module map, dropping
  * modules this facility type cannot offer and detail fields the module does not
@@ -833,13 +886,30 @@ function buildLandingPage(hospital, doctors = []) {
   const templateKey = landing.template === 'auto' ? templateForType(h.type) : landing.template;
   const template = LANDING_TEMPLATES[templateKey] || LANDING_TEMPLATES['care-classic'];
 
+  // A strict allow-list, not a blocklist. This payload is served to anyone on
+  // the internet, so the safe default is "nothing is public until it is named
+  // here" — adding a private field to the Doctor model must never leak it by
+  // simply existing. Email in particular stays out: it is a login credential.
   const publicDoctors = (doctors || []).map((d) => ({
     id: String(d._id || d.id || ''),
     name: d.name,
     department: d.department,
     specialization: d.specialization,
     doctorType: d.doctorType,
-    availabilityStatus: d.availabilityStatus
+    availabilityStatus: d.availabilityStatus,
+    currentRoom: d.currentRoom,
+    // Blank profile for a doctor who has none, then the STORED values run back
+    // through the same sanitizer the write path uses. Normalizing on read as
+    // well as on write is what stops a row that predates this feature — or one
+    // seeded straight into the database — from printing a `javascript:` photo
+    // or an opdDays of "banana" onto a public page.
+    ...DOCTOR_PROFILE_DEFAULTS,
+    ...normalizeDoctorProfile(d),
+    averageCheckupTime: d.averageCheckupTime || 10,
+    // Attached by the route when it can read the queues — how many people are
+    // waiting right now. "3 waiting, ~30 min" is the single most useful thing a
+    // patient choosing between four doctors can be told.
+    waiting: typeof d.waiting === 'number' ? d.waiting : null
   }));
 
   const departments = landing.departments.length
@@ -975,7 +1045,9 @@ module.exports = {
   ALL_SECTIONS,
   FACILITY_TYPE_RULES,
   FACILITY_MODULES,
+  OPD_DAYS,
   accountKindsFor,
+  normalizeDoctorProfile,
   MODULE_BY_KEY,
   LANDING_TEMPLATES,
   modulesForType,

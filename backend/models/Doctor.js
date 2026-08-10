@@ -26,7 +26,26 @@ const DoctorSchema = new mongoose.Schema(
     // keeps existing facilities unchanged). Emergencies always bypass this cap.
     dailyTokenLimit: { type: Number, default: 0 },
     currentRoom: { type: String, required: true }, // e.g., "Cabin A"
-    hospital: { type: String, default: 'general-hospital' }
+    hospital: { type: String, default: 'general-hospital' },
+
+    // ---- Public profile ----------------------------------------------------
+    // What a patient reads on the facility's landing page to decide WHO to book
+    // with. A list of bare names tells someone choosing between four doctors
+    // nothing; qualification, experience and the days a doctor actually sits are
+    // what turn a directory into a decision. All optional — the landing page
+    // renders whatever is filled in and quietly omits the rest, so no existing
+    // doctor record has to be back-filled.
+    photoUrl: { type: String, default: '' },
+    qualification: { type: String, default: '' }, // e.g. "MBBS, MD (Medicine)"
+    experienceYears: { type: Number, default: 0 },
+    // Medical council registration. Real clinics display this, and patients in
+    // India increasingly check it — showing it is a trust signal, not clutter.
+    registrationNumber: { type: String, default: '' },
+    languages: [{ type: String }],
+    opdDays: [{ type: String }], // e.g. ['Mon', 'Tue', 'Thu']
+    opdHours: { type: String, default: '' }, // e.g. "10:00 AM – 1:00 PM"
+    consultationFee: { type: Number, default: 0 }, // 0 = "ask at reception"
+    about: { type: String, default: '' }
   },
   { timestamps: true }
 );

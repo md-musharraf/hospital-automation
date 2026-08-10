@@ -427,6 +427,139 @@ export function ModuleGrid({ catalogue, type, value, onChange, idPrefix = 'mod',
 }
 
 /* ------------------------------------------------------------------ */
+/* Doctor public profile                                               */
+/* ------------------------------------------------------------------ */
+
+/** A doctor profile with every key present, so the inputs stay controlled. */
+export const blankDoctorProfile = () => ({
+  qualification: '',
+  experienceYears: '',
+  registrationNumber: '',
+  consultationFee: '',
+  opdDays: [],
+  opdHours: '',
+  languages: [],
+  photoUrl: '',
+  about: ''
+});
+
+/** Merge a stored doctor record over the blank profile shape. */
+export const doctorProfileFrom = (doctor) => ({
+  ...blankDoctorProfile(),
+  ...Object.fromEntries(Object.entries(doctor || {}).filter(([k]) => k in blankDoctorProfile()))
+});
+
+/**
+ * The half of a doctor record the PATIENT reads on the facility's landing page.
+ *
+ * Shared by all three places a doctor can be created or edited — the onboarding
+ * roster, the "add an account" tab and the personnel console — because three
+ * copies of nine fields is how one of them quietly ends up missing the field
+ * somebody added last month.
+ *
+ * Everything is optional. The landing page omits blanks rather than rendering
+ * empty rows, so a half-filled profile looks sparse, not broken.
+ */
+export function DoctorProfileFields({ value, onPatch }) {
+  const list = (v) => (Array.isArray(v) ? v.join(', ') : v || '');
+  const toList = (raw) =>
+    raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  return (
+    <div className="space-y-2.5">
+      <div className={'grid grid-cols-1 md:grid-cols-3 gap-2.5'}>
+        <Field label="Qualification">
+          <input
+            className={inputCls}
+            placeholder="MBBS, MD (Medicine)"
+            value={value.qualification}
+            onChange={(e) => onPatch({ qualification: e.target.value })}
+          />
+        </Field>
+        <Field label="Years of experience">
+          <input
+            type="number"
+            min="0"
+            max="70"
+            className={inputCls}
+            value={value.experienceYears}
+            onChange={(e) => onPatch({ experienceYears: e.target.value })}
+          />
+        </Field>
+        <Field label="Consultation fee (₹)">
+          <input
+            type="number"
+            min="0"
+            className={inputCls}
+            value={value.consultationFee}
+            onChange={(e) => onPatch({ consultationFee: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <div className={'grid grid-cols-1 md:grid-cols-3 gap-2.5'}>
+        <Field label="OPD days">
+          <input
+            className={inputCls}
+            placeholder="Mon, Tue, Thu"
+            value={list(value.opdDays)}
+            onChange={(e) => onPatch({ opdDays: toList(e.target.value) })}
+          />
+        </Field>
+        <Field label="OPD hours">
+          <input
+            className={inputCls}
+            placeholder="10:00 AM – 1:00 PM"
+            value={value.opdHours}
+            onChange={(e) => onPatch({ opdHours: e.target.value })}
+          />
+        </Field>
+        <Field label="Languages">
+          <input
+            className={inputCls}
+            placeholder="Hindi, English"
+            value={list(value.languages)}
+            onChange={(e) => onPatch({ languages: toList(e.target.value) })}
+          />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+        <Field label="Photo URL">
+          <input
+            className={inputCls}
+            placeholder="https://…"
+            value={value.photoUrl}
+            onChange={(e) => onPatch({ photoUrl: e.target.value })}
+          />
+        </Field>
+        <Field label="Medical council reg. no.">
+          <input
+            className={inputCls}
+            placeholder="e.g. BMC/12345"
+            value={value.registrationNumber}
+            onChange={(e) => onPatch({ registrationNumber: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <Field label="Short bio">
+        <textarea
+          rows={2}
+          className={inputCls}
+          placeholder="One or two lines a patient would want to read before booking."
+          value={value.about}
+          onChange={(e) => onPatch({ about: e.target.value })}
+        />
+      </Field>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Landing editor                                                      */
 /* ------------------------------------------------------------------ */
 
