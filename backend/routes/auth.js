@@ -916,6 +916,26 @@ router.delete('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) =
 });
 
 // GET all personnel and patients for a specific facility (Super Admin)
+/**
+ * Every facility, in full, for the admin panel.
+ *
+ * The public `/chat/hospitals` list is deliberately slim — it exists to fill
+ * directory cards and sign-in dropdowns, and shipping every facility's landing
+ * copy to those screens cost 554 KB at 200 facilities. The admin edit form is
+ * the one screen that genuinely needs the whole record (module map, landing
+ * content, colours), and it is behind the admin secret, so it gets its own
+ * endpoint rather than making eight public screens pay for it.
+ */
+router.get('/super-admin/hospitals', verifyAdminSecret, async (req, res) => {
+  try {
+    const hospitals = await Hospital.find({});
+    res.json(hospitals);
+  } catch (error) {
+    console.error('Super admin hospital list error:', error);
+    res.status(500).json({ message: 'Server error fetching facilities' });
+  }
+});
+
 router.get('/super-admin/facility-data/:hospitalId', verifyAdminSecret, async (req, res) => {
   try {
     const { hospitalId } = req.params;

@@ -551,7 +551,13 @@ export default function SuperAdminPortal() {
 
   const fetchHospitals = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/chat/hospitals`);
+      // The admin panel's own endpoint, because this is the one screen that
+      // edits the whole record — module map, landing content, colours. The
+      // public list is slim on purpose so directory cards and sign-in
+      // dropdowns do not download every facility's landing copy.
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/hospitals`, {
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
       const data = await res.json();
       if (res.ok && Array.isArray(data)) {
         setHospitalList(data);

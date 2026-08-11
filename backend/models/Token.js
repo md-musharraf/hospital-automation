@@ -127,4 +127,18 @@ const TokenSchema = new mongoose.Schema(
 // Compound index for unique tokenNumber per hospital tenant
 TokenSchema.index({ tokenNumber: 1, hospital: 1 }, { unique: true });
 
+// ...and one the tenant's own queries can actually use.
+//
+// The unique index above has `hospital` as its SECOND field, so it cannot serve
+// a query that filters on `hospital` alone — an index is only usable from its
+// leading field inwards. Every "today's tokens at this facility" read (the
+// reception board, the overview counts, the doctor's stats) was therefore
+// scanning the entire Token collection, across every tenant. That is invisible
+// at four facilities and ruinous at two hundred, because Token is both the
+// largest collection and the fastest-growing one.
+TokenSchema.index({ hospital: 1, createdAt: -1 });
+
+// The queue reads: "what is in front of this doctor right now".
+TokenSchema.index({ doctor: 1, status: 1 });
+
 module.exports = mongoose.model('Token', TokenSchema);

@@ -73,6 +73,7 @@ export default function UnifiedLogin({ onAuthenticated }) {
   const [role, setRole] = useState(
     ROLES.some((r) => r.key === params.get('role')) ? params.get('role') : 'staff'
   );
+  const [facilityQuery, setFacilityQuery] = useState('');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -80,8 +81,23 @@ export default function UnifiedLogin({ onAuthenticated }) {
 
   const active = ROLES.find((r) => r.key === role) || ROLES[0];
 
+  // Name or city, because people say "the Gaya one" as often as they say the
+  // full registered name. The currently-selected facility is always kept in the
+  // list, so a search that excludes it cannot silently change what you submit.
+  const q = facilityQuery.trim().toLowerCase();
+  const matches = q
+    ? facilities.filter(
+        (f) =>
+          f.id === facility ||
+          (f.name || '').toLowerCase().includes(q) ||
+          (f.city || '').toLowerCase().includes(q)
+      )
+    : facilities;
+
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
+    // `view=picker` returns {id, name, city, type} only — 16 KB at 200
+    // facilities instead of 554 KB of landing copy nobody on this page reads.
+    fetch(`${BACKEND_URL}/api/v1/chat/hospitals?view=picker`)
       .then((res) => res.json())
       .then((data) => {
         if (!Array.isArray(data) || !data.length) return;
@@ -151,22 +167,56 @@ export default function UnifiedLogin({ onAuthenticated }) {
           )}
 
           <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            {/* Typing beats scrolling once there are more than a screenful of
+                facilities. A dropdown of two hundred hospitals is a scroll
+                bar, not a choice — and the person signing in already knows
+                exactly which one they work at. The `<select>` stays as the
+                control underneath so keyboard and screen-reader behaviour is
+                the browser's, not ours. */}
             <div>
-              <label className="block text-[12px] uppercase font-black tracking-wider text-[var(--text-secondary)] mb-1.5">
+              <label
+                htmlFor="facility-select"
+                className="block text-[12px] uppercase font-black tracking-wider text-[var(--text-secondary)] mb-1.5"
+              >
                 Facility
               </label>
+              {facilities.length > 8 && (
+                <div className="relative mb-2">
+                  <Icon
+                    name="search"
+                    className="text-[19px] absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] pointer-events-none"
+                  />
+                  <input
+                    type="text"
+                    value={facilityQuery}
+                    onChange={(e) => setFacilityQuery(e.target.value)}
+                    placeholder="Search by name or city…"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl pl-10 pr-4 py-2.5 outline-none text-[14px] font-semibold text-[var(--text-color)]"
+                  />
+                </div>
+              )}
               <select
+                id="facility-select"
                 value={facility}
                 onChange={(e) => setFacility(e.target.value)}
+                size={facilities.length > 8 ? Math.min(5, Math.max(2, matches.length)) : undefined}
                 className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-3 outline-none text-[14px] font-bold text-[var(--text-color)] cursor-pointer"
               >
                 {facilities.length === 0 && <option>Loading…</option>}
-                {facilities.map((f) => (
+                {matches.map((f) => (
                   <option key={f.id} value={f.id}>
                     {f.name}
+                    {f.city ? ` — ${f.city}` : ''}
                   </option>
                 ))}
               </select>
+              {facilities.length > 8 && (
+                <p className="text-[12px] font-semibold text-[var(--text-secondary)] mt-1.5">
+                  {matches.length === 0
+                    ? 'No facility matches that search.'
+                    : `${matches.length} of ${facilities.length} facilities`}
+                </p>
+              )}
             </div>
 
             <div>

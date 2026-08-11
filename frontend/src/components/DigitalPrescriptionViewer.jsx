@@ -16,7 +16,7 @@ export default function DigitalPrescriptionViewer() {
       if (res.ok) {
         setToken(data.token);
         if (data.token?.doctor?.hospital) {
-          fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
+          fetch(`${BACKEND_URL}/api/v1/chat/hospitals?view=picker`)
             .then((r) => r.json())
             .then((hospitals) => {
               const match =

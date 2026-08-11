@@ -35,7 +35,7 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/v1/chat/hospitals`)
+    fetch(`${BACKEND_URL}/api/v1/chat/hospitals?view=picker`)
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data) && data.length > 0) {

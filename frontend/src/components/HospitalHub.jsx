@@ -151,7 +151,22 @@ export default function HospitalHub() {
   ];
 
   // Animate sections/cards in as they scroll into view (re-scan after data loads).
-  useScrollReveal([loading, filteredHospitals.length, selectedType, selectedState, selectedDistrict]);
+  // Render a page at a time. At 200 partner facilities the unpaginated grid put
+  // 204 cards, 204 images and 7,400 DOM nodes on the page in one go, which is a
+  // slow first paint on the mid-range Android most patients are holding — and
+  // nobody scrolls 200 cards anyway. The filters above still search the whole
+  // set; this only limits what is drawn.
+  const PAGE_SIZE = 24;
+  const [shown, setShown] = useState(PAGE_SIZE);
+  const visibleHospitals = filteredHospitals.slice(0, shown);
+
+  // Narrowing the filters must start the list again from the top, or a search
+  // that matches 5 facilities would still be showing a "Show more" button.
+  useEffect(() => {
+    setShown(PAGE_SIZE);
+  }, [searchQuery, selectedType, selectedState, selectedDistrict]);
+
+  useScrollReveal([loading, visibleHospitals.length, selectedType, selectedState, selectedDistrict]);
 
   return (
     <div className="flex-1 w-full min-h-screen overflow-y-auto bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200 no-scrollbar">
@@ -582,7 +597,7 @@ export default function HospitalHub() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
-            {filteredHospitals.map((h) => {
+            {visibleHospitals.map((h) => {
               const cardTheme = getFacilityTheme(h.type);
               return (
                 <div
@@ -724,6 +739,21 @@ export default function HospitalHub() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {visibleHospitals.length < filteredHospitals.length && (
+          <div className="mt-10 text-center">
+            <button
+              onClick={() => setShown((n) => n + PAGE_SIZE)}
+              className="px-6 py-3 rounded-xl bg-[var(--card-bg)] border border-[var(--border-color)] text-[13px] font-black text-[var(--text-color)] hover:border-[var(--primary-color)]/50 active:scale-95 transition-all"
+            >
+              Show more facilities
+            </button>
+            <p className="text-[12px] font-semibold text-[var(--text-secondary)] mt-2.5">
+              Showing {visibleHospitals.length} of {filteredHospitals.length} — search or filter above to
+              narrow it down
+            </p>
           </div>
         )}
       </div>

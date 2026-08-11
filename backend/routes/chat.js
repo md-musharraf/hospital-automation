@@ -1897,24 +1897,72 @@ router.get('/token/:tokenId', async (req, res) => {
   }
 });
 
-// GET all registered hospitals
+/**
+ * The public facility list.
+ *
+ * This used to return every facility's WHOLE document — landing copy, FAQs,
+ * testimonials, gallery URLs, the module map, the lot. At 200 facilities that
+ * is 554 KB, and it was downloaded by eight different screens: the directory,
+ * the sign-in page and every portal's facility dropdown. A login form was
+ * pulling a quarter of a megabyte of other hospitals' patient testimonials in
+ * order to fill a `<select>`.
+ *
+ * Two shapes, because two screens need different things:
+ *   ?view=picker  → {id, name, city, type} only. 16 KB at 200 facilities.
+ *   (default)     → what a directory card renders. 93 KB at 200.
+ *
+ * Anything needing a facility's full record fetches that one facility: the
+ * landing page has `/hospital/:id/landing`, and the admin panel has its own
+ * secret-protected endpoint.
+ */
+const DIRECTORY_FIELDS = [
+  'id',
+  'name',
+  'slug',
+  'type',
+  'city',
+  'address',
+  'phone',
+  'description',
+  'coverImage',
+  'logoUrl',
+  'coordinates',
+  'doctorCount',
+  'parentHospital',
+  'hasInternalLab',
+  'hasInternalPharmacy',
+  'clinicSubtype',
+  'primaryColor',
+  'secondaryColor'
+];
+
 router.get('/hospitals', async (req, res) => {
   try {
+    const picker = req.query.view === 'picker';
     const dbHospitals = await Hospital.find({});
-    const formattedHospitals = dbHospitals.map((h) => {
-      const obj = h.toObject();
-      const rawWhatsapp = h.id === 'general-hospital' ? getPrimaryWhatsAppNumber() : h.whatsappNumber;
-      // Always expose a state + district (derived from city when not stored) so
-      // the State → District discovery filter works for every facility.
+
+    const formatted = dbHospitals.map((h) => {
+      const obj = typeof h.toObject === 'function' ? h.toObject() : h;
+      // State and district are derived from the city when not stored, so the
+      // State → District discovery filter works for every facility.
       const loc = resolveLocation(obj);
+
+      if (picker) {
+        return { id: obj.id, name: obj.name, city: loc.district || obj.city, type: obj.type };
+      }
+
+      const card = {};
+      for (const f of DIRECTORY_FIELDS) if (obj[f] !== undefined) card[f] = obj[f];
+      const rawWhatsapp = h.id === 'general-hospital' ? getPrimaryWhatsAppNumber() : h.whatsappNumber;
       return {
-        ...obj,
+        ...card,
         state: loc.state,
         district: loc.district,
-        whatsappNumber: rawWhatsapp.replace(/^whatsapp:/i, '')
+        whatsappNumber: (rawWhatsapp || '').replace(/^whatsapp:/i, '')
       };
     });
-    res.json(formattedHospitals);
+
+    res.json(formatted);
   } catch (err) {
     logger.error('Error fetching hospitals', { err: err });
     res.status(500).json({ message: 'Server error' });

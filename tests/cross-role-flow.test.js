@@ -58,6 +58,35 @@ async function trySignIn(role, credentials) {
 }
 
 (async () => {
+  section('The public facility list stays small');
+
+  // This endpoint is read by the directory, the sign-in page and every portal's
+  // facility dropdown. It used to return each facility's WHOLE document —
+  // landing copy, FAQs, testimonials, gallery URLs, the module map — which came
+  // to 554 KB at 200 facilities, downloaded just to fill a `<select>`.
+  // Anything needing a full record fetches ONE facility.
+  const picker = await api('/chat/hospitals?view=picker');
+  check('picker view returns rows', Array.isArray(picker.json) && picker.json.length > 0, picker.json);
+  const pickerKeys = Object.keys(picker.json[0] || {}).sort();
+  check(
+    'picker view carries only what a dropdown needs',
+    JSON.stringify(pickerKeys) === JSON.stringify(['city', 'id', 'name', 'type']),
+    pickerKeys
+  );
+
+  const directory = await api('/chat/hospitals');
+  const card = directory.json[0] || {};
+  check('directory view still has what a card renders', Boolean(card.name && card.type), Object.keys(card));
+  check('directory view carries no landing copy', card.landing === undefined, Object.keys(card));
+  check('directory view carries no module map', card.modules === undefined, Object.keys(card));
+  // A facility's own page is where the full record belongs.
+  const landing = await api(`/chat/hospital/${HOSPITAL}/landing`);
+  check(
+    'the landing endpoint still has the detail',
+    Boolean(landing.json.services),
+    Object.keys(landing.json)
+  );
+
   section('Every seeded portal account can sign in');
 
   // This suite used to quietly create its own pharmacist because "the seed puts

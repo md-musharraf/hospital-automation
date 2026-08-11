@@ -53,4 +53,10 @@ const InvoiceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Billing is read per facility and almost always newest-first — the counter's
+// list, the daily totals, the discharge screen. Without this the reception
+// billing tab scanned every invoice on the platform.
+InvoiceSchema.index({ hospital: 1, createdAt: -1 });
+InvoiceSchema.index({ hospital: 1, status: 1 });
+
 module.exports = mongoose.model('Invoice', InvoiceSchema);

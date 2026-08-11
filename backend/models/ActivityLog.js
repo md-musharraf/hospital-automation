@@ -7,28 +7,48 @@ const mongoose = require('mongoose');
 // to the same stream and every dashboard can watch it in real time, so reception
 // knows a doctor is running late, the doctor knows a report just landed, and the
 // manager can see the whole floor without walking it.
-const ActivityLogSchema = new mongoose.Schema({
-  hospital: { type: String, required: true, index: true },
-  // Machine-readable kind, used for filtering/icons on the dashboards.
-  type: {
-    type: String,
-    enum: [
-      'token-created', 'token-called', 'token-completed', 'token-absent', 'token-recalled',
-      'lab-requested', 'lab-collected', 'lab-completed',
-      'rx-prescribed', 'rx-dispensed', 'refill-requested', 'refill-decided',
-      'stock-low', 'stock-out', 'stock-updated',
-      'doctor-status', 'buffer-added', 'system'
-    ],
-    required: true,
-    index: true
+const ActivityLogSchema = new mongoose.Schema(
+  {
+    hospital: { type: String, required: true, index: true },
+    // Machine-readable kind, used for filtering/icons on the dashboards.
+    type: {
+      type: String,
+      enum: [
+        'token-created',
+        'token-called',
+        'token-completed',
+        'token-absent',
+        'token-recalled',
+        'lab-requested',
+        'lab-collected',
+        'lab-completed',
+        'rx-prescribed',
+        'rx-dispensed',
+        'refill-requested',
+        'refill-decided',
+        'stock-low',
+        'stock-out',
+        'stock-updated',
+        'doctor-status',
+        'buffer-added',
+        'system'
+      ],
+      required: true,
+      index: true
+    },
+    role: {
+      type: String,
+      enum: ['doctor', 'staff', 'lab', 'pharmacy', 'patient', 'system'],
+      default: 'system'
+    },
+    actor: { type: String }, // human name shown in the feed ("Dr. Sarah Jenkins")
+    message: { type: String, required: true },
+    tokenNumber: { type: String }, // so a dashboard can deep-link to the token
+    refId: { type: String }, // token / medicine / refill id
+    severity: { type: String, enum: ['info', 'success', 'warning', 'critical'], default: 'info' }
   },
-  role: { type: String, enum: ['doctor', 'staff', 'lab', 'pharmacy', 'patient', 'system'], default: 'system' },
-  actor: { type: String },        // human name shown in the feed ("Dr. Sarah Jenkins")
-  message: { type: String, required: true },
-  tokenNumber: { type: String },  // so a dashboard can deep-link to the token
-  refId: { type: String },        // token / medicine / refill id
-  severity: { type: String, enum: ['info', 'success', 'warning', 'critical'], default: 'info' }
-}, { timestamps: true });
+  { timestamps: true }
+);
 
 // Newest-first reads are the only access pattern.
 ActivityLogSchema.index({ hospital: 1, createdAt: -1 });
