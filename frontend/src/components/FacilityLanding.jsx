@@ -246,10 +246,10 @@ function FacilityNav({ page, theme }) {
 
 /** Which portal each account kind signs into. */
 const TEAM_PORTALS = {
-  staff: { path: '/staff/login', label: 'Reception Desk', icon: 'support_agent' },
-  doctors: { path: '/doctor/login', label: 'Doctor Console', icon: 'stethoscope' },
-  lab: { path: '/lab/login', label: 'Lab Console', icon: 'science' },
-  pharmacy: { path: '/pharmacy/login', label: 'Pharmacy Counter', icon: 'local_pharmacy' }
+  staff: { path: '/login', role: 'staff', label: 'Reception Desk', icon: 'support_agent' },
+  doctors: { path: '/login', role: 'doctor', label: 'Doctor Console', icon: 'stethoscope' },
+  lab: { path: '/login', role: 'lab', label: 'Lab Console', icon: 'science' },
+  pharmacy: { path: '/login', role: 'pharmacy', label: 'Pharmacy Counter', icon: 'local_pharmacy' }
 };
 
 function FacilityFooter({ page, theme }) {
@@ -269,7 +269,10 @@ function FacilityFooter({ page, theme }) {
   const portals = (page.logins || [])
     .map((kind) => TEAM_PORTALS[kind])
     .filter(Boolean)
-    .map((p) => ({ ...p, href: `${p.path}?facility=${encodeURIComponent(facility.id)}` }));
+    .map((p) => ({
+      ...p,
+      href: `${p.path}?role=${p.role}&facility=${encodeURIComponent(facility.id)}`
+    }));
 
   return (
     <footer className="border-t border-[var(--border-color)]/30 bg-[var(--card-bg)] py-10 px-6 sm:px-10">
