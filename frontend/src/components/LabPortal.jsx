@@ -84,13 +84,13 @@ export function LabLogin({ setLabToken, setLabUser, onSuccess }) {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-lg flex items-center space-x-2">
+          <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-lg flex items-center space-x-2">
             <span className="material-symbols-outlined text-[16px] text-rose-500">error</span>
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4 text-sm font-semibold">
+        <form onSubmit={handleLogin} className="space-y-4 text-[15px] font-semibold">
           <div>
             <label className="block text-[var(--text-secondary)] mb-1">Select Hospital</label>
             <select
@@ -252,13 +252,13 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         <div className="flex justify-between items-center pb-2 border-b border-[var(--border-color)]/30">
           <div>
             <h3 className="font-extrabold text-[var(--text-color)] text-base">{labUser?.name}</h3>
-            <p className="text-[10px] text-[var(--primary-color)] font-bold uppercase tracking-wider mt-0.5">
+            <p className="text-[12px] text-[var(--primary-color)] font-bold uppercase tracking-wider mt-0.5">
               Lab Assistant
             </p>
           </div>
           <button
             onClick={onLogout}
-            className="px-2.5 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-500 text-[10px] font-extrabold rounded-lg hover:bg-rose-500 hover:text-white transition-all shrink-0 active:scale-95 duration-100"
+            className="px-2.5 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-500 text-[12px] font-extrabold rounded-lg hover:bg-rose-500 hover:text-white transition-all shrink-0 active:scale-95 duration-100"
           >
             Logout
           </button>
@@ -285,7 +285,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                 key={s.label}
                 className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl px-2.5 py-2"
               >
-                <p className="text-[9px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">
+                <p className="text-[11px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">
                   {s.label}
                 </p>
                 <p className={`text-lg font-black leading-none mt-0.5 ${s.tone}`}>{s.value}</p>
@@ -295,11 +295,13 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         )}
 
         <div className="space-y-3">
-          <h4 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
+          <h4 className="text-[13px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
             Patients Queue ({tokens.length})
           </h4>
           {loading ? (
-            <div className="text-xs text-[var(--text-secondary)] italic">Loading active test orders...</div>
+            <div className="text-[13px] text-[var(--text-secondary)] italic">
+              Loading active test orders...
+            </div>
           ) : tokens.length === 0 ? (
             <EmptyState
               icon="science"
@@ -324,22 +326,22 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                     }`}
                   >
                     <div className="min-w-0">
-                      <p className="font-extrabold text-xs flex items-center gap-1">
+                      <p className="font-extrabold text-[13px] flex items-center gap-1">
                         {tok.tokenNumber}
                         {isUrgent && (
-                          <span className="text-[8px] bg-rose-500 text-white px-1.5 py-0.5 rounded-full font-black">
+                          <span className="text-[11px] bg-rose-500 text-white px-1.5 py-0.5 rounded-full font-black">
                             URGENT
                           </span>
                         )}
                       </p>
-                      <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-0.5 truncate">
+                      <p className="text-[12px] text-[var(--text-secondary)] font-medium mt-0.5 truncate">
                         {tok.patient?.name}
                       </p>
-                      <p className="text-[9px] text-[var(--text-secondary)]/70 font-medium truncate">
+                      <p className="text-[11px] text-[var(--text-secondary)]/70 font-medium truncate">
                         {tok.doctor?.name || 'Doctor'}
                       </p>
                     </div>
-                    <span className="bg-[var(--primary-color)] text-[var(--primary-text)] text-[9px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0">
+                    <span className="bg-[var(--primary-color)] text-[var(--primary-text)] text-[11px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0">
                       {outstanding.length} Test{outstanding.length > 1 ? 's' : ''}
                     </span>
                   </div>
@@ -355,12 +357,12 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
 
       {/* Right workstation pane */}
       <div className="flex-1 p-4 md:p-6 overflow-y-auto flex flex-col space-y-6 bg-[var(--bg-color)] text-left">
-        <h3 className="text-xs uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
+        <h3 className="text-[13px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
           Lab Testing Station
         </h3>
 
         {flash && (
-          <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+          <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 rounded-xl px-4 py-3 text-[13px] font-bold flex items-center gap-2">
             <span className="material-symbols-outlined text-[18px]">check_circle</span>
             {flash}
           </div>
@@ -369,12 +371,12 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         {/* A failed submission must be visible: the bench has to know the result
             did NOT reach the doctor. This used to be an alert() or a console log. */}
         {error && (
-          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-[13px] font-bold flex items-center gap-2">
             <span className="material-symbols-outlined text-[18px]">error</span>
             <span className="flex-1">{error}</span>
             <button
               onClick={() => setError('')}
-              className="text-[10px] font-black opacity-60 hover:opacity-100"
+              className="text-[12px] font-black opacity-60 hover:opacity-100"
             >
               DISMISS
             </button>
@@ -397,17 +399,17 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] space-y-6">
             <div className="flex justify-between items-start pb-4 border-b border-[var(--border-color)]/30">
               <div>
-                <span className="text-xs font-bold text-[var(--primary-color)] uppercase tracking-wider">
+                <span className="text-[13px] font-bold text-[var(--primary-color)] uppercase tracking-wider">
                   Active Patient under Test
                 </span>
                 <h2 className="text-3xl font-extrabold tracking-tight mt-1">{selectedToken.patient?.name}</h2>
-                <p className="text-xs text-[var(--text-secondary)] mt-1 font-medium">
+                <p className="text-[13px] text-[var(--text-secondary)] mt-1 font-medium">
                   Age: {selectedToken.patient?.age} | Gender: {selectedToken.patient?.gender} | Phone:{' '}
                   {selectedToken.patient?.phone}
                 </p>
               </div>
               <div className="bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/30 rounded-2xl px-4 py-2 text-center shrink-0">
-                <span className="text-[10px] text-[var(--text-secondary)] uppercase font-semibold">
+                <span className="text-[12px] text-[var(--text-secondary)] uppercase font-semibold">
                   Token Number
                 </span>
                 <p className="text-xl font-black text-[var(--primary-color)]">{selectedToken.tokenNumber}</p>
@@ -416,10 +418,10 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-[var(--text-color)]">
+                <h4 className="text-[15px] font-bold text-[var(--text-color)]">
                   Requested Diagnoses / Clinical Tests
                 </h4>
-                <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                <span className="text-[12px] font-bold text-[var(--text-secondary)]">
                   Ordered by {selectedToken.doctor?.name || 'the doctor'}
                 </span>
               </div>
@@ -439,14 +441,14 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             <span className="material-symbols-outlined text-[var(--primary-color)] text-[20px]">
                               science
                             </span>
-                            <span className="font-bold text-sm">{test.testName}</span>
+                            <span className="font-bold text-[15px]">{test.testName}</span>
                             {test.urgency === 'Urgent' && (
-                              <span className="text-[9px] bg-rose-500 text-white px-2 py-0.5 rounded-full font-black">
+                              <span className="text-[11px] bg-rose-500 text-white px-2 py-0.5 rounded-full font-black">
                                 URGENT
                               </span>
                             )}
                             <span
-                              className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${
+                              className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
                                 test.status === 'Collected'
                                   ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
                                   : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
@@ -458,7 +460,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                           {test.status === 'Pending' && (
                             <button
                               onClick={() => handleCollect(selectedToken._id, test.testName)}
-                              className="px-3 py-1.5 bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 text-[11px] font-bold rounded-lg hover:bg-sky-500 hover:text-white transition-all active:scale-95"
+                              className="px-3 py-1.5 bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 text-[13px] font-bold rounded-lg hover:bg-sky-500 hover:text-white transition-all active:scale-95"
                             >
                               Log sample collected
                             </button>
@@ -475,7 +477,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             onChange={(e) =>
                               setField(selectedToken._id, test.testName, 'resultValue', e.target.value)
                             }
-                            className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
+                            className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-[13px] text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
                           />
                           <input
                             type="text"
@@ -484,7 +486,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             onChange={(e) =>
                               setField(selectedToken._id, test.testName, 'unit', e.target.value)
                             }
-                            className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
+                            className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-[13px] text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
                           />
                           <input
                             type="text"
@@ -493,10 +495,10 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             onChange={(e) =>
                               setField(selectedToken._id, test.testName, 'normalRange', e.target.value)
                             }
-                            className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
+                            className="px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-[13px] text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
                           />
                           <label
-                            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border cursor-pointer text-[11px] font-bold transition-all ${
+                            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border cursor-pointer text-[13px] font-bold transition-all ${
                               entry.abnormal
                                 ? 'bg-rose-500 border-rose-500 text-white'
                                 : 'bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-secondary)] hover:border-rose-500/50'
@@ -516,7 +518,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                         </div>
 
                         {/* PDF Upload Option */}
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 p-2.5 bg-[var(--bg-color)]/60 rounded-xl border border-[var(--border-color)]/40 text-xs">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 p-2.5 bg-[var(--bg-color)]/60 rounded-xl border border-[var(--border-color)]/40 text-[13px]">
                           <label className="flex items-center space-x-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg cursor-pointer transition-all shrink-0">
                             <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
                             <span>
@@ -532,7 +534,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             />
                           </label>
                           {entry.reportFileName && (
-                            <span className="text-[11px] font-extrabold text-teal-600 bg-teal-500/10 px-2.5 py-1 rounded-lg border border-teal-500/20 truncate max-w-xs">
+                            <span className="text-[13px] font-extrabold text-teal-600 bg-teal-500/10 px-2.5 py-1 rounded-lg border border-teal-500/20 truncate max-w-xs">
                               📄 {entry.reportFileName}
                             </span>
                           )}
@@ -541,7 +543,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                               href={test.reportPdf}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-[11px] font-extrabold text-sky-600 bg-sky-500/10 px-2.5 py-1 rounded-lg border border-sky-500/20 underline"
+                              className="text-[13px] font-extrabold text-sky-600 bg-sky-500/10 px-2.5 py-1 rounded-lg border border-sky-500/20 underline"
                             >
                               📄 View Existing PDF Report
                             </a>
@@ -556,11 +558,11 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             onChange={(e) =>
                               setField(selectedToken._id, test.testName, 'remarks', e.target.value)
                             }
-                            className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
+                            className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-[13px] text-[var(--text-color)] outline-none focus:ring-1 focus:ring-[var(--primary-color)] font-semibold"
                           />
                           <button
                             onClick={() => handleCompleteTest(selectedToken._id, test.testName)}
-                            className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white text-xs font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap"
+                            className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white text-[13px] font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap"
                           >
                             Send to doctor
                           </button>
@@ -573,7 +575,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
               {/* Reports already filed for this patient. */}
               {selectedToken.labTests.some((t) => t.status === 'Completed') && (
                 <div className="pt-3 border-t border-[var(--border-color)]/30 space-y-2">
-                  <h5 className="text-[11px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
+                  <h5 className="text-[13px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
                     Filed reports
                   </h5>
                   {selectedToken.labTests
@@ -581,7 +583,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                     .map((t) => (
                       <div
                         key={t.testName}
-                        className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${
+                        className={`flex items-center justify-between px-3 py-2 rounded-lg border text-[13px] ${
                           t.abnormal
                             ? 'border-rose-500/40 bg-rose-500/5'
                             : 'border-[var(--border-color)]/40 bg-[var(--bg-color)]'
@@ -607,8 +609,8 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
             <span className="material-symbols-outlined text-[48px] mb-3 text-[var(--text-secondary)]/30">
               science
             </span>
-            <p className="text-sm font-bold text-[var(--text-color)]">Pick a patient to start</p>
-            <p className="text-xs text-[var(--text-secondary)] max-w-xs mt-1.5 font-medium">
+            <p className="text-[15px] font-bold text-[var(--text-color)]">Pick a patient</p>
+            <p className="text-[13px] text-[var(--text-secondary)] max-w-xs mt-1.5 font-medium">
               Tap a patient in the list on the left to log their sample and enter results.
             </p>
           </div>

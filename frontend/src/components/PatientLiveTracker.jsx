@@ -211,7 +211,7 @@ export default function PatientLiveTracker() {
             </span>
             <span className="font-extrabold text-sm tracking-tight text-left">CareeAi Live Tracker</span>
           </div>
-          <span className="bg-[var(--tertiary-color)] text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+          <span className="bg-[var(--tertiary-color)] text-white text-[11px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
             Live Connection
           </span>
         </div>
@@ -219,18 +219,18 @@ export default function PatientLiveTracker() {
         {/* Big Ticket Token Box */}
         <div className="bg-gradient-to-br from-[var(--primary-color)] to-[var(--primary-container)] text-white rounded-2xl p-6 shadow-md relative overflow-hidden border border-white/10 text-center mb-6">
           <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
-          <p className="text-[9px] text-white/70 uppercase tracking-widest font-bold mb-1 relative z-10">
+          <p className="text-[11px] text-white/70 uppercase tracking-widest font-bold mb-1 relative z-10">
             Active Ticket
           </p>
           <h2 className="text-5xl font-black relative z-10 leading-none">{token.tokenNumber}</h2>
 
           <div className="mt-4 pt-4 border-t border-white/10 flex justify-around text-xs font-semibold relative z-10">
             <div>
-              <p className="text-white/65 text-[9px]">Cabin Room</p>
+              <p className="text-white/65 text-[11px]">Cabin Room</p>
               <p className="text-white font-bold mt-0.5">{token.doctor?.currentRoom || 'Cabin A'}</p>
             </div>
             <div>
-              <p className="text-white/65 text-[9px]">Consultant</p>
+              <p className="text-white/65 text-[11px]">Consultant</p>
               <p className="text-white font-bold mt-0.5">{token.doctor?.name}</p>
             </div>
           </div>
@@ -260,7 +260,7 @@ export default function PatientLiveTracker() {
                         </span>
                       </div>
                       <span
-                        className={`text-[8px] font-bold text-center leading-tight ${
+                        className={`text-[11px] font-bold text-center leading-tight ${
                           active ? 'text-[var(--primary-color)]' : 'text-[var(--text-secondary)]'
                         }`}
                       >
@@ -282,7 +282,7 @@ export default function PatientLiveTracker() {
             </p>
 
             {journey.hasAbnormal && (
-              <p className="text-[10px] font-bold text-rose-500 text-center">
+              <p className="text-[12px] font-bold text-rose-500 text-center">
                 ⚠️ One of your results is outside the normal range — please show it to your doctor.
               </p>
             )}
@@ -290,7 +290,7 @@ export default function PatientLiveTracker() {
             {/* Lab PDF Test Reports Section */}
             {Array.isArray(token.labTests) && token.labTests.some((t) => t.status === 'Completed') && (
               <div className="mt-3 pt-3 border-t border-[var(--border-color)]/30 space-y-2 text-left">
-                <p className="text-[10px] font-black uppercase text-teal-600 tracking-wider">
+                <p className="text-[12px] font-black uppercase text-teal-600 tracking-wider">
                   🧪 Your Lab Test Reports (PDF)
                 </p>
                 <div className="space-y-1.5">
@@ -303,7 +303,7 @@ export default function PatientLiveTracker() {
                       >
                         <div>
                           <p className="font-bold text-[var(--text-color)]">{t.testName}</p>
-                          <p className="text-[10px] text-[var(--text-secondary)]">
+                          <p className="text-[12px] text-[var(--text-secondary)]">
                             {t.resultValue || 'Completed'}
                           </p>
                         </div>
@@ -312,13 +312,13 @@ export default function PatientLiveTracker() {
                             href={t.reportPdf}
                             target="_blank"
                             rel="noreferrer"
-                            className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white text-[10px] font-bold rounded-lg shadow-sm flex items-center space-x-1"
+                            className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white text-[12px] font-bold rounded-lg shadow-sm flex items-center space-x-1"
                           >
                             <span className="material-symbols-outlined text-[14px]">picture_as_pdf</span>
                             <span>Download PDF</span>
                           </a>
                         ) : (
-                          <span className="text-[9px] text-emerald-600 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">
+                          <span className="text-[11px] text-emerald-600 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">
                             Done
                           </span>
                         )}
@@ -340,7 +340,7 @@ export default function PatientLiveTracker() {
                 {inCabin ? 'check_circle' : 'hourglass_empty'}
               </span>
               <div>
-                <p className="text-[10px] text-[var(--text-secondary)] uppercase font-extrabold">
+                <p className="text-[12px] text-[var(--text-secondary)] uppercase font-extrabold">
                   Queue Position
                 </p>
                 <p className="text-sm font-extrabold text-[var(--text-color)] mt-0.5">{positionText}</p>
@@ -349,16 +349,16 @@ export default function PatientLiveTracker() {
             {!inCabin && position > 0 && (
               <span className="text-lg font-black text-[var(--primary-color)] shrink-0">
                 {token.estimatedWaitTime}{' '}
-                <span className="text-[9px] font-medium text-[var(--text-secondary)]">mins</span>
+                <span className="text-[11px] font-medium text-[var(--text-secondary)]">mins</span>
               </span>
             )}
           </div>
 
           <div className="text-center">
-            <p className="text-[10px] text-[var(--text-secondary)] font-bold">
+            <p className="text-[12px] text-[var(--text-secondary)] font-bold">
               Please wait in the reception lounge until called.
             </p>
-            <p className="text-[9px] text-[var(--text-secondary)]/50 mt-1">
+            <p className="text-[11px] text-[var(--text-secondary)]/50 mt-1">
               Refreshes automatically when the queue updates.
             </p>
           </div>
@@ -374,7 +374,7 @@ export default function PatientLiveTracker() {
                   </span>
                 </div>
                 <span
-                  className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider ${
+                  className={`text-[11px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider ${
                     invoice.status === 'Discharged' || invoice.status === 'Paid'
                       ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
                       : 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
@@ -392,7 +392,7 @@ export default function PatientLiveTracker() {
                   </div>
                 ))}
                 {(invoice.items || []).length > 4 && (
-                  <p className="text-[9px] text-[var(--text-secondary)] italic">
+                  <p className="text-[11px] text-[var(--text-secondary)] italic">
                     + {(invoice.items || []).length - 4} more item(s) on bill
                   </p>
                 )}
@@ -402,7 +402,7 @@ export default function PatientLiveTracker() {
                 <span className="text-[var(--text-secondary)]">Total Payable:</span>
                 <span className="text-teal-600 text-sm">₹{invoice.totalAmount}</span>
               </div>
-              <div className="flex justify-between items-center text-[10px] font-bold text-[var(--text-secondary)]">
+              <div className="flex justify-between items-center text-[12px] font-bold text-[var(--text-secondary)]">
                 <span>Amount Paid: ₹{invoice.amountPaid}</span>
                 <span className={invoice.balanceDue > 0 ? 'text-amber-600' : 'text-emerald-600'}>
                   Balance Due: ₹{invoice.balanceDue}

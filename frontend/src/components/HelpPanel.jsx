@@ -35,7 +35,7 @@ export default function HelpPanel({ id, title, steps = [], tip, defaultOpen = tr
     return (
       <button
         onClick={() => setOpen(true)}
-        className="self-start flex items-center gap-1 text-[10px] font-bold text-[var(--text-secondary)] hover:text-[var(--primary-color)] transition-colors"
+        className="self-start flex items-center gap-1 text-[12px] font-bold text-[var(--text-secondary)] hover:text-[var(--primary-color)] transition-colors"
       >
         <span className="material-symbols-outlined text-[14px]">help</span>
         How this screen works
@@ -46,13 +46,13 @@ export default function HelpPanel({ id, title, steps = [], tip, defaultOpen = tr
   return (
     <div className="bg-[var(--primary-color)]/5 border border-[var(--primary-color)]/25 rounded-2xl p-4 space-y-2.5">
       <div className="flex items-start justify-between gap-3">
-        <h4 className="text-sm font-black text-[var(--text-color)] flex items-center gap-1.5">
+        <h4 className="text-[15px] font-black text-[var(--text-color)] flex items-center gap-1.5">
           <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">lightbulb</span>
           {title}
         </h4>
         <button
           onClick={dismiss}
-          className="text-[10px] font-black text-[var(--text-secondary)] hover:text-[var(--text-color)] shrink-0"
+          className="text-[12px] font-black text-[var(--text-secondary)] hover:text-[var(--text-color)] shrink-0"
         >
           GOT IT
         </button>
@@ -62,9 +62,9 @@ export default function HelpPanel({ id, title, steps = [], tip, defaultOpen = tr
         {steps.map((step, index) => (
           <li
             key={index}
-            className="flex items-start gap-2 text-[11px] font-semibold text-[var(--text-color)]"
+            className="flex items-start gap-2 text-[13px] font-semibold text-[var(--text-color)]"
           >
-            <span className="w-4 h-4 rounded-full bg-[var(--primary-color)] text-[var(--primary-text)] text-[9px] font-black flex items-center justify-center shrink-0 mt-0.5">
+            <span className="w-4 h-4 rounded-full bg-[var(--primary-color)] text-[var(--primary-text)] text-[11px] font-black flex items-center justify-center shrink-0 mt-0.5">
               {index + 1}
             </span>
             <span className="leading-relaxed">{step}</span>
@@ -73,7 +73,7 @@ export default function HelpPanel({ id, title, steps = [], tip, defaultOpen = tr
       </ol>
 
       {tip && (
-        <p className="text-[10px] font-bold text-[var(--text-secondary)] pt-1.5 border-t border-[var(--primary-color)]/15">
+        <p className="text-[12px] font-bold text-[var(--text-secondary)] pt-1.5 border-t border-[var(--primary-color)]/15">
           💡 {tip}
         </p>
       )}

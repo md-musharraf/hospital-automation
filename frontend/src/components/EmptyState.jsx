@@ -15,9 +15,9 @@ export default function EmptyState({ icon = 'inbox', title, hint, action }) {
       <span className="material-symbols-outlined text-[40px] mb-2 text-[var(--text-secondary)]/40">
         {icon}
       </span>
-      <p className="text-sm font-bold text-[var(--text-color)]">{title}</p>
+      <p className="text-[15px] font-bold text-[var(--text-color)]">{title}</p>
       {hint && (
-        <p className="text-xs text-[var(--text-secondary)] max-w-sm mt-1.5 font-medium leading-relaxed">
+        <p className="text-[13px] text-[var(--text-secondary)] max-w-sm mt-1.5 font-medium leading-relaxed">
           {hint}
         </p>
       )}

@@ -50,25 +50,57 @@ const DOCTOR_EMAIL = {
   'Dr. Emily Taylor': 'emily.taylor@hospital.com'
 };
 
-(async () => {
-  // The seed puts its pharmacist in another facility, so make one here.
-  await api('/auth/super-admin/register-pharmacist', {
-    method: 'POST',
-    headers: { 'x-admin-secret': ADMIN_SECRET },
-    body: { hospital: HOSPITAL, name: 'Store Keeper', username: 'it_pharm', password: 'password123' }
-  });
+/** Sign in and report the failure rather than throwing, so a broken seed shows
+ *  up as a named failing check instead of a harness crash. */
+async function trySignIn(role, credentials) {
+  const { json } = await api(`/auth/${role}/login`, { method: 'POST', body: credentials });
+  return { token: json.token || null, error: json.token ? null : json.message || 'no token returned' };
+}
 
-  const staff = await login('staff', {
-    username: 'alice_staff',
-    password: 'password123',
-    hospital: HOSPITAL
-  });
-  const lab = await login('lab', { username: 'lab_assistant', password: 'password123', hospital: HOSPITAL });
-  const pharmacy = await login('pharmacy', {
-    username: 'it_pharm',
-    password: 'password123',
-    hospital: HOSPITAL
-  });
+(async () => {
+  section('Every seeded portal account can sign in');
+
+  // This suite used to quietly create its own pharmacist because "the seed puts
+  // its pharmacist in another facility". It was worse than that: the seeded
+  // "Pharmacy Tech" was inserted into the LabAssistant collection, so the
+  // pharmacy portal had NO account anywhere and nobody could open it locally —
+  // and apex-pharmacy, a Medical facility that cannot have a lab, was holding a
+  // lab login. The workaround hid the bug for as long as it existed, so the
+  // seeded accounts are now signed into directly.
+  //
+  // These sign-ins ARE the sessions the rest of the suite runs on. Logging in
+  // twice would be the more obvious way to write this, but the login route is
+  // rate-limited to ten attempts per window — a check that trips the app's own
+  // brute-force protection would fail the whole run for the wrong reason.
+  const sessions = {};
+  for (const [label, key, role, creds] of [
+    ['reception', 'staff', 'staff', { username: 'alice_staff', password: 'password123', hospital: HOSPITAL }],
+    ['lab', 'lab', 'lab', { username: 'lab_assistant', password: 'password123', hospital: HOSPITAL }],
+    [
+      'pharmacy',
+      'pharmacy',
+      'pharmacy',
+      { username: 'gen_pharmacist', password: 'password123', hospital: HOSPITAL }
+    ],
+    [
+      'pharmacy (medical store)',
+      'storePharmacy',
+      'pharmacy',
+      { username: 'pharm_assistant', password: 'password123', hospital: 'apex-pharmacy' }
+    ]
+  ]) {
+    const { token, error } = await trySignIn(role, creds);
+    check(`seeded ${label} account signs in`, error === null, error);
+    sessions[key] = token;
+  }
+
+  const staff = sessions.staff;
+  const lab = sessions.lab;
+  const pharmacy = sessions.pharmacy;
+  if (!staff || !lab || !pharmacy) {
+    report(); // Nothing below can run without these; fail with what we know.
+    return;
+  }
 
   section('Pharmacy stocks the medical store');
   const stockItems = [

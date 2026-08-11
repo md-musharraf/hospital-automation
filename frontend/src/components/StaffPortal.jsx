@@ -23,6 +23,27 @@ const CATEGORY_CHIP = {
 
 const BILLING_CATEGORIES = Object.keys(CATEGORY_CHIP);
 
+/**
+ * The counter's six destinations — one entry per place you can actually get to.
+ *
+ * The sidebar, the mobile tab bar and the workspace heading all read from this
+ * one list. They used to each carry their own copy, which is why the same screen
+ * was called "Special Reception Desk", "Special Reception" and "Special
+ * Reception Desk — Online Arrivals & Billing" depending on where you looked.
+ *
+ * `label` is what a receptionist reading it for the hundredth time needs, and
+ * nothing more; `title` adds the few extra words that are worth saying once, at
+ * the top of the screen you are already on.
+ */
+const STAFF_TABS = [
+  { id: 'reception', tab: 'reception', label: 'Arrivals', icon: 'support_agent', title: 'Arrivals' },
+  { id: 'queues', tab: 'monitor', label: 'Queues', icon: 'queue', title: 'Live queues' },
+  { id: 'billing', tab: 'billing', label: 'Billing', icon: 'payments', title: 'Billing & discharge' },
+  { id: 'patients', tab: 'patients', label: 'Patients', icon: 'group', title: 'Patients' },
+  { id: 'followups', tab: 'reminders', label: 'Follow-ups', icon: 'event_repeat', title: 'Follow-ups' },
+  { id: 'dashboard', tab: 'dashboard', label: 'Overview', icon: 'dashboard', title: 'Overview' }
+];
+
 export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
   const [username, setUsername] = useState('alice_staff');
   const [password, setPassword] = useState('password123');
@@ -102,13 +123,13 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-lg flex items-center space-x-2">
+          <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-lg flex items-center space-x-2">
             <span className="material-symbols-outlined text-[16px] text-rose-500">error</span>
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4 text-sm font-semibold">
+        <form onSubmit={handleLogin} className="space-y-4 text-[15px] font-semibold">
           <div>
             <label className="block text-[var(--text-secondary)] mb-1">Select Hospital</label>
             <select
@@ -160,7 +181,9 @@ export function StaffLogin({ setStaffToken, setStaffUser, onSuccess }) {
         </form>
 
         <div className="mt-6 border-t border-[var(--border-color)]/30 pt-4 text-center">
-          <p className="text-xs text-[var(--text-secondary)]">Authorized personnel only. Logs are active.</p>
+          <p className="text-[13px] text-[var(--text-secondary)]">
+            Authorised staff only. All actions are logged.
+          </p>
         </div>
       </div>
     </div>
@@ -173,7 +196,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const [doctors, setDoctors] = useState([]);
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeSidebarTab, setActiveSidebarTab] = useState('dashboard'); // 'dashboard', 'monitor', 'patients', 'reminders'
+  // Opens on Arrivals, not on the stats page. A receptionist signs in to find
+  // out who is standing in front of them and who is due — the Overview is
+  // something you look at once a day, and making it the landing screen cost
+  // every user a click before they could start working.
+  const [activeSidebarTab, setActiveSidebarTab] = useState('reception');
 
   // Modals state
   const [showAddPatientModal, setShowAddPatientModal] = useState(false);
@@ -1032,33 +1059,29 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             )}
             <div className="min-w-0">
               <h1
-                className="font-extrabold text-sm leading-tight tracking-tight truncate"
+                className="font-extrabold text-[15px] leading-tight tracking-tight truncate"
                 style={{ color: branding.theme.primary }}
                 title={branding.name}
               >
                 {branding.name}
               </h1>
-              <p className="text-[10px] text-[var(--text-secondary)] font-semibold leading-none truncate">
+              <p className="text-[12px] text-[var(--text-secondary)] font-semibold leading-none truncate">
                 {branding.kind} · Reception
               </p>
             </div>
           </div>
 
-          {/* Navigation Links list */}
+          {/* Navigation Links list.
+              One entry per DESTINATION. There used to be eleven, but only six
+              of them went anywhere: Tokens and Doctors both opened Queues, and
+              Reports, Analytics and Settings all opened the Dashboard. Five of
+              every eleven clicks landed somewhere the person had not asked for,
+              which is the worst thing a busy counter can do to someone.
+              Labels are the shortest unambiguous word — a receptionist reads
+              this list a hundred times a day and never needs "Special Reception
+              Desk" spelled out. */}
           <div className="p-4 space-y-1">
-            {[
-              { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', tab: 'dashboard' },
-              { id: 'reception', label: 'Special Reception Desk', icon: 'support_agent', tab: 'reception' },
-              { id: 'billing', label: 'Billing & Discharge', icon: 'payments', tab: 'billing' },
-              { id: 'patients', label: 'Patients', icon: 'group', tab: 'patients' },
-              { id: 'queues', label: 'Queues', icon: 'queue', tab: 'monitor' },
-              { id: 'tokens', label: 'Tokens', icon: 'confirmation_number', tab: 'monitor' },
-              { id: 'doctors', label: 'Doctors', icon: 'medical_services', tab: 'monitor' },
-              { id: 'followups', label: 'Follow-ups', icon: 'event_repeat', tab: 'reminders' },
-              { id: 'reports', label: 'Reports', icon: 'assessment', tab: 'dashboard' },
-              { id: 'analytics', label: 'Analytics', icon: 'analytics', tab: 'dashboard' },
-              { id: 'settings', label: 'Settings', icon: 'settings', tab: 'dashboard' }
-            ].map((item) => {
+            {STAFF_TABS.map((item) => {
               const isActive = activeSidebarTab === item.tab;
               return (
                 <button
@@ -1069,7 +1092,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     if (item.tab === 'billing') loadInvoices();
                     if (item.tab === 'reception') loadArrivals();
                   }}
-                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
+                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-[13px] font-bold transition-all ${
                     isActive
                       ? 'bg-[var(--primary-color)]/10 text-[var(--primary-color)] border border-[var(--primary-color)]/20'
                       : 'hover:bg-[var(--border-color)]/20 text-[var(--text-secondary)] hover:text-[var(--text-color)]'
@@ -1090,14 +1113,14 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         {/* Sidebar Footer with Staff Logged in info */}
         <div className="p-4 border-t border-[var(--border-color)]/30 flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
-            <div className="bg-[var(--primary-color)] text-[var(--primary-text)] h-8 w-8 rounded-full flex items-center justify-center font-bold text-xs uppercase shadow-inner">
+            <div className="bg-[var(--primary-color)] text-[var(--primary-text)] h-8 w-8 rounded-full flex items-center justify-center font-bold text-[13px] uppercase shadow-inner">
               {staffUser?.name ? staffUser.name.charAt(0) : 'S'}
             </div>
             <div>
-              <p className="text-xs font-bold text-[var(--text-color)] leading-tight">
+              <p className="text-[13px] font-bold text-[var(--text-color)] leading-tight">
                 {staffUser?.name || 'Staff'}
               </p>
-              <p className="text-[10px] text-[var(--text-secondary)] font-semibold">Reception Desk</p>
+              <p className="text-[12px] text-[var(--text-secondary)] font-semibold">Reception Desk</p>
             </div>
           </div>
           <button
@@ -1115,44 +1138,22 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         {/* Workspace Header toolbar */}
         <div className="px-8 py-4 bg-[var(--card-bg)] border-b border-[var(--border-color)]/30 flex items-center justify-between sticky top-0 z-30 shadow-sm">
           <div>
-            <h2 className="text-lg font-bold text-[var(--primary-color)] dark:text-zinc-300 tracking-tight capitalize">
-              {activeSidebarTab === 'monitor'
-                ? 'Queue Management Board'
-                : activeSidebarTab === 'reminders'
-                  ? 'Follow-ups / Reminders'
-                  : activeSidebarTab === 'billing'
-                    ? 'Reception Patient Billing & Discharge Counter'
-                    : activeSidebarTab === 'reception'
-                      ? 'Special Reception Desk — Online Arrivals & Billing'
-                      : activeSidebarTab + ' Workspace'}
+            <h2 className="text-xl font-bold text-[var(--text-color)] tracking-tight">
+              {(STAFF_TABS.find((t) => t.tab === activeSidebarTab) || {}).title || 'Overview'}
             </h2>
-            <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
-              {staffUser?.counterNumber || 'Reception Desk'}
+            <p className="text-[13px] text-[var(--text-secondary)] font-semibold">
+              {staffUser?.counterNumber || 'Reception'}
             </p>
           </div>
-          <div className="flex items-center space-x-3 text-xs md:text-sm">
-            <button className="p-2 rounded-full hover:bg-[var(--border-color)]/30 text-[var(--text-secondary)] transition-colors flex items-center justify-center">
-              <span className="material-symbols-outlined text-[20px]">notifications</span>
-            </button>
-            <button className="p-2 rounded-full hover:bg-[var(--border-color)]/30 text-[var(--text-secondary)] transition-colors flex items-center justify-center">
-              <span className="material-symbols-outlined text-[20px]">search</span>
-            </button>
-            <button className="p-2 rounded-full hover:bg-[var(--border-color)]/30 text-[var(--primary-color)] font-bold transition-colors flex items-center justify-center">
-              <span className="material-symbols-outlined text-[24px]">account_circle</span>
-            </button>
-          </div>
+          {/* The notifications / search / profile buttons that used to sit here
+              had no onClick — three controls that looked live and did nothing.
+              On a counter, a button that does not respond reads as a frozen app,
+              so they are gone rather than faked. */}
         </div>
 
         {/* Mobile Navigation tab bar */}
         <div className="md:hidden flex items-center space-x-2 overflow-x-auto px-6 py-3 bg-[var(--card-bg)] border-b border-[var(--border-color)]/30 sticky top-[62px] z-20 no-scrollbar">
-          {[
-            { id: 'dashboard', label: 'Overview', tab: 'dashboard' },
-            { id: 'reception', label: 'Special Reception', tab: 'reception' },
-            { id: 'billing', label: 'Billing & Discharge', tab: 'billing' },
-            { id: 'patients', label: 'Patients Directory', tab: 'patients' },
-            { id: 'queues', label: 'Live Queue Monitor', tab: 'monitor' },
-            { id: 'followups', label: 'SMS Reminders', tab: 'reminders' }
-          ].map((item) => (
+          {STAFF_TABS.map((item) => (
             <button
               key={item.id}
               onClick={() => {
@@ -1161,7 +1162,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 if (item.tab === 'billing') loadInvoices();
                 if (item.tab === 'reception') loadArrivals();
               }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-[13px] font-bold whitespace-nowrap shrink-0 transition-all ${
                 activeSidebarTab === item.tab
                   ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-sm'
                   : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border border-[var(--border-color)]/30 hover:text-[var(--text-color)]'
@@ -1173,7 +1174,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
           <button
             onClick={onLogout}
-            className="px-3 py-1.5 rounded-lg text-xs font-bold text-rose-500 bg-rose-500/10 border border-rose-500/20 whitespace-nowrap shrink-0 transition-all ml-auto"
+            className="px-3 py-1.5 rounded-lg text-[13px] font-bold text-rose-500 bg-rose-500/10 border border-rose-500/20 whitespace-nowrap shrink-0 transition-all ml-auto"
           >
             Logout
           </button>
@@ -1183,12 +1184,12 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           {/* A failed queue action must be visible — reception needs to know the
               token did NOT change, not be left guessing why nothing happened. */}
           {queueError && (
-            <div className="mb-5 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+            <div className="mb-5 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-[13px] font-bold flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px]">error</span>
               <span className="flex-1">{queueError}</span>
               <button
                 onClick={() => setQueueError('')}
-                className="text-[10px] font-black opacity-60 hover:opacity-100"
+                className="text-[12px] font-black opacity-60 hover:opacity-100"
               >
                 DISMISS
               </button>
@@ -1198,12 +1199,12 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           {/* Cross-department alert: reception hears about a stock-out the
               moment the pharmacy does, because the patient will ask them. */}
           {stockAlert && (
-            <div className="mb-5 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+            <div className="mb-5 bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-[13px] font-bold flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px]">production_quantity_limits</span>
               <span className="flex-1">{stockAlert}</span>
               <button
                 onClick={() => setStockAlert('')}
-                className="text-[10px] font-black opacity-60 hover:opacity-100"
+                className="text-[12px] font-black opacity-60 hover:opacity-100"
               >
                 DISMISS
               </button>
@@ -1233,11 +1234,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div>
                         <h4 className="font-extrabold text-[var(--text-color)] text-base">Live Floor View</h4>
-                        <p className="text-xs text-[var(--text-secondary)] font-medium">
+                        <p className="text-[13px] text-[var(--text-secondary)] font-medium">
                           Every patient in the building, by stage
                         </p>
                       </div>
-                      <div className="flex items-center gap-3 text-[11px] font-bold">
+                      <div className="flex items-center gap-3 text-[13px] font-bold">
                         <span className="text-[var(--text-secondary)]">
                           {overview.doctorsOnDuty} doctor{overview.doctorsOnDuty === 1 ? '' : 's'} on duty
                         </span>
@@ -1274,7 +1275,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           key={s.k}
                           className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl p-3"
                         >
-                          <p className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">
+                          <p className="text-[12px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">
                             {s.k}
                           </p>
                           <p className={`text-2xl font-black leading-none mt-1 ${s.tone}`}>{s.v}</p>
@@ -1284,7 +1285,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                     {/* Per-cabin load — who to route the next walk-in to. */}
                     <div className="space-y-2">
-                      <p className="text-[10px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
+                      <p className="text-[12px] uppercase font-extrabold text-[var(--text-secondary)] tracking-wider">
                         Cabin load
                       </p>
                       {overview.doctorLoad.map((d) => (
@@ -1293,20 +1294,20 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           className="flex items-center justify-between gap-3 bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl px-3 py-2"
                         >
                           <div className="min-w-0">
-                            <p className="text-xs font-bold text-[var(--text-color)] truncate">
+                            <p className="text-[13px] font-bold text-[var(--text-color)] truncate">
                               {d.name}{' '}
                               <span className="text-[var(--text-secondary)] font-semibold">
                                 • {d.department}
                               </span>
                             </p>
-                            <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
+                            <p className="text-[12px] text-[var(--text-secondary)] font-semibold">
                               {d.room} • seen {d.seenToday} today
                               {d.dailyTokenLimit > 0 ? ` • cap ${d.dailyTokenLimit}` : ''}
                             </p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span
-                              className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
+                              className={`text-[11px] px-2 py-0.5 rounded-full font-black ${
                                 d.availabilityStatus === 'Available'
                                   ? 'bg-emerald-500/15 text-emerald-500'
                                   : 'bg-amber-500/15 text-amber-500'
@@ -1316,11 +1317,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             </span>
                             <div className="text-right">
                               <p
-                                className={`text-sm font-black leading-none ${d.waiting > 8 ? 'text-rose-500' : 'text-[var(--text-color)]'}`}
+                                className={`text-[15px] font-black leading-none ${d.waiting > 8 ? 'text-rose-500' : 'text-[var(--text-color)]'}`}
                               >
                                 {d.waiting}
                               </p>
-                              <p className="text-[9px] text-[var(--text-secondary)] font-bold">
+                              <p className="text-[11px] text-[var(--text-secondary)] font-bold">
                                 ~{d.estimatedWait}m
                               </p>
                             </div>
@@ -1359,7 +1360,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           key={s.k}
                           className={`rounded-xl p-3 border ${s.warn ? 'bg-rose-500/5 border-rose-500/30' : 'bg-[var(--bg-color)] border-[var(--border-color)]/40'}`}
                         >
-                          <p className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">
+                          <p className="text-[12px] uppercase font-bold text-[var(--text-secondary)] tracking-wide">
                             {s.k}
                           </p>
                           <p
@@ -1368,7 +1369,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             {s.v}
                           </p>
                           {s.note && (
-                            <p className="text-[9px] font-bold text-[var(--text-secondary)] mt-0.5">
+                            <p className="text-[11px] font-bold text-[var(--text-secondary)] mt-0.5">
                               {s.note}
                             </p>
                           )}
@@ -1430,7 +1431,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-xl p-5 shadow-[var(--card-shadow)] flex items-center justify-between"
                   >
                     <div>
-                      <p className="text-[10px] font-extrabold text-[var(--text-secondary)] uppercase tracking-wider mb-1">
+                      <p className="text-[12px] font-extrabold text-[var(--text-secondary)] uppercase tracking-wider mb-1">
                         {kpi.label}
                       </p>
                       <p className="text-3xl font-black text-[var(--primary-color)] dark:text-zinc-300 leading-none">
@@ -1455,11 +1456,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       <h4 className="font-extrabold text-[var(--text-color)] text-base">
                         Checkup Inflow Trends
                       </h4>
-                      <p className="text-xs text-[var(--text-secondary)] font-medium">
+                      <p className="text-[13px] text-[var(--text-secondary)] font-medium">
                         Insights of daily checkup registrations and recoveries
                       </p>
                     </div>
-                    <div className="flex space-x-3 text-xs font-semibold">
+                    <div className="flex space-x-3 text-[13px] font-semibold">
                       <div className="flex items-center space-x-1.5">
                         <span className="h-2 w-2 rounded-full bg-[var(--primary-color)]"></span>
                         <span className="text-[var(--text-secondary)]">Treatment</span>
@@ -1496,7 +1497,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         strokeLinecap="round"
                       />
                     </svg>
-                    <div className="absolute inset-0 flex justify-between items-end text-[9px] text-stone-400 font-bold px-1.5 pt-2">
+                    <div className="absolute inset-0 flex justify-between items-end text-[11px] text-stone-400 font-bold px-1.5 pt-2">
                       <span>Sun</span>
                       <span>Mon</span>
                       <span>Tue</span>
@@ -1512,7 +1513,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] flex flex-col space-y-4">
                   <div className="pb-2 border-b border-[var(--border-color)]/30">
                     <h4 className="font-extrabold text-[var(--text-color)] text-base">Next in Cabin Queue</h4>
-                    <p className="text-xs text-[var(--text-secondary)] font-medium">
+                    <p className="text-[13px] text-[var(--text-secondary)] font-medium">
                       Active and upcoming queue admissions
                     </p>
                   </div>
@@ -1520,7 +1521,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   {recentAppointmentsList.length > 0 ? (
                     <div className="divide-y divide-[var(--border-color)]/30 flex-1 flex flex-col justify-around">
                       {recentAppointmentsList.map((app, i) => (
-                        <div key={i} className="py-2.5 flex items-center justify-between text-xs">
+                        <div key={i} className="py-2.5 flex items-center justify-between text-[13px]">
                           <div className="flex items-center space-x-3">
                             <img
                               src={app.avatar}
@@ -1529,13 +1530,13 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             />
                             <div>
                               <p className="font-bold text-[var(--text-color)]">{app.name}</p>
-                              <p className="text-[10px] text-[var(--text-secondary)] truncate max-w-36 font-semibold">
+                              <p className="text-[12px] text-[var(--text-secondary)] truncate max-w-36 font-semibold">
                                 {app.symptoms}
                               </p>
                             </div>
                           </div>
                           <div className="text-right">
-                            <span className="text-[10px] font-extrabold bg-[var(--bg-color)] border border-[var(--border-color)]/30 px-2 py-0.5 rounded text-[var(--text-color)]">
+                            <span className="text-[12px] font-extrabold bg-[var(--bg-color)] border border-[var(--border-color)]/30 px-2 py-0.5 rounded text-[var(--text-color)]">
                               {app.time}
                             </span>
                           </div>
@@ -1543,7 +1544,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       ))}
                     </div>
                   ) : (
-                    <div className="text-[var(--text-secondary)] text-xs italic py-8 text-center flex-1 flex items-center justify-center">
+                    <div className="text-[var(--text-secondary)] text-[13px] italic py-8 text-center flex-1 flex items-center justify-center">
                       No active appointments in system.
                     </div>
                   )}
@@ -1554,23 +1555,23 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 {/* Doctor's availability status summary list */}
                 <div className="md:col-span-2 bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)]">
-                  <h4 className="font-extrabold text-[var(--text-color)] text-sm mb-4">
+                  <h4 className="font-extrabold text-[var(--text-color)] text-[15px] mb-4">
                     Doctor Schedules & Availability
                   </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {doctors.map((doc) => (
                       <div
                         key={doc._id}
-                        className="p-3 bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-xl flex justify-between items-center text-xs"
+                        className="p-3 bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-xl flex justify-between items-center text-[13px]"
                       >
                         <div>
                           <p className="font-bold text-[var(--text-color)]">{doc.name}</p>
-                          <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                          <p className="text-[12px] text-[var(--text-secondary)] font-medium">
                             {doc.department} | {doc.currentRoom}
                           </p>
                         </div>
                         <span
-                          className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                          className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
                             doc.availabilityStatus === 'Available'
                               ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
                               : doc.availabilityStatus === 'In Surgery'
@@ -1588,29 +1589,29 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 {/* Polyclinic summary card */}
                 <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-[var(--card-shadow)] flex flex-col justify-between">
                   <div>
-                    <h4 className="font-extrabold text-[var(--text-color)] text-sm mb-2">
+                    <h4 className="font-extrabold text-[var(--text-color)] text-[15px] mb-2">
                       Hospital Departments
                     </h4>
-                    <p className="text-xs text-[var(--text-secondary)] font-semibold mb-4">
+                    <p className="text-[13px] text-[var(--text-secondary)] font-semibold mb-4">
                       +35% checkup increase this week
                     </p>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="grid grid-cols-3 gap-2 text-center text-[13px]">
                     <div>
                       <p className="text-lg font-black text-[var(--text-color)]">80</p>
-                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
+                      <p className="text-[11px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
                         General
                       </p>
                     </div>
                     <div>
                       <p className="text-lg font-black text-[var(--text-color)]">50</p>
-                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
+                      <p className="text-[11px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
                         Peds
                       </p>
                     </div>
                     <div>
                       <p className="text-lg font-black text-[var(--text-color)]">40</p>
-                      <p className="text-[9px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
+                      <p className="text-[11px] text-[var(--text-secondary)] font-bold uppercase tracking-wider">
                         Cardio
                       </p>
                     </div>
@@ -1629,11 +1630,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           {activeSidebarTab === 'monitor' && (
             <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden space-y-6 lg:space-y-0 lg:space-x-8 animate-fade-in no-scrollbar">
               {/* Left Form: Walk-in Registration */}
-              <div className="w-full lg:w-80 bg-[var(--card-bg)] border border-[var(--border-color)]/30 p-5 rounded-2xl shadow-[var(--card-shadow)] shrink-0 text-sm">
+              <div className="w-full lg:w-80 bg-[var(--card-bg)] border border-[var(--border-color)]/30 p-5 rounded-2xl shadow-[var(--card-shadow)] shrink-0 text-[15px]">
                 <h3 className="font-extrabold text-[var(--text-color)] text-base mb-4">Walk-in Registry</h3>
 
                 {walkError && (
-                  <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl flex items-center space-x-2">
+                  <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-xl flex items-center space-x-2">
                     <span className="material-symbols-outlined text-[16px] text-rose-500 shrink-0">
                       error
                     </span>
@@ -1642,7 +1643,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 )}
 
                 {walkSuccess && (
-                  <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-550 text-xs rounded-xl flex items-center space-x-2">
+                  <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-550 text-[13px] rounded-xl flex items-center space-x-2">
                     <span className="material-symbols-outlined text-[16px] text-emerald-500 shrink-0">
                       check_circle
                     </span>
@@ -1722,7 +1723,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         </option>
                       ))}
                     </select>
-                    <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-1">
+                    <p className="text-[12px] text-[var(--text-secondary)] font-medium mt-1">
                       Leave on Auto-assign — the system reads the symptoms, picks the right department & the
                       least-busy doctor.
                     </p>
@@ -1763,8 +1764,8 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         local_fire_department
                       </span>
                       <div>
-                        <p className="text-xs font-bold text-[var(--text-color)]">Emergency SOS</p>
-                        <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                        <p className="text-[13px] font-bold text-[var(--text-color)]">Emergency SOS</p>
+                        <p className="text-[12px] text-[var(--text-secondary)] font-medium">
                           Bypass queue to top
                         </p>
                       </div>
@@ -1790,7 +1791,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {/* Right List: Live Doctor queue monitor cards */}
               <div className="flex-1 lg:overflow-y-auto space-y-6">
                 {queues.length === 0 ? (
-                  <div className="text-[var(--text-secondary)] text-sm italic py-8">
+                  <div className="text-[var(--text-secondary)] text-[15px] italic py-8">
                     No hospital queues initialized.
                   </div>
                 ) : (
@@ -1805,12 +1806,12 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             <h4 className="font-extrabold text-[var(--text-color)] text-base">
                               {q.doctor?.name}
                             </h4>
-                            <p className="text-xs text-[var(--text-secondary)] font-semibold">
+                            <p className="text-[13px] text-[var(--text-secondary)] font-semibold">
                               {q.doctor?.department} | {q.doctor?.currentRoom}
                             </p>
                           </div>
                           <span
-                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                            className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
                               q.doctor?.availabilityStatus === 'Available'
                                 ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
                                 : q.doctor?.availabilityStatus === 'In Surgery'
@@ -1823,20 +1824,22 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         </div>
 
                         <div className="flex items-center justify-between bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/30">
-                          <span className="text-xs text-[var(--text-secondary)] font-bold">
+                          <span className="text-[13px] text-[var(--text-secondary)] font-bold">
                             In Cabin checkup:
                           </span>
                           {q.currentToken ? (
-                            <span className="text-xs font-bold text-teal-650 bg-teal-500/10 px-3 py-1 rounded-lg border border-teal-500/20">
+                            <span className="text-[13px] font-bold text-teal-650 bg-teal-500/10 px-3 py-1 rounded-lg border border-teal-500/20">
                               Token {q.currentToken.tokenNumber} ({q.currentToken.tokenType})
                             </span>
                           ) : (
-                            <span className="text-xs text-[var(--text-secondary)]/50 italic">Idle Cabin</span>
+                            <span className="text-[13px] text-[var(--text-secondary)]/50 italic">
+                              Idle Cabin
+                            </span>
                           )}
                         </div>
 
                         <div className="flex-1 flex flex-col space-y-2">
-                          <span className="text-[10px] uppercase font-bold text-[var(--text-secondary)] tracking-wider">
+                          <span className="text-[12px] uppercase font-bold text-[var(--text-secondary)] tracking-wider">
                             Waiting list ({q.activeQueue?.length || 0})
                           </span>
 
@@ -1845,7 +1848,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                               {q.activeQueue.filter(Boolean).map((tok, idx) => (
                                 <div
                                   key={tok._id}
-                                  className={`p-3 rounded-xl border flex items-center justify-between text-xs transition-all bg-[var(--card-bg)] ${
+                                  className={`p-3 rounded-xl border flex items-center justify-between text-[13px] transition-all bg-[var(--card-bg)] ${
                                     tok.tokenType === 'Emergency'
                                       ? 'animate-flashing-emergency border-rose-500/40 bg-rose-500/5'
                                       : 'border-[var(--border-color)] hover:border-[var(--text-secondary)]/30'
@@ -1856,11 +1859,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                                       <span className="font-extrabold text-[var(--text-color)]">
                                         {tok.tokenNumber}
                                       </span>
-                                      <span className="text-[10px] text-[var(--text-secondary)] font-semibold">
+                                      <span className="text-[12px] text-[var(--text-secondary)] font-semibold">
                                         ({tok.patient?.name})
                                       </span>
                                     </div>
-                                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5 truncate max-w-44 font-semibold">
+                                    <p className="text-[12px] text-[var(--text-secondary)] mt-0.5 truncate max-w-44 font-semibold">
                                       Sym: {tok.symptoms}
                                     </p>
                                   </div>
@@ -1869,7 +1872,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                                     {tok.tokenType !== 'Emergency' && (
                                       <button
                                         onClick={() => handleEmergencyOverride(tok._id)}
-                                        className="bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-500 font-bold px-2 py-1 rounded transition-all text-[9px]"
+                                        className="bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-500 font-bold px-2 py-1 rounded transition-all text-[11px]"
                                         title="Emergency Override"
                                       >
                                         SOS
@@ -1877,13 +1880,13 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                                     )}
                                     <button
                                       onClick={() => handleStatusChange(tok._id, 'Absent')}
-                                      className="bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 text-[var(--text-color)] border border-[var(--border-color)] px-2 py-1 rounded transition-all text-[9px] font-bold"
+                                      className="bg-[var(--bg-color)] hover:bg-[var(--border-color)]/30 text-[var(--text-color)] border border-[var(--border-color)] px-2 py-1 rounded transition-all text-[11px] font-bold"
                                     >
                                       Absent
                                     </button>
                                     <button
                                       onClick={() => handleStatusChange(tok._id, 'Completed')}
-                                      className="bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-555 font-bold px-2 py-1 rounded transition-all text-[9px]"
+                                      className="bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-555 font-bold px-2 py-1 rounded transition-all text-[11px]"
                                     >
                                       Done
                                     </button>
@@ -1892,7 +1895,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                               ))}
                             </div>
                           ) : (
-                            <div className="text-xs text-[var(--text-secondary)]/50 italic py-2">
+                            <div className="text-[13px] text-[var(--text-secondary)]/50 italic py-2">
                               No patients currently waiting.
                             </div>
                           )}
@@ -1916,7 +1919,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     value={patientSearch}
                     onChange={(e) => setPatientSearch(e.target.value)}
                     placeholder="Search by name or phone..."
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)] focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-xs text-[var(--text-color)] font-semibold"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)] focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[13px] text-[var(--text-color)] font-semibold"
                   />
                 </div>
 
@@ -1930,7 +1933,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     setPatSuccess('');
                     setShowAddPatientModal(true);
                   }}
-                  className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] text-xs font-bold px-4 py-2.5 rounded-xl transition-all transition-all-custom shadow-sm flex items-center space-x-1.5"
+                  className="bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] hover:text-[var(--text-color)] text-[13px] font-bold px-4 py-2.5 rounded-xl transition-all transition-all-custom shadow-sm flex items-center space-x-1.5"
                 >
                   <span className="material-symbols-outlined text-[16px]">person_add</span>
                   <span>Add New Patient</span>
@@ -1940,9 +1943,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {/* Patients directory table card */}
               <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl overflow-hidden shadow-[var(--card-shadow)] flex-1">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                  <table className="w-full text-left text-[13px] border-collapse">
                     <thead>
-                      <tr className="bg-[var(--bg-color)]/50 border-b border-[var(--border-color)]/30 font-bold text-[var(--text-secondary)] uppercase tracking-wider text-[10px]">
+                      <tr className="bg-[var(--bg-color)]/50 border-b border-[var(--border-color)]/30 font-bold text-[var(--text-secondary)] uppercase tracking-wider text-[12px]">
                         <th className="p-4">Patient Name</th>
                         <th className="p-4">Phone Number</th>
                         <th className="p-4">Age</th>
@@ -1992,7 +1995,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                                   setPatSuccess('');
                                   setShowEditPatientModal(true);
                                 }}
-                                className="bg-[var(--bg-color)] border border-[var(--border-color)] hover:border-[var(--secondary-color)] text-[var(--text-color)] font-bold px-3 py-1.5 rounded-lg transition-all text-[11px]"
+                                className="bg-[var(--bg-color)] border border-[var(--border-color)] hover:border-[var(--secondary-color)] text-[var(--text-color)] font-bold px-3 py-1.5 rounded-lg transition-all text-[13px]"
                               >
                                 Edit
                               </button>
@@ -2013,16 +2016,16 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {/* Trigger controller */}
               <div className="flex justify-between items-center bg-[var(--card-bg)] border border-[var(--border-color)]/30 p-4 rounded-xl shadow-[var(--card-shadow)]">
                 <div>
-                  <h4 className="font-extrabold text-[var(--text-color)] text-sm">
+                  <h4 className="font-extrabold text-[var(--text-color)] text-[15px]">
                     Dispatched Reminder Logs
                   </h4>
-                  <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                  <p className="text-[12px] text-[var(--text-secondary)] font-medium">
                     Manually dispatch pending re-visit SMS notifications scheduled for today.
                   </p>
                 </div>
                 <button
                   onClick={handleTriggerReminders}
-                  className="bg-[var(--secondary-color)] hover:bg-[var(--secondary-color)]/95 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center space-x-1.5"
+                  className="bg-[var(--secondary-color)] hover:bg-[var(--secondary-color)]/95 text-white text-[13px] font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center space-x-1.5"
                 >
                   <span className="material-symbols-outlined text-[16px] animate-spin">autorenew</span>
                   <span>Trigger Pending Reminders</span>
@@ -2030,7 +2033,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </div>
 
               {triggerLog && (
-                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs space-y-2 text-emerald-600 animate-fade-in shadow-sm">
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-[13px] space-y-2 text-emerald-600 animate-fade-in shadow-sm">
                   <div className="flex items-center space-x-2">
                     <span className="material-symbols-outlined text-[16px] text-emerald-500">
                       check_circle
@@ -2064,9 +2067,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               {/* Reminders table grid */}
               <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl overflow-hidden shadow-[var(--card-shadow)] flex-1">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                  <table className="w-full text-left text-[13px] border-collapse">
                     <thead>
-                      <tr className="bg-[var(--bg-color)]/50 border-b border-[var(--border-color)]/30 font-bold text-[var(--text-secondary)] uppercase tracking-wider text-[10px]">
+                      <tr className="bg-[var(--bg-color)]/50 border-b border-[var(--border-color)]/30 font-bold text-[var(--text-secondary)] uppercase tracking-wider text-[12px]">
                         <th className="p-4">Created</th>
                         <th className="p-4">Patient</th>
                         <th className="p-4">Doctor</th>
@@ -2099,7 +2102,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                               <div className="font-bold text-[var(--text-color)]">
                                 {rem.patient?.name || 'Patient'}
                               </div>
-                              <div className="text-[10px] text-[var(--text-secondary)]">
+                              <div className="text-[12px] text-[var(--text-secondary)]">
                                 {rem.patient?.phone}
                               </div>
                             </td>
@@ -2107,7 +2110,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                               <div className="font-bold text-[var(--text-color)]">
                                 {rem.doctor?.name || 'Doctor'}
                               </div>
-                              <div className="text-[10px] text-[var(--text-secondary)]">
+                              <div className="text-[12px] text-[var(--text-secondary)]">
                                 {rem.doctor?.department}
                               </div>
                             </td>
@@ -2119,7 +2122,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             </td>
                             <td className="p-4 whitespace-nowrap">
                               <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                className={`px-2 py-0.5 rounded-full text-[12px] font-bold border ${
                                   rem.status === 'Pending'
                                     ? 'bg-amber-500/10 border-amber-500/20 text-amber-500'
                                     : rem.status === 'Sent'
@@ -2161,7 +2164,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     </span>
                     <span>Special Reception Desk</span>
                   </h3>
-                  <p className="text-xs text-[var(--text-secondary)] font-medium mt-0.5">
+                  <p className="text-[13px] text-[var(--text-secondary)] font-medium mt-0.5">
                     Every patient who booked at{' '}
                     <span className="font-bold text-emerald-600">
                       {billingConfig?.displayName || staffUser?.hospital || 'this facility'}
@@ -2173,7 +2176,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                 <button
                   onClick={loadArrivals}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1"
                 >
                   <span className="material-symbols-outlined text-[16px]">refresh</span>
                   <span>Refresh</span>
@@ -2181,19 +2184,19 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </div>
 
               {arrivalError && (
-                <div className="bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+                <div className="bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 rounded-xl px-4 py-3 text-[13px] font-bold flex items-center gap-2">
                   <span className="material-symbols-outlined text-[18px]">error</span>
                   <span className="flex-1">{arrivalError}</span>
                   <button
                     onClick={() => setArrivalError('')}
-                    className="text-[10px] font-black opacity-60 hover:opacity-100"
+                    className="text-[12px] font-black opacity-60 hover:opacity-100"
                   >
                     DISMISS
                   </button>
                 </div>
               )}
               {arrivalNotice && (
-                <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-2">
+                <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 rounded-xl px-4 py-3 text-[13px] font-bold flex items-center gap-2">
                   <span className="material-symbols-outlined text-[18px]">check_circle</span>
                   <span>{arrivalNotice}</span>
                 </div>
@@ -2230,7 +2233,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-4 shadow-sm"
                   >
                     <p className={`text-2xl font-black tracking-tight ${stat.tone}`}>{stat.value}</p>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mt-0.5">
+                    <p className="text-[12px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mt-0.5">
                       {stat.label}
                     </p>
                   </div>
@@ -2248,7 +2251,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   <button
                     key={f.id}
                     onClick={() => setArrivalFilter(f.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                    className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all border ${
                       arrivalFilter === f.id
                         ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                         : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border-[var(--border-color)]/40 hover:text-[var(--text-color)]'
@@ -2257,7 +2260,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     {f.label}
                   </button>
                 ))}
-                <span className="text-[10px] bg-emerald-500/10 text-emerald-600 px-2 py-1 rounded-full font-bold ml-auto">
+                <span className="text-[12px] bg-emerald-500/10 text-emerald-600 px-2 py-1 rounded-full font-bold ml-auto">
                   Live — new WhatsApp bookings appear here on their own
                 </span>
               </div>
@@ -2268,7 +2271,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   <span className="material-symbols-outlined text-[36px] text-[var(--text-secondary)]">
                     inbox
                   </span>
-                  <p className="text-xs text-[var(--text-secondary)] font-semibold mt-2">
+                  <p className="text-[13px] text-[var(--text-secondary)] font-semibold mt-2">
                     {arrivalFilter === 'remote'
                       ? 'No online bookings yet today. A patient who says "hi" on WhatsApp and picks this hospital shows up here instantly.'
                       : 'Nothing matches this filter today.'}
@@ -2293,50 +2296,50 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         <div className="flex justify-between items-start gap-3">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">
+                              <span className="text-[12px] font-black text-emerald-600 uppercase tracking-widest">
                                 {a.tokenNumber}
                               </span>
                               <span
-                                className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider border flex items-center gap-1 ${badge.className}`}
+                                className={`text-[11px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider border flex items-center gap-1 ${badge.className}`}
                               >
                                 <span className="material-symbols-outlined text-[12px]">{badge.icon}</span>
                                 {a.bookingSource}
                               </span>
                               {a.tokenType === 'Emergency' && (
-                                <span className="text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-rose-500/10 text-rose-600 border border-rose-500/20">
+                                <span className="text-[11px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-rose-500/10 text-rose-600 border border-rose-500/20">
                                   🚨 Emergency
                                 </span>
                               )}
                               {a.priorityCategory !== 'None' && (
-                                <span className="text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                                <span className="text-[11px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 border border-amber-500/20">
                                   {a.priorityCategory} priority
                                 </span>
                               )}
                             </div>
-                            <h4 className="font-extrabold text-sm text-[var(--text-color)] mt-1 truncate">
+                            <h4 className="font-extrabold text-[15px] text-[var(--text-color)] mt-1 truncate">
                               {a.patient?.name || 'Patient'}
-                              <span className="text-[var(--text-secondary)] font-semibold text-xs">
+                              <span className="text-[var(--text-secondary)] font-semibold text-[13px]">
                                 {a.patient?.age ? ` · ${a.patient.age}` : ''}
                                 {a.patient?.gender ? ` · ${a.patient.gender}` : ''}
                               </span>
                             </h4>
-                            <p className="text-[10px] text-[var(--text-secondary)] font-medium truncate">
+                            <p className="text-[12px] text-[var(--text-secondary)] font-medium truncate">
                               {a.patient?.phone} · {a.doctor?.name || 'Doctor'} ({a.doctor?.department}) ·{' '}
                               {a.doctor?.currentRoom || 'Cabin'}
                             </p>
-                            <p className="text-[10px] text-[var(--text-secondary)] font-medium mt-1 line-clamp-2">
+                            <p className="text-[12px] text-[var(--text-secondary)] font-medium mt-1 line-clamp-2">
                               “{a.symptoms}”
                             </p>
                           </div>
 
                           <div className="text-right shrink-0">
-                            <span className="text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-[var(--bg-color)] border border-[var(--border-color)]/40 text-[var(--text-secondary)]">
+                            <span className="text-[11px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-[var(--bg-color)] border border-[var(--border-color)]/40 text-[var(--text-secondary)]">
                               {a.status}
                             </span>
-                            <p className="text-[10px] text-[var(--text-secondary)] font-semibold mt-1">
+                            <p className="text-[12px] text-[var(--text-secondary)] font-semibold mt-1">
                               {a.bookedAt ? new Date(a.bookedAt).toLocaleTimeString() : ''}
                             </p>
-                            <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
+                            <p className="text-[12px] text-[var(--text-secondary)] font-semibold">
                               ~{a.estimatedWaitTime} min wait
                             </p>
                           </div>
@@ -2345,7 +2348,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         {/* Special-needs priority — the counter decision that a
                             remote booking never gets made for it. */}
                         <div className="flex items-center gap-1.5 flex-wrap border-t border-[var(--border-color)]/30 pt-3">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mr-1">
+                          <span className="text-[12px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mr-1">
                             Priority
                           </span>
                           {PRIORITY_OPTIONS.map((p) => (
@@ -2353,7 +2356,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                               key={p.value}
                               disabled={busy || a.priorityCategory === p.value}
                               onClick={() => handleSetArrivalPriority(a.tokenId, p.value)}
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all disabled:opacity-100 ${
+                              className={`px-2.5 py-1 rounded-lg text-[12px] font-bold border transition-all disabled:opacity-100 ${
                                 a.priorityCategory === p.value
                                   ? 'bg-amber-500/15 text-amber-600 border-amber-500/30 cursor-default'
                                   : 'bg-[var(--bg-color)] text-[var(--text-secondary)] border-[var(--border-color)]/40 hover:text-[var(--text-color)] hover:border-amber-500/40 disabled:opacity-40'
@@ -2366,7 +2369,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                         {/* Billing */}
                         <div className="flex items-center justify-between gap-3 border-t border-[var(--border-color)]/30 pt-3">
-                          <div className="text-[10px] font-semibold text-[var(--text-secondary)]">
+                          <div className="text-[12px] font-semibold text-[var(--text-secondary)]">
                             {a.bill ? (
                               <>
                                 <span className="font-black text-teal-600">{a.bill.invoiceNumber}</span> ·{' '}
@@ -2387,7 +2390,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           <button
                             disabled={busy}
                             onClick={() => handleBillArrival(a.tokenId)}
-                            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold text-[11px] rounded-lg shadow-sm transition-all flex items-center gap-1 shrink-0"
+                            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold text-[13px] rounded-lg shadow-sm transition-all flex items-center gap-1 shrink-0"
                           >
                             <span className="material-symbols-outlined text-[14px]">receipt_long</span>
                             <span>{a.bill ? 'Open bill' : 'Start bill'}</span>
@@ -2409,9 +2412,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 <div>
                   <h3 className="text-lg font-extrabold text-[var(--text-color)] tracking-tight flex items-center gap-2">
                     <span className="material-symbols-outlined text-[24px] text-teal-600">payments</span>
-                    <span>Reception Patient Billing & Discharge Counter</span>
+                    <span>Billing</span>
                   </h3>
-                  <p className="text-xs text-[var(--text-secondary)] font-medium mt-0.5">
+                  <p className="text-[13px] text-[var(--text-secondary)] font-medium mt-0.5">
                     Track daily medicines (dawa), lab tests, bandages, room charges, and generate final
                     discharge invoices — at{' '}
                     <span className="font-bold text-teal-600">
@@ -2431,7 +2434,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       placeholder="Search patient, phone, token..."
                       value={billingSearch}
                       onChange={(e) => setBillingSearch(e.target.value)}
-                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl pl-9 pr-4 py-2 text-xs font-bold text-[var(--text-color)] outline-none focus:border-teal-500"
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl pl-9 pr-4 py-2 text-[13px] font-bold text-[var(--text-color)] outline-none focus:border-teal-500"
                     />
                   </div>
                   <button
@@ -2439,7 +2442,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       setNewBillError('');
                       setShowNewBillModal(true);
                     }}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1"
                     title="Open a bill for any patient — even a walk-in with no token"
                   >
                     <span className="material-symbols-outlined text-[16px]">receipt_long</span>
@@ -2451,7 +2454,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       setRateError('');
                       setShowRateCardModal(true);
                     }}
-                    className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] hover:border-teal-500 text-[var(--text-color)] font-bold text-xs rounded-xl transition-all flex items-center space-x-1"
+                    className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] hover:border-teal-500 text-[var(--text-color)] font-bold text-[13px] rounded-xl transition-all flex items-center space-x-1"
                     title="Set this hospital's own prices, tax and invoice letterhead"
                   >
                     <span className="material-symbols-outlined text-[16px]">price_change</span>
@@ -2459,7 +2462,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   </button>
                   <button
                     onClick={loadInvoices}
-                    className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1"
+                    className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1"
                   >
                     <span className="material-symbols-outlined text-[16px]">refresh</span>
                     <span>Refresh</span>
@@ -2472,16 +2475,16 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 {/* Left List Pane: Invoices / Patients */}
                 <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-4 shadow-sm flex flex-col space-y-3 max-h-[70vh] overflow-y-auto">
                   <div className="flex justify-between items-center pb-2 border-b border-[var(--border-color)]/30">
-                    <span className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
+                    <span className="text-[13px] font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
                       Patient Bills ({filteredInvoices.length})
                     </span>
-                    <span className="text-[10px] bg-teal-500/10 text-teal-600 px-2 py-0.5 rounded-full font-bold">
+                    <span className="text-[12px] bg-teal-500/10 text-teal-600 px-2 py-0.5 rounded-full font-bold">
                       Real-Time Live
                     </span>
                   </div>
 
                   {filteredInvoices.length === 0 ? (
-                    <div className="py-12 text-center text-xs text-[var(--text-secondary)] font-medium">
+                    <div className="py-12 text-center text-[13px] text-[var(--text-secondary)] font-medium">
                       No patient invoices found.
                     </div>
                   ) : (
@@ -2499,19 +2502,19 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         >
                           <div className="flex justify-between items-start">
                             <div>
-                              <span className="text-[10px] font-black text-teal-600 uppercase tracking-widest block">
+                              <span className="text-[12px] font-black text-teal-600 uppercase tracking-widest block">
                                 {inv.invoiceNumber}
                               </span>
-                              <h4 className="font-extrabold text-sm mt-0.5">
+                              <h4 className="font-extrabold text-[15px] mt-0.5">
                                 {inv.patient?.name || 'Patient'}
                               </h4>
-                              <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                              <p className="text-[12px] text-[var(--text-secondary)] font-medium">
                                 Phone: {inv.patient?.phone}{' '}
                                 {inv.token?.tokenNumber ? `| Token: ${inv.token.tokenNumber}` : ''}
                               </p>
                             </div>
                             <span
-                              className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider ${
+                              className={`text-[11px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider ${
                                 inv.status === 'Discharged'
                                   ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
                                   : 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
@@ -2521,15 +2524,15 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             </span>
                           </div>
 
-                          <div className="mt-3 pt-2 border-t border-[var(--border-color)]/20 flex justify-between items-center text-xs">
-                            <span className="text-[10px] text-[var(--text-secondary)]">
+                          <div className="mt-3 pt-2 border-t border-[var(--border-color)]/20 flex justify-between items-center text-[13px]">
+                            <span className="text-[12px] text-[var(--text-secondary)]">
                               Items: {(inv.items || []).length}
                             </span>
                             <div className="text-right">
-                              <span className="text-[10px] text-[var(--text-secondary)] font-medium">
+                              <span className="text-[12px] text-[var(--text-secondary)] font-medium">
                                 Total:{' '}
                               </span>
-                              <span className="font-extrabold text-sm">₹{inv.totalAmount}</span>
+                              <span className="font-extrabold text-[15px]">₹{inv.totalAmount}</span>
                             </div>
                           </div>
                         </div>
@@ -2546,18 +2549,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-[var(--border-color)]/30">
                         <div>
                           <div className="flex items-center space-x-2">
-                            <span className="text-xs font-black uppercase text-teal-600 tracking-wider">
+                            <span className="text-[13px] font-black uppercase text-teal-600 tracking-wider">
                               {selectedInvoice.invoiceNumber}
                             </span>
-                            <span className="text-xs text-[var(--text-secondary)]">•</span>
-                            <span className="text-xs font-bold text-[var(--text-secondary)]">
+                            <span className="text-[13px] text-[var(--text-secondary)]">•</span>
+                            <span className="text-[13px] font-bold text-[var(--text-secondary)]">
                               {(selectedInvoice.hospital || 'GENERAL-HOSPITAL').toUpperCase()}
                             </span>
                           </div>
                           <h2 className="text-2xl font-black text-[var(--text-color)] mt-1">
                             {selectedInvoice.patient?.name || 'Patient'}
                           </h2>
-                          <p className="text-xs text-[var(--text-secondary)] font-medium mt-0.5">
+                          <p className="text-[13px] text-[var(--text-secondary)] font-medium mt-0.5">
                             Age: {selectedInvoice.patient?.age} | Gender: {selectedInvoice.patient?.gender} |
                             Phone: {selectedInvoice.patient?.phone}
                           </p>
@@ -2568,7 +2571,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           <button
                             onClick={() => setShowAddItemModal(true)}
                             disabled={selectedInvoice.status === 'Discharged'}
-                            className="px-3.5 py-2 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                            className="px-3.5 py-2 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
                           >
                             <span className="material-symbols-outlined text-[16px]">add_circle</span>
                             <span>Add Expense</span>
@@ -2577,7 +2580,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           <button
                             onClick={handleSyncPrescriptions}
                             disabled={selectedInvoice.status === 'Discharged'}
-                            className="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                            className="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
                             title="Auto-pull doctor prescribed medicines and ordered tests"
                           >
                             <span className="material-symbols-outlined text-[16px]">sync</span>
@@ -2586,7 +2589,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                           <button
                             onClick={() => setShowReceiptModal(true)}
-                            className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                            className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
                             title="Generate and print vector PDF invoice on-demand"
                           >
                             <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
@@ -2599,7 +2602,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                               setShowDischargeModal(true);
                             }}
                             disabled={selectedInvoice.status === 'Discharged'}
-                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
                           >
                             <span className="material-symbols-outlined text-[16px]">task_alt</span>
                             <span>Discharge & Pay</span>
@@ -2609,13 +2612,13 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
                       {/* Line Items Table */}
                       <div className="space-y-3">
-                        <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
+                        <h4 className="text-[13px] font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
                           Itemized Expenses Breakdown
                         </h4>
 
                         <div className="overflow-x-auto border border-[var(--border-color)]/30 rounded-xl">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-[var(--bg-color)] border-b border-[var(--border-color)]/30 text-[var(--text-secondary)] uppercase font-bold text-[10px]">
+                          <table className="w-full text-left text-[13px]">
+                            <thead className="bg-[var(--bg-color)] border-b border-[var(--border-color)]/30 text-[var(--text-secondary)] uppercase font-bold text-[12px]">
                               <tr>
                                 <th className="p-3">Category</th>
                                 <th className="p-3">Item Description</th>
@@ -2640,7 +2643,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                                 selectedInvoice.items.map((it) => (
                                   <tr key={it._id} className="hover:bg-[var(--bg-color)]/50">
                                     <td className="p-3">
-                                      <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase border bg-teal-500/10 text-teal-600 border-teal-500/20">
+                                      <span className="px-2 py-0.5 rounded text-[11px] font-black uppercase border bg-teal-500/10 text-teal-600 border-teal-500/20">
                                         {it.category}
                                       </span>
                                     </td>
@@ -2672,7 +2675,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       </div>
 
                       {/* Bill Totals & Summary Card */}
-                      <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs font-bold">
+                      <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/40 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4 text-[13px] font-bold">
                         <div className="space-y-1 text-left">
                           <p className="text-[var(--text-secondary)]">
                             Payment Status:{' '}
@@ -2681,7 +2684,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             </span>
                           </p>
                           {selectedInvoice.dischargedAt && (
-                            <p className="text-[10px] text-emerald-600 font-bold">
+                            <p className="text-[12px] text-emerald-600 font-bold">
                               Discharged at: {new Date(selectedInvoice.dischargedAt).toLocaleString()} by{' '}
                               {selectedInvoice.dischargedBy}
                             </p>
@@ -2721,7 +2724,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                               {selectedInvoice.totalAmount}
                             </span>
                           </div>
-                          <div className="flex justify-between text-xs font-bold pt-1">
+                          <div className="flex justify-between text-[13px] font-bold pt-1">
                             <span className="text-[var(--text-secondary)]">
                               Amount Paid: ₹{selectedInvoice.amountPaid}
                             </span>
@@ -2746,7 +2749,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       <h3 className="text-base font-extrabold text-[var(--text-color)]">
                         No Invoice Selected
                       </h3>
-                      <p className="text-xs max-w-sm mx-auto font-medium">
+                      <p className="text-[13px] max-w-sm mx-auto font-medium">
                         Select a patient invoice from the list on the left, or search for a patient/token to
                         manage expenses and discharge.
                       </p>
@@ -2769,18 +2772,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             </h3>
 
             {patError && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl">
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-xl">
                 {patError}
               </div>
             )}
 
             {patSuccess && (
-              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-555 text-xs rounded-xl">
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-555 text-[13px] rounded-xl">
                 {patSuccess}
               </div>
             )}
 
-            <form onSubmit={handleAddPatient} className="space-y-4 text-xs font-semibold">
+            <form onSubmit={handleAddPatient} className="space-y-4 text-[13px] font-semibold">
               <div>
                 <label className="block text-[var(--text-secondary)] mb-1">Patient Full Name</label>
                 <input
@@ -2829,7 +2832,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 </div>
               </div>
 
-              <div className="flex space-x-3 pt-2 text-sm font-bold">
+              <div className="flex space-x-3 pt-2 text-[15px] font-bold">
                 <button
                   type="button"
                   onClick={() => setShowAddPatientModal(false)}
@@ -2859,18 +2862,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             </h3>
 
             {patError && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl">
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-xl">
                 {patError}
               </div>
             )}
 
             {patSuccess && (
-              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-555 text-xs rounded-xl">
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-555 text-[13px] rounded-xl">
                 {patSuccess}
               </div>
             )}
 
-            <form onSubmit={handleEditPatient} className="space-y-4 text-xs font-semibold">
+            <form onSubmit={handleEditPatient} className="space-y-4 text-[13px] font-semibold">
               <div>
                 <label className="block text-[var(--text-secondary)] mb-1">Patient Full Name</label>
                 <input
@@ -2918,7 +2921,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 </div>
               </div>
 
-              <div className="flex space-x-3 pt-2 text-sm font-bold">
+              <div className="flex space-x-3 pt-2 text-[15px] font-bold">
                 <button
                   type="button"
                   onClick={() => {
@@ -2947,16 +2950,16 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-fade-in relative text-[var(--text-color)] text-left">
             <h3 className="font-extrabold text-base mb-4 flex items-center space-x-2 border-b border-[var(--border-color)]/30 pb-2">
               <span className="material-symbols-outlined text-teal-600">add_shopping_cart</span>
-              <span>Add Charge / Daily Expense</span>
+              <span>Add charge</span>
             </h3>
 
             {addItemError && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl font-bold">
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-xl font-bold">
                 {addItemError}
               </div>
             )}
             {addItemSuccess && (
-              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-xs rounded-xl font-bold">
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-[13px] rounded-xl font-bold">
                 {addItemSuccess}
               </div>
             )}
@@ -2965,7 +2968,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 from the hospital's own catalogue, so nothing here is hardcoded. */}
             <div className="mb-4 space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-[10px] font-extrabold uppercase text-[var(--text-secondary)]">
+                <label className="text-[12px] font-extrabold uppercase text-[var(--text-secondary)]">
                   {billingConfig?.displayName || 'Facility'} Rate Card
                 </label>
                 <button
@@ -2975,14 +2978,14 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     setShowAddItemModal(false);
                     setShowRateCardModal(true);
                   }}
-                  className="text-[10px] font-bold text-teal-600 hover:underline"
+                  className="text-[12px] font-bold text-teal-600 hover:underline"
                 >
                   Edit prices
                 </button>
               </div>
-              <div className="flex flex-wrap gap-1.5 text-[10px] max-h-32 overflow-y-auto">
+              <div className="flex flex-wrap gap-1.5 text-[12px] max-h-32 overflow-y-auto">
                 {(billingConfig?.services || []).filter((svc) => svc.active !== false).length === 0 ? (
-                  <span className="text-[10px] text-[var(--text-secondary)] italic">
+                  <span className="text-[12px] text-[var(--text-secondary)] italic">
                     No services priced yet — add them from the Rate Card.
                   </span>
                 ) : (
@@ -3010,11 +3013,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
             <form onSubmit={handleAddInvoiceItem} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold mb-1">Category</label>
+                <label className="block text-[13px] font-bold mb-1">Category</label>
                 <select
                   value={addItemCategory}
                   onChange={(e) => setAddItemCategory(e.target.value)}
-                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-[13px] font-bold text-[var(--text-color)]"
                 >
                   <option value="Medicine">Medicine (Dawa)</option>
                   <option value="Lab Test">Lab Test (Test)</option>
@@ -3027,31 +3030,31 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </div>
 
               <div>
-                <label className="block text-xs font-bold mb-1">Item Name / Description</label>
+                <label className="block text-[13px] font-bold mb-1">Item Name / Description</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g., Bandage & Dressing, Paracetamol, CBC Test"
                   value={addItemName}
                   onChange={(e) => setAddItemName(e.target.value)}
-                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-[13px] font-bold text-[var(--text-color)]"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold mb-1">Quantity</label>
+                  <label className="block text-[13px] font-bold mb-1">Quantity</label>
                   <input
                     type="number"
                     min="1"
                     required
                     value={addItemQty}
                     onChange={(e) => setAddItemQty(e.target.value)}
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-[13px] font-bold text-[var(--text-color)]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold mb-1">Unit Price (₹)</label>
+                  <label className="block text-[13px] font-bold mb-1">Unit Price (₹)</label>
                   <input
                     type="number"
                     min="0"
@@ -3059,7 +3062,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                     placeholder="150"
                     value={addItemPrice}
                     onChange={(e) => setAddItemPrice(e.target.value)}
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-[13px] font-bold text-[var(--text-color)]"
                   />
                 </div>
               </div>
@@ -3068,13 +3071,13 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 <button
                   type="button"
                   onClick={() => setShowAddItemModal(false)}
-                  className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-xs font-bold rounded-xl"
+                  className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-[13px] font-bold rounded-xl"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl shadow-sm"
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-[13px] rounded-xl shadow-sm"
                 >
                   Add to Bill
                 </button>
@@ -3090,21 +3093,21 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/40 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-fade-in relative text-[var(--text-color)] text-left">
             <h3 className="font-extrabold text-base mb-2 flex items-center space-x-2 border-b border-[var(--border-color)]/30 pb-2 text-emerald-600">
               <span className="material-symbols-outlined text-[24px]">task_alt</span>
-              <span>Discharge Patient & Finalize Invoice</span>
+              <span>Discharge</span>
             </h3>
 
             {dischargeError && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl font-bold">
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-xl font-bold">
                 {dischargeError}
               </div>
             )}
             {dischargeSuccess && (
-              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-xs rounded-xl font-bold">
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-[13px] rounded-xl font-bold">
                 {dischargeSuccess}
               </div>
             )}
 
-            <div className="bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/40 mb-4 text-xs font-bold space-y-1">
+            <div className="bg-[var(--bg-color)] p-3 rounded-xl border border-[var(--border-color)]/40 mb-4 text-[13px] font-bold space-y-1">
               <p className="text-[var(--text-color)]">Patient: {selectedInvoice.patient?.name}</p>
               <p className="text-[var(--text-secondary)]">
                 Total Bill Amount: ₹{selectedInvoice.totalAmount}
@@ -3114,34 +3117,34 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             <form onSubmit={handleDischargePatient} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold mb-1">Discount (₹)</label>
+                  <label className="block text-[13px] font-bold mb-1">Discount (₹)</label>
                   <input
                     type="number"
                     min="0"
                     value={dischargeDiscount}
                     onChange={(e) => setDischargeDiscount(e.target.value)}
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-[13px] font-bold text-[var(--text-color)]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold mb-1">Amount Collecting (₹)</label>
+                  <label className="block text-[13px] font-bold mb-1">Amount Collecting (₹)</label>
                   <input
                     type="number"
                     min="0"
                     required
                     value={dischargeAmountPaid}
                     onChange={(e) => setDischargeAmountPaid(e.target.value)}
-                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-[13px] font-bold text-[var(--text-color)]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold mb-1">Payment Method</label>
+                <label className="block text-[13px] font-bold mb-1">Payment Method</label>
                 <select
                   value={dischargeMethod}
                   onChange={(e) => setDischargeMethod(e.target.value)}
-                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-[13px] font-bold text-[var(--text-color)]"
                 >
                   <option value="Cash">Cash Counter</option>
                   <option value="UPI">UPI / QR Code</option>
@@ -3152,13 +3155,13 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </div>
 
               <div>
-                <label className="block text-xs font-bold mb-1">Discharge Notes / Remarks</label>
+                <label className="block text-[13px] font-bold mb-1">Discharge Notes / Remarks</label>
                 <input
                   type="text"
                   placeholder="e.g., Patient fit for discharge, prescribed 5-day meds"
                   value={dischargeNotes}
                   onChange={(e) => setDischargeNotes(e.target.value)}
-                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-xs font-bold text-[var(--text-color)]"
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 text-[13px] font-bold text-[var(--text-color)]"
                 />
               </div>
 
@@ -3166,16 +3169,16 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 <button
                   type="button"
                   onClick={() => setShowDischargeModal(false)}
-                  className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-xs font-bold rounded-xl"
+                  className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-[13px] font-bold rounded-xl"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center space-x-1.5"
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[13px] rounded-xl shadow-md flex items-center space-x-1.5"
                 >
                   <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                  <span>Confirm & Discharge Patient</span>
+                  <span>Confirm discharge</span>
                 </button>
               </div>
             </form>
@@ -3193,54 +3196,54 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 {billingConfig?.displayName || selectedInvoice.hospital || 'Hospital'}
               </h2>
               {billingConfig?.address && (
-                <p className="text-[10px] text-zinc-500 font-medium">{billingConfig.address}</p>
+                <p className="text-[12px] text-zinc-500 font-medium">{billingConfig.address}</p>
               )}
-              <p className="text-[10px] text-zinc-500 font-medium">
+              <p className="text-[12px] text-zinc-500 font-medium">
                 {billingConfig?.phone ? `Ph: ${billingConfig.phone}` : ''}
                 {billingConfig?.gstin ? `  |  GSTIN: ${billingConfig.gstin}` : ''}
               </p>
-              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mt-1">
+              <p className="text-[12px] text-zinc-500 font-bold uppercase tracking-wider mt-1">
                 Official Discharge Summary & Invoice Receipt
               </p>
-              <p className="text-[10px] text-zinc-400">Date: {new Date().toLocaleString()}</p>
+              <p className="text-[12px] text-zinc-400">Date: {new Date().toLocaleString()}</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-xs mb-4 p-3 bg-zinc-50 rounded-xl border border-zinc-200 font-medium">
+            <div className="grid grid-cols-2 gap-2 text-[13px] mb-4 p-3 bg-zinc-50 rounded-xl border border-zinc-200 font-medium">
               <div>
-                <p className="text-[10px] text-zinc-400 font-bold uppercase">Invoice No:</p>
+                <p className="text-[12px] text-zinc-400 font-bold uppercase">Invoice No:</p>
                 <p className="font-extrabold text-teal-800">{selectedInvoice.invoiceNumber}</p>
               </div>
               <div>
-                <p className="text-[10px] text-zinc-400 font-bold uppercase">Patient Name:</p>
+                <p className="text-[12px] text-zinc-400 font-bold uppercase">Patient Name:</p>
                 <p className="font-extrabold">{selectedInvoice.patient?.name}</p>
               </div>
               <div>
-                <p className="text-[10px] text-zinc-400 font-bold uppercase">Phone:</p>
+                <p className="text-[12px] text-zinc-400 font-bold uppercase">Phone:</p>
                 <p>{selectedInvoice.patient?.phone}</p>
               </div>
               <div>
-                <p className="text-[10px] text-zinc-400 font-bold uppercase">Discharged By:</p>
+                <p className="text-[12px] text-zinc-400 font-bold uppercase">Discharged By:</p>
                 <p>{selectedInvoice.dischargedBy || 'Reception'}</p>
               </div>
             </div>
 
             {/* Itemized Table */}
             <div className="mb-4">
-              <h4 className="text-[10px] font-extrabold uppercase text-zinc-400 mb-2">Itemized Breakdown</h4>
-              <table className="w-full text-left text-xs border-collapse">
+              <h4 className="text-[12px] font-extrabold uppercase text-zinc-400 mb-2">Itemized Breakdown</h4>
+              <table className="w-full text-left text-[13px] border-collapse">
                 <thead>
-                  <tr className="border-b text-zinc-500 font-bold text-[10px] uppercase">
+                  <tr className="border-b text-zinc-500 font-bold text-[12px] uppercase">
                     <th className="py-2">Item</th>
                     <th className="py-2 text-center">Qty</th>
                     <th className="py-2 text-right">Price</th>
                     <th className="py-2 text-right">Total</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100 font-medium text-[11px]">
+                <tbody className="divide-y divide-zinc-100 font-medium text-[13px]">
                   {(selectedInvoice.items || []).map((it, idx) => (
                     <tr key={idx}>
                       <td className="py-2">
-                        <span className="text-[9px] uppercase text-zinc-400 font-bold block">
+                        <span className="text-[11px] uppercase text-zinc-400 font-bold block">
                           {it.category}
                         </span>
                         {it.itemName}
@@ -3261,7 +3264,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             </div>
 
             {/* Summary Box */}
-            <div className="border-t pt-3 space-y-1 text-xs text-right font-bold">
+            <div className="border-t pt-3 space-y-1 text-[13px] text-right font-bold">
               <div className="flex justify-between text-zinc-500">
                 <span>Subtotal:</span>
                 <span>
@@ -3294,7 +3297,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   {selectedInvoice.totalAmount}
                 </span>
               </div>
-              <div className="flex justify-between text-xs text-zinc-600 pt-1">
+              <div className="flex justify-between text-[13px] text-zinc-600 pt-1">
                 <span>Paid ({selectedInvoice.paymentMethod}):</span>
                 <span className="text-emerald-600">
                   {currency}
@@ -3302,7 +3305,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 </span>
               </div>
               {selectedInvoice.balanceDue > 0 && (
-                <div className="flex justify-between text-xs text-amber-600">
+                <div className="flex justify-between text-[13px] text-amber-600">
                   <span>Balance Due:</span>
                   <span>
                     {currency}
@@ -3311,11 +3314,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 </div>
               )}
               {selectedInvoice.notes && (
-                <p className="text-[10px] text-zinc-500 font-medium text-left pt-2 border-t mt-2">
+                <p className="text-[12px] text-zinc-500 font-medium text-left pt-2 border-t mt-2">
                   Remarks: {selectedInvoice.notes}
                 </p>
               )}
-              <p className="text-[10px] text-zinc-400 font-medium text-center pt-3">
+              <p className="text-[12px] text-zinc-400 font-medium text-center pt-3">
                 {billingConfig?.footerNote || 'Thank you. Get well soon!'}
               </p>
             </div>
@@ -3324,14 +3327,14 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             <div className="flex justify-between items-center pt-6 border-t mt-4">
               <button
                 onClick={() => window.print()}
-                className="px-4 py-2 bg-zinc-800 text-white rounded-xl text-xs font-bold hover:bg-zinc-700 flex items-center space-x-1"
+                className="px-4 py-2 bg-zinc-800 text-white rounded-xl text-[13px] font-bold hover:bg-zinc-700 flex items-center space-x-1"
               >
                 <span className="material-symbols-outlined text-[16px]">print</span>
                 <span>Print Receipt</span>
               </button>
               <button
                 onClick={() => setShowReceiptModal(false)}
-                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-500"
+                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-[13px] font-bold hover:bg-teal-500"
               >
                 Close
               </button>
@@ -3348,18 +3351,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               <span className="material-symbols-outlined text-[22px]">receipt_long</span>
               <span>Open a New Bill</span>
             </h3>
-            <p className="text-[11px] text-[var(--text-secondary)] font-medium mb-4 pb-3 border-b border-[var(--border-color)]/30">
+            <p className="text-[13px] text-[var(--text-secondary)] font-medium mb-4 pb-3 border-b border-[var(--border-color)]/30">
               For any patient — someone already on file, or a walk-in who only needs a dressing, an injection
               or a test and has no token.
             </p>
 
             {newBillError && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl font-bold">
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-xl font-bold">
                 {newBillError}
               </div>
             )}
 
-            <div className="flex gap-2 mb-4 text-xs font-bold">
+            <div className="flex gap-2 mb-4 text-[13px] font-bold">
               {[
                 { id: 'existing', label: 'Existing Patient' },
                 { id: 'new', label: 'New Walk-in' }
@@ -3379,7 +3382,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               ))}
             </div>
 
-            <form onSubmit={handleCreateInvoice} className="space-y-4 text-xs">
+            <form onSubmit={handleCreateInvoice} className="space-y-4 text-[13px]">
               {newBillMode === 'existing' ? (
                 <div className="space-y-2">
                   <label className="block font-bold">Find Patient</label>
@@ -3410,7 +3413,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           }`}
                         >
                           <span className="font-extrabold">{p.name}</span>
-                          <span className="text-[10px] text-[var(--text-secondary)] block">
+                          <span className="text-[12px] text-[var(--text-secondary)] block">
                             {p.phone} • {p.age}y • {p.gender}
                           </span>
                         </button>
@@ -3515,23 +3518,23 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               <span className="material-symbols-outlined text-[22px]">price_change</span>
               <span>Rate Card — {billingConfig?.displayName || staffUser?.hospital}</span>
             </h3>
-            <p className="text-[11px] text-[var(--text-secondary)] font-medium mb-4 pb-3 border-b border-[var(--border-color)]/30">
+            <p className="text-[13px] text-[var(--text-secondary)] font-medium mb-4 pb-3 border-b border-[var(--border-color)]/30">
               These prices, tax and letterhead apply to this hospital only. Other facilities on the platform
               keep their own.
             </p>
 
             {rateError && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-xs rounded-xl font-bold">
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] rounded-xl font-bold">
                 {rateError}
               </div>
             )}
             {rateSuccess && (
-              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-xs rounded-xl font-bold">
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-[13px] rounded-xl font-bold">
                 {rateSuccess}
               </div>
             )}
 
-            <form onSubmit={handleSaveRateCard} className="space-y-4 text-xs">
+            <form onSubmit={handleSaveRateCard} className="space-y-4 text-[13px]">
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {[
                   { key: 'consultationFee', label: 'Doctor Consultation Fee' },
@@ -3587,16 +3590,16 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
             {/* Service catalogue */}
             <div className="mt-6 pt-4 border-t border-[var(--border-color)]/30 space-y-3">
-              <h4 className="text-xs font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
+              <h4 className="text-[13px] font-extrabold uppercase tracking-wider text-[var(--text-secondary)]">
                 Chargeable Services ({(billingConfig?.services || []).length})
               </h4>
 
-              <div className="max-h-56 overflow-y-auto border border-[var(--border-color)]/40 rounded-xl divide-y divide-[var(--border-color)]/20 text-xs">
+              <div className="max-h-56 overflow-y-auto border border-[var(--border-color)]/40 rounded-xl divide-y divide-[var(--border-color)]/20 text-[13px]">
                 {(billingConfig?.services || []).map((svc) => (
                   <div key={svc._id || svc.name} className="flex items-center justify-between p-2.5 gap-2">
                     <div className="min-w-0">
                       <span
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${CATEGORY_CHIP[svc.category] || CATEGORY_CHIP.Other}`}
+                        className={`px-1.5 py-0.5 rounded text-[11px] font-black uppercase ${CATEGORY_CHIP[svc.category] || CATEGORY_CHIP.Other}`}
                       >
                         {svc.category}
                       </span>
@@ -3620,7 +3623,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 ))}
               </div>
 
-              <form onSubmit={handleAddService} className="flex flex-col sm:flex-row gap-2 text-xs">
+              <form onSubmit={handleAddService} className="flex flex-col sm:flex-row gap-2 text-[13px]">
                 <select
                   value={newSvcCategory}
                   onChange={(e) => setNewSvcCategory(e.target.value)}
@@ -3662,7 +3665,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               <button
                 type="button"
                 onClick={() => setShowRateCardModal(false)}
-                className="px-5 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-xs font-bold rounded-xl"
+                className="px-5 py-2 bg-[var(--bg-color)] border border-[var(--border-color)] text-[13px] font-bold rounded-xl"
               >
                 Close
               </button>

@@ -1021,7 +1021,7 @@ export default function SuperAdminPortal() {
             <ArrowLeft className="h-4 w-4" />
             <span>Hub Directory</span>
           </button>
-          <div className="inline-flex items-center space-x-2 bg-[var(--tertiary-color)]/10 border border-[var(--tertiary-color)]/20 text-[var(--tertiary-color)] px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
+          <div className="inline-flex items-center space-x-2 bg-[var(--tertiary-color)]/10 border border-[var(--tertiary-color)]/20 text-[var(--tertiary-color)] px-3 py-1 rounded-full text-[12px] font-black uppercase tracking-wider">
             <Activity className="h-3.5 w-3.5 animate-pulse" />
             <span>Super Admin Engine</span>
           </div>
@@ -1077,7 +1077,7 @@ export default function SuperAdminPortal() {
                     key={ft}
                     type="button"
                     onClick={() => setFacilityFilterType(ft)}
-                    className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                    className={`px-3 py-1 rounded-lg text-[12px] font-black uppercase tracking-wider transition-all ${
                       facilityFilterType === ft
                         ? 'bg-[var(--primary-color)] text-white shadow-sm'
                         : 'bg-[var(--bg-color)] border border-[var(--border-color)]/40 text-[var(--text-secondary)] hover:text-[var(--text-color)]'
@@ -1116,10 +1116,10 @@ export default function SuperAdminPortal() {
                 >
                   <div>
                     <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 bg-[var(--primary-color)]/10 text-[var(--primary-color)] text-[9px] font-black rounded-md uppercase tracking-wider">
+                      <span className="px-2 py-0.5 bg-[var(--primary-color)]/10 text-[var(--primary-color)] text-[11px] font-black rounded-md uppercase tracking-wider">
                         {h.type || 'Hospital'}
                       </span>
-                      <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                      <span className="text-[12px] font-bold text-[var(--text-secondary)]">
                         👨‍⚕️ {h.doctorCount || 1} Dr(s)
                       </span>
                     </div>
@@ -1127,12 +1127,12 @@ export default function SuperAdminPortal() {
                     <h4 className="font-extrabold text-xs text-[var(--text-color)] mt-1.5 line-clamp-1">
                       {h.name}
                     </h4>
-                    <p className="text-[10px] text-[var(--text-secondary)] font-semibold">
+                    <p className="text-[12px] text-[var(--text-secondary)] font-semibold">
                       📍 {h.city} • ID: <span className="font-mono text-[var(--primary-color)]">{h.id}</span>
                     </p>
 
                     {h.parentHospital && (
-                      <p className="text-[9px] text-[var(--tertiary-color)] font-bold mt-1">
+                      <p className="text-[11px] text-[var(--tertiary-color)] font-bold mt-1">
                         🔗 Parent: {h.parentHospital}
                       </p>
                     )}
@@ -1145,7 +1145,7 @@ export default function SuperAdminPortal() {
                         handleSelectHospitalToEdit(h.id);
                         setActiveTab('edit');
                       }}
-                      className="flex-1 py-1 bg-[var(--primary-color)] hover:bg-[var(--primary-color)]/90 text-white rounded-lg text-[10px] font-black transition-all text-center"
+                      className="flex-1 py-1 bg-[var(--primary-color)] hover:bg-[var(--primary-color)]/90 text-white rounded-lg text-[12px] font-black transition-all text-center"
                     >
                       Edit Profile
                     </button>
@@ -1155,7 +1155,7 @@ export default function SuperAdminPortal() {
                         setSelectedHospital(h.id);
                         setActiveTab('accounts');
                       }}
-                      className="px-2 py-1 bg-[var(--bg-color)] border border-[var(--border-color)] text-[var(--text-color)] hover:bg-[var(--border-color)]/20 rounded-lg text-[10px] font-black transition-all"
+                      className="px-2 py-1 bg-[var(--bg-color)] border border-[var(--border-color)] text-[var(--text-color)] hover:bg-[var(--border-color)]/20 rounded-lg text-[12px] font-black transition-all"
                     >
                       + Accs
                     </button>
@@ -1174,7 +1174,7 @@ export default function SuperAdminPortal() {
                     <button
                       type="button"
                       onClick={() => handleDeleteHospital(h.id)}
-                      className="p-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg text-[10px] transition-all"
+                      className="p-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg text-[12px] transition-all"
                       title="Delete Facility"
                     >
                       <span className="material-symbols-outlined text-[14px]">delete</span>
@@ -1409,14 +1409,14 @@ export default function SuperAdminPortal() {
                           >
                             {ft.name}
                           </p>
-                          <p className="text-[10px] text-[var(--text-secondary)] font-medium leading-tight mt-0.5">
+                          <p className="text-[12px] text-[var(--text-secondary)] font-medium leading-tight mt-0.5">
                             {ft.blurb}
                           </p>
                         </button>
                       );
                     })}
                   </div>
-                  <p className="text-[10px] text-[var(--text-secondary)] font-semibold mt-2">
+                  <p className="text-[12px] text-[var(--text-secondary)] font-semibold mt-2">
                     A {type} is set up with{' '}
                     <span className="font-black text-[var(--primary-color)]">
                       {(activeType?.offers || []).map((k) => SECTION_LABEL[k]).join(', ')}
@@ -1681,7 +1681,7 @@ export default function SuperAdminPortal() {
                           { title: '', description: '', icon: 'local_hospital' }
                         ])
                       }
-                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
+                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[12px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
                     >
                       + Add Service
                     </button>
@@ -1692,7 +1692,7 @@ export default function SuperAdminPortal() {
                       className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end border-b border-[var(--border-color)]/20 pb-3 last:border-b-0 last:pb-0"
                     >
                       <div className="md:col-span-3">
-                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">
+                        <label className="block mb-0.5 text-[11px] uppercase font-bold text-[var(--text-secondary)]">
                           Service Title
                         </label>
                         <input
@@ -1710,7 +1710,7 @@ export default function SuperAdminPortal() {
                         />
                       </div>
                       <div className="md:col-span-5">
-                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">
+                        <label className="block mb-0.5 text-[11px] uppercase font-bold text-[var(--text-secondary)]">
                           Description
                         </label>
                         <input
@@ -1728,7 +1728,7 @@ export default function SuperAdminPortal() {
                         />
                       </div>
                       <div className="md:col-span-3">
-                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">
+                        <label className="block mb-0.5 text-[11px] uppercase font-bold text-[var(--text-secondary)]">
                           Material Icon Name
                         </label>
                         <select
@@ -1773,7 +1773,7 @@ export default function SuperAdminPortal() {
                     <button
                       type="button"
                       onClick={() => setFeatures((prev) => [...prev, ''])}
-                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
+                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[12px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
                     >
                       + Add Feature
                     </button>
@@ -1831,7 +1831,7 @@ export default function SuperAdminPortal() {
                     </span>
                     <span>Reception / front desk ({filledStaff.length})</span>
                     {(activeType?.requires || []).includes('staff') && (
-                      <span className="text-[9px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
+                      <span className="text-[11px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
                         Required
                       </span>
                     )}
@@ -1897,7 +1897,7 @@ export default function SuperAdminPortal() {
                     </span>
                     <span>Doctors ({filledDoctors.length})</span>
                     {(activeType?.requires || []).includes('doctors') && (
-                      <span className="text-[9px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
+                      <span className="text-[11px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
                         Required
                       </span>
                     )}
@@ -1921,7 +1921,7 @@ export default function SuperAdminPortal() {
                       className="rounded-xl border border-[var(--border-color)]/40 bg-[var(--bg-color)]/40 p-3 space-y-2"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
+                        <span className="text-[12px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
                           Doctor {i + 1}
                           {d.name ? ` — ${d.name}` : ''}
                         </span>
@@ -1929,7 +1929,7 @@ export default function SuperAdminPortal() {
                           type="button"
                           disabled={doctorRows.length === 1}
                           onClick={() => setDoctorRows((p) => p.filter((_, idx) => idx !== i))}
-                          className="px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 disabled:opacity-30 font-black text-[10px]"
+                          className="px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 disabled:opacity-30 font-black text-[12px]"
                         >
                           Remove
                         </button>
@@ -1960,7 +1960,7 @@ export default function SuperAdminPortal() {
 
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                         <div>
-                          <label className="block mb-1 text-[10px]">Department</label>
+                          <label className="block mb-1 text-[12px]">Department</label>
                           <input
                             list="known-departments"
                             placeholder="e.g. Cardiology"
@@ -1970,7 +1970,7 @@ export default function SuperAdminPortal() {
                           />
                         </div>
                         <div>
-                          <label className="block mb-1 text-[10px]">Doctor type</label>
+                          <label className="block mb-1 text-[12px]">Doctor type</label>
                           <select
                             value={d.doctorType}
                             onChange={(e) => patchRow(setDoctorRows, i, 'doctorType', e.target.value)}
@@ -1984,7 +1984,7 @@ export default function SuperAdminPortal() {
                           </select>
                         </div>
                         <div>
-                          <label className="block mb-1 text-[10px]">Specialization</label>
+                          <label className="block mb-1 text-[12px]">Specialization</label>
                           <input
                             placeholder="e.g. Interventional Cardiology"
                             value={d.specialization}
@@ -1996,7 +1996,7 @@ export default function SuperAdminPortal() {
 
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                         <div>
-                          <label className="block mb-1 text-[10px]">Cabin / room</label>
+                          <label className="block mb-1 text-[12px]">Cabin / room</label>
                           <input
                             placeholder="e.g. Cabin 101"
                             value={d.currentRoom}
@@ -2005,7 +2005,7 @@ export default function SuperAdminPortal() {
                           />
                         </div>
                         <div>
-                          <label className="block mb-1 text-[10px]">Avg. checkup (min)</label>
+                          <label className="block mb-1 text-[12px]">Avg. checkup (min)</label>
                           <input
                             type="number"
                             min="1"
@@ -2015,7 +2015,7 @@ export default function SuperAdminPortal() {
                           />
                         </div>
                         <div>
-                          <label className="block mb-1 text-[10px]">Daily OPD limit (0 = none)</label>
+                          <label className="block mb-1 text-[12px]">Daily OPD limit (0 = none)</label>
                           <input
                             type="number"
                             min="0"
@@ -2036,7 +2036,7 @@ export default function SuperAdminPortal() {
                           <span className="material-symbols-outlined text-[15px] text-[var(--primary-color)]">
                             badge
                           </span>
-                          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-color)]">
+                          <span className="text-[12px] font-black uppercase tracking-wider text-[var(--text-color)]">
                             Public profile (shown to patients)
                           </span>
                           <span className="material-symbols-outlined text-[16px] ml-auto text-[var(--text-secondary)] transition-transform group-open:rotate-180">
@@ -2073,7 +2073,7 @@ export default function SuperAdminPortal() {
                     </span>
                     <span>Laboratory ({filledLabs.length})</span>
                     {(activeType?.requires || []).includes('lab') && (
-                      <span className="text-[9px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
+                      <span className="text-[11px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
                         Required
                       </span>
                     )}
@@ -2134,7 +2134,7 @@ export default function SuperAdminPortal() {
                     </span>
                     <span>Pharmacy / medical store ({filledPharmacy.length})</span>
                     {(activeType?.requires || []).includes('pharmacy') && (
-                      <span className="text-[9px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
+                      <span className="text-[11px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-2 py-0.5 rounded-full">
                         Required
                       </span>
                     )}
@@ -2198,7 +2198,7 @@ export default function SuperAdminPortal() {
 
               {/* Exactly what this submit is about to create, before it happens. */}
               <div className="rounded-xl border border-[var(--border-color)]/40 bg-[var(--bg-color)]/50 p-4">
-                <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
+                <p className="text-[12px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
                   About to create
                 </p>
                 <p className="text-xs font-bold text-[var(--text-color)] mt-1">
@@ -2213,7 +2213,7 @@ export default function SuperAdminPortal() {
                   {['staff', 'doctors', 'lab', 'pharmacy'].map((kind) => (
                     <span
                       key={kind}
-                      className={`text-[10px] font-black px-2 py-1 rounded-lg border ${
+                      className={`text-[12px] font-black px-2 py-1 rounded-lg border ${
                         filledCount[kind] > 0
                           ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
                           : (activeType?.requires || []).includes(kind)
@@ -2901,7 +2901,7 @@ export default function SuperAdminPortal() {
                       href={`/h/${editHospId}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="ml-auto text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg bg-[var(--primary-color)]/10 text-[var(--primary-color)] hover:bg-[var(--primary-color)]/25 transition-colors"
+                      className="ml-auto text-[12px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg bg-[var(--primary-color)]/10 text-[var(--primary-color)] hover:bg-[var(--primary-color)]/25 transition-colors"
                     >
                       Open /h/{editHospId}
                     </a>
@@ -2950,7 +2950,7 @@ export default function SuperAdminPortal() {
                           { title: '', description: '', icon: 'local_hospital' }
                         ])
                       }
-                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
+                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[12px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
                     >
                       + Add Service
                     </button>
@@ -2961,7 +2961,7 @@ export default function SuperAdminPortal() {
                       className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end border-b border-[var(--border-color)]/20 pb-3 last:border-b-0 last:pb-0"
                     >
                       <div className="md:col-span-3">
-                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">
+                        <label className="block mb-0.5 text-[11px] uppercase font-bold text-[var(--text-secondary)]">
                           Service Title
                         </label>
                         <input
@@ -2979,7 +2979,7 @@ export default function SuperAdminPortal() {
                         />
                       </div>
                       <div className="md:col-span-5">
-                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">
+                        <label className="block mb-0.5 text-[11px] uppercase font-bold text-[var(--text-secondary)]">
                           Description
                         </label>
                         <input
@@ -2997,7 +2997,7 @@ export default function SuperAdminPortal() {
                         />
                       </div>
                       <div className="md:col-span-3">
-                        <label className="block mb-0.5 text-[9px] uppercase font-bold text-[var(--text-secondary)]">
+                        <label className="block mb-0.5 text-[11px] uppercase font-bold text-[var(--text-secondary)]">
                           Material Icon Name
                         </label>
                         <select
@@ -3042,7 +3042,7 @@ export default function SuperAdminPortal() {
                     <button
                       type="button"
                       onClick={() => setEditFeatures((prev) => [...prev, ''])}
-                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
+                      className="px-2.5 py-1 bg-[var(--primary-color)]/10 text-[var(--primary-color)] rounded-lg text-[12px] font-black uppercase tracking-wider hover:bg-[var(--primary-color)]/25 transition-all"
                     >
                       + Add Feature
                     </button>
@@ -3075,7 +3075,7 @@ export default function SuperAdminPortal() {
                   <div className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30 flex items-center justify-between">
                     <div>
                       <label className="block font-bold mb-0.5">Primary Theme Color</label>
-                      <span className="text-[10px] text-[var(--text-secondary)]">
+                      <span className="text-[12px] text-[var(--text-secondary)]">
                         Click color box to adjust
                       </span>
                     </div>
@@ -3089,7 +3089,7 @@ export default function SuperAdminPortal() {
                   <div className="bg-[var(--bg-color)] p-4 rounded-xl border border-[var(--border-color)]/30 flex items-center justify-between">
                     <div>
                       <label className="block font-bold mb-0.5">Secondary Theme Color</label>
-                      <span className="text-[10px] text-[var(--text-secondary)]">
+                      <span className="text-[12px] text-[var(--text-secondary)]">
                         Click color box to adjust
                       </span>
                     </div>
@@ -3115,7 +3115,7 @@ export default function SuperAdminPortal() {
                   <button
                     type="button"
                     onClick={() => fetchFacilityPersonnel(editHospId)}
-                    className="px-2.5 py-1 bg-[var(--card-bg)] border border-[var(--border-color)]/50 rounded-lg text-[10px] font-bold text-[var(--text-secondary)] hover:text-[var(--text-color)] flex items-center space-x-1"
+                    className="px-2.5 py-1 bg-[var(--card-bg)] border border-[var(--border-color)]/50 rounded-lg text-[12px] font-bold text-[var(--text-secondary)] hover:text-[var(--text-color)] flex items-center space-x-1"
                   >
                     <span
                       className={`material-symbols-outlined text-[14px] ${personnelLoading ? 'animate-spin' : ''}`}
@@ -3134,7 +3134,7 @@ export default function SuperAdminPortal() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Doctors List */}
                     <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
-                      <span className="text-[10px] font-black uppercase text-[var(--primary-color)] tracking-wider">
+                      <span className="text-[12px] font-black uppercase text-[var(--primary-color)] tracking-wider">
                         Registered Doctors ({facilityPersonnel.doctors.length})
                       </span>
                       {facilityPersonnel.doctors.length === 0 ? (
@@ -3147,18 +3147,18 @@ export default function SuperAdminPortal() {
                                 <div className="min-w-0">
                                   <p className="font-extrabold text-[var(--text-color)] flex items-center gap-1.5">
                                     {d.name}
-                                    <span className="text-[8px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-1.5 py-0.5 rounded-full">
+                                    <span className="text-[11px] font-black uppercase tracking-wider bg-[var(--primary-color)]/10 text-[var(--primary-color)] px-1.5 py-0.5 rounded-full">
                                       {d.doctorType || 'Consultant'}
                                     </span>
                                     {/* A doctor with no profile is a bare name on
                                         the public page — worth flagging here. */}
                                     {!d.qualification && (
-                                      <span className="text-[8px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full">
+                                      <span className="text-[11px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full">
                                         no profile
                                       </span>
                                     )}
                                   </p>
-                                  <p className="text-[10px] text-[var(--text-secondary)]">
+                                  <p className="text-[12px] text-[var(--text-secondary)]">
                                     {d.department} • {d.currentRoom || 'Cabin'} ({d.availabilityStatus})
                                     {d.dailyTokenLimit ? ` • cap ${d.dailyTokenLimit}/day` : ''}
                                   </p>
@@ -3199,14 +3199,14 @@ export default function SuperAdminPortal() {
                                     <button
                                       type="button"
                                       onClick={() => handleSaveDoctorProfile(d._id)}
-                                      className="px-3 py-1.5 rounded-lg bg-[var(--primary-color)] text-white text-[10px] font-black uppercase tracking-wider"
+                                      className="px-3 py-1.5 rounded-lg bg-[var(--primary-color)] text-white text-[12px] font-black uppercase tracking-wider"
                                     >
                                       Save profile
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => setEditingDoctorId('')}
-                                      className="px-3 py-1.5 rounded-lg border border-[var(--border-color)] text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]"
+                                      className="px-3 py-1.5 rounded-lg border border-[var(--border-color)] text-[12px] font-black uppercase tracking-wider text-[var(--text-secondary)]"
                                     >
                                       Cancel
                                     </button>
@@ -3221,7 +3221,7 @@ export default function SuperAdminPortal() {
 
                     {/* Staff List */}
                     <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
-                      <span className="text-[10px] font-black uppercase text-[var(--secondary-color)] tracking-wider">
+                      <span className="text-[12px] font-black uppercase text-[var(--secondary-color)] tracking-wider">
                         Registered Staff ({facilityPersonnel.staff.length})
                       </span>
                       {facilityPersonnel.staff.length === 0 ? (
@@ -3235,7 +3235,7 @@ export default function SuperAdminPortal() {
                             >
                               <div>
                                 <p className="font-extrabold text-[var(--text-color)]">{s.name}</p>
-                                <p className="text-[10px] text-[var(--text-secondary)]">
+                                <p className="text-[12px] text-[var(--text-secondary)]">
                                   {s.username} • {s.counterNumber}
                                 </p>
                               </div>
@@ -3255,7 +3255,7 @@ export default function SuperAdminPortal() {
 
                     {/* Lab Assistants List */}
                     <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
-                      <span className="text-[10px] font-black uppercase text-emerald-500 tracking-wider">
+                      <span className="text-[12px] font-black uppercase text-emerald-500 tracking-wider">
                         Registered Lab Assistants ({facilityPersonnel.labAssistants.length})
                       </span>
                       {facilityPersonnel.labAssistants.length === 0 ? (
@@ -3269,7 +3269,7 @@ export default function SuperAdminPortal() {
                             >
                               <div>
                                 <p className="font-extrabold text-[var(--text-color)]">{l.name}</p>
-                                <p className="text-[10px] text-[var(--text-secondary)]">{l.username}</p>
+                                <p className="text-[12px] text-[var(--text-secondary)]">{l.username}</p>
                               </div>
                               <button
                                 type="button"
@@ -3287,7 +3287,7 @@ export default function SuperAdminPortal() {
 
                     {/* Pharmacists List */}
                     <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
-                      <span className="text-[10px] font-black uppercase text-amber-500 tracking-wider">
+                      <span className="text-[12px] font-black uppercase text-amber-500 tracking-wider">
                         Registered Pharmacy / Medical ({(facilityPersonnel.pharmacists || []).length})
                       </span>
                       {(facilityPersonnel.pharmacists || []).length === 0 ? (
@@ -3301,7 +3301,7 @@ export default function SuperAdminPortal() {
                             >
                               <div>
                                 <p className="font-extrabold text-[var(--text-color)]">{ph.name}</p>
-                                <p className="text-[10px] text-[var(--text-secondary)]">
+                                <p className="text-[12px] text-[var(--text-secondary)]">
                                   {ph.username}
                                   {ph.counterNumber ? ' • ' + ph.counterNumber : ''}
                                 </p>
@@ -3322,7 +3322,7 @@ export default function SuperAdminPortal() {
 
                     {/* Registered Patients List */}
                     <div className="bg-[var(--card-bg)] p-3 rounded-xl border border-[var(--border-color)]/40 space-y-2">
-                      <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider">
+                      <span className="text-[12px] font-black uppercase text-indigo-500 tracking-wider">
                         Registered Patients ({facilityPersonnel.patients.length})
                       </span>
                       {facilityPersonnel.patients.length === 0 ? (
@@ -3336,7 +3336,7 @@ export default function SuperAdminPortal() {
                             >
                               <div>
                                 <p className="font-extrabold text-[var(--text-color)]">{p.name}</p>
-                                <p className="text-[10px] text-[var(--text-secondary)]">
+                                <p className="text-[12px] text-[var(--text-secondary)]">
                                   {p.phone} • {p.age}y ({p.gender}) • {p.visitCount} visits
                                 </p>
                               </div>

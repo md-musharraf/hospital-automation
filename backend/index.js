@@ -678,12 +678,30 @@ const seedMockData = async () => {
           username: 'diag_lab_assistant',
           passwordHash,
           hospital: 'care-diagnostics'
-        },
+        }
+      ]);
+
+      // The pharmacy counter needs a Pharmacist, not a LabAssistant. "Pharmacy
+      // Tech" used to sit in the LabAssistant array above, which meant the
+      // pharmacy portal had NO seeded account at all — nobody could sign into it
+      // locally — while apex-pharmacy, a Medical facility that requires a
+      // pharmacy login and offers no lab bench, was given a lab account instead.
+      // Exactly the half-configured tenant FACILITY_TYPE_RULES exists to prevent.
+      const Pharmacist = require('./models/Pharmacist');
+      await Pharmacist.insertMany([
         {
           name: 'Pharmacy Tech',
           username: 'pharm_assistant',
           passwordHash,
+          counterNumber: 'Pharmacy Counter 1',
           hospital: 'apex-pharmacy'
+        },
+        {
+          name: 'Hospital Pharmacist',
+          username: 'gen_pharmacist',
+          passwordHash,
+          counterNumber: 'Pharmacy Counter',
+          hospital: 'general-hospital'
         }
       ]);
       console.log('[Mock DB] Seeding completed successfully. Login ready.');

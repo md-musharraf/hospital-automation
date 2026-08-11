@@ -43,7 +43,12 @@ const timeAgo = (iso) => {
   return `${Math.floor(secs / 3600)}h ago`;
 };
 
-export default function LiveActivityFeed({ token, limit = 25, title = 'Live Hospital Activity', compact = false }) {
+export default function LiveActivityFeed({
+  token,
+  limit = 25,
+  title = 'Live Hospital Activity',
+  compact = false
+}) {
   const [items, setItems] = useState([]);
   const [connected, setConnected] = useState(socket.connected);
   const [filter, setFilter] = useState('all');
@@ -55,13 +60,13 @@ export default function LiveActivityFeed({ token, limit = 25, title = 'Live Hosp
     fetch(`${BACKEND_URL}/api/v1/ops/activity?limit=${limit}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
-      .then(res => (res.ok ? res.json() : []))
-      .then(data => {
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
         if (!Array.isArray(data)) return;
-        data.forEach(a => a._id && seen.current.add(String(a._id)));
+        data.forEach((a) => a._id && seen.current.add(String(a._id)));
         setItems(data);
       })
-      .catch(err => console.error('Error loading activity feed:', err));
+      .catch((err) => console.error('Error loading activity feed:', err));
   }, [token, limit]);
 
   // Live tail. The server addresses this to the facility room, so a portal only
@@ -71,7 +76,7 @@ export default function LiveActivityFeed({ token, limit = 25, title = 'Live Hosp
       const id = entry && entry._id ? String(entry._id) : null;
       if (id && seen.current.has(id)) return;
       if (id) seen.current.add(id);
-      setItems(prev => [entry, ...prev].slice(0, limit));
+      setItems((prev) => [entry, ...prev].slice(0, limit));
     };
     const onConnect = () => setConnected(true);
     const onDisconnect = () => setConnected(false);
@@ -86,52 +91,67 @@ export default function LiveActivityFeed({ token, limit = 25, title = 'Live Hosp
     };
   }, [limit]);
 
-  const shown = filter === 'alerts'
-    ? items.filter(a => a.severity === 'warning' || a.severity === 'critical')
-    : items;
+  const shown =
+    filter === 'alerts' ? items.filter((a) => a.severity === 'warning' || a.severity === 'critical') : items;
 
   return (
     <div className="bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/45 shadow-[var(--card-shadow)] overflow-hidden flex flex-col">
       <div className="px-4 py-3 border-b border-[var(--border-color)]/30 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'}`} />
-          <h3 className="text-xs font-black uppercase tracking-wider text-[var(--text-color)]">{title}</h3>
+          <span
+            className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'}`}
+          />
+          <h3 className="text-[13px] font-black uppercase tracking-wider text-[var(--text-color)]">
+            {title}
+          </h3>
         </div>
         <div className="flex gap-1">
-          {['all', 'alerts'].map(f => (
+          {['all', 'alerts'].map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`text-[10px] font-bold px-2 py-1 rounded-lg transition-colors ${
+              className={`text-[12px] font-bold px-2 py-1 rounded-lg transition-colors ${
                 filter === f
                   ? 'bg-[var(--primary-color)] text-[var(--primary-text)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--primary-color)]'
               }`}
             >
-              {f === 'all' ? 'All' : `Alerts${items.filter(a => a.severity === 'warning' || a.severity === 'critical').length ? ` (${items.filter(a => a.severity === 'warning' || a.severity === 'critical').length})` : ''}`}
+              {f === 'all'
+                ? 'All'
+                : `Alerts${items.filter((a) => a.severity === 'warning' || a.severity === 'critical').length ? ` (${items.filter((a) => a.severity === 'warning' || a.severity === 'critical').length})` : ''}`}
             </button>
           ))}
         </div>
       </div>
 
-      <div className={`overflow-y-auto no-scrollbar divide-y divide-[var(--border-color)]/20 ${compact ? 'max-h-64' : 'max-h-[420px]'}`}>
+      <div
+        className={`overflow-y-auto no-scrollbar divide-y divide-[var(--border-color)]/20 ${compact ? 'max-h-64' : 'max-h-[420px]'}`}
+      >
         {shown.length === 0 && (
-          <p className="text-[11px] text-[var(--text-secondary)] p-4 text-center font-medium">
-            {filter === 'alerts' ? 'No alerts right now — everything is running normally.' : 'Waiting for activity…'}
+          <p className="text-[13px] text-[var(--text-secondary)] p-4 text-center font-medium">
+            {filter === 'alerts'
+              ? 'No alerts right now — everything is running normally.'
+              : 'Waiting for activity…'}
           </p>
         )}
         {shown.map((a, idx) => {
           const meta = TYPE_META[a.type] || TYPE_META.system;
           return (
-            <div key={a._id || idx} className={`px-4 py-2.5 flex items-start gap-2.5 border-l-2 ${SEVERITY_STYLE[a.severity] || SEVERITY_STYLE.info}`}>
+            <div
+              key={a._id || idx}
+              className={`px-4 py-2.5 flex items-start gap-2.5 border-l-2 ${SEVERITY_STYLE[a.severity] || SEVERITY_STYLE.info}`}
+            >
               <span className="material-symbols-outlined text-[16px] mt-0.5 shrink-0">{meta.icon}</span>
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-semibold text-[var(--text-color)] leading-snug break-words">{a.message}</p>
-                <p className="text-[9px] text-[var(--text-secondary)] font-medium mt-0.5">
+                <p className="text-[13px] font-semibold text-[var(--text-color)] leading-snug break-words">
+                  {a.message}
+                </p>
+                <p className="text-[11px] text-[var(--text-secondary)] font-medium mt-0.5">
                   {meta.label}
                   {a.actor ? ` • ${a.actor}` : ''}
                   {a.tokenNumber ? ` • ${a.tokenNumber}` : ''}
-                  {' • '}{timeAgo(a.createdAt)}
+                  {' • '}
+                  {timeAgo(a.createdAt)}
                 </p>
               </div>
             </div>
