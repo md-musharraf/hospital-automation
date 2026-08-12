@@ -40,11 +40,18 @@ const useMockDb = () => !isProduction() && process.env.USE_MOCK_DB === 'true';
  */
 const allowAnyOrigin = () => !isProduction();
 
-/** Secrets that must be present, and long enough to be worth having. */
+/**
+ * Secrets that must be present, and long enough to be worth having.
+ *
+ * The names here must match what the code actually reads. `MONGODB_URI` is the
+ * one index.js uses; an earlier version of this list asked for `MONGO_URI`,
+ * which no part of the app has ever read — so a correctly configured deploy was
+ * rejected for a variable that would have done nothing if it were set.
+ */
 const REQUIRED_IN_PRODUCTION = [
   { name: 'JWT_SECRET', minLength: 32 },
   { name: 'ADMIN_SECRET', minLength: 16 },
-  { name: 'MONGO_URI', minLength: 1 }
+  { name: 'MONGODB_URI', minLength: 1 }
 ];
 
 /**
@@ -71,6 +78,14 @@ function collectEnvProblems() {
       'USE_MOCK_DB=true is set in production. The in-memory store keeps every ' +
         'patient, token and invoice in RAM and loses all of it on restart. Remove ' +
         'this variable from the production environment.'
+    );
+  }
+
+  if (process.env.AUTO_SEED === 'true') {
+    problems.push(
+      'AUTO_SEED=true is set in production. On an empty database this inserts the ' +
+        'demo facilities, doctors and staff (Dr. Clara Watson, Alice Smith, and the ' +
+        'rest) as real records in a live tenant. Remove this variable.'
     );
   }
 
@@ -108,7 +123,9 @@ function assertEnvironment() {
 
   console.error('\nFATAL: this server cannot start safely in production.\n');
   problems.forEach((problem, i) => console.error(`  ${i + 1}. ${problem}`));
-  console.error('\nFix the environment variables in your hosting dashboard and redeploy.\n');
+  console.error('\nSet these in your hosting dashboard, then redeploy.');
+  console.error('To generate a strong secret locally:');
+  console.error("  node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"\n");
   process.exit(1);
 }
 

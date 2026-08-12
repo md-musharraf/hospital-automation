@@ -18,26 +18,26 @@ html {
   --border-color: #e4e4e7; /* zinc-200 subtle borders */
   --card-bg: #fafafa; /* zinc-50 card bg */
   --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-  
+
   --primary-color: #000000; /* Black accent */
   --primary-container: #f4f4f5; /* zinc-100 */
   --primary-text: #ffffff; /* White text on primary bg */
-  
+
   --secondary-color: #71717a;
   --secondary-container: #f4f4f5;
   --secondary-text: #171717;
-  
+
   --tertiary-color: #0891b2; /* Calm Cyan accent */
   --tertiary-container: rgba(8, 145, 178, 0.05);
   --tertiary-text: #0891b2;
-  
+
   --error-color: #ef4444;
   --error-bg: #fef2f2;
   --error-text: #991b1b;
-  
+
   --success-color: #10b981;
   --success-bg: #d1fae5;
-  
+
   --input-bg: #ffffff;
   --input-focus-border: #000000;
 }
@@ -50,52 +50,136 @@ html {
   --border-color: #27272a; /* zinc-800 subtle borders */
   --card-bg: #09090b; /* zinc-950 deep card */
   --card-shadow: 0 0px 0px 0 rgba(0, 0, 0, 0);
-  
+
   --primary-color: #ffffff; /* White primary highlights */
   --primary-container: #1f1f23;
   --primary-text: #000000; /* Black text on primary white bg */
-  
+
   --secondary-color: #71717a;
   --secondary-container: #18181b;
   --secondary-text: #ffffff;
-  
+
   --tertiary-color: #0891b2;
   --tertiary-container: rgba(8, 145, 178, 0.1);
   --tertiary-text: #22d3ee;
-  
+
   --error-color: #ef4444;
   --error-bg: #180808;
   --error-text: #fecaca;
-  
+
   --success-color: #10b981;
   --success-bg: #062f22;
-  
+
   --input-bg: #000000;
   --input-focus-border: #0891b2;
 }
 
-body, button, input, select, textarea, h1, h2, h3, h4, h5, h6, p, span, div, a {
-  font-family: 'Neue Machina', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+/*
+ * Marketing brand palette — scoped, on purpose.
+ *
+ * The consoles are deliberately monochrome: `--primary-color` is black in light
+ * mode and white in dark, so that clinical colour (red for emergency, amber for
+ * waiting, green for done) is the ONLY colour on a screen a nurse reads at
+ * speed. A teal brand accent inside a portal would compete with that.
+ *
+ * The public page has the opposite job — it has to look like a product someone
+ * would buy. So the brand lives here, behind `.marketing-scope`, and cannot
+ * leak into any console. Both themes are defined because the page inherits the
+ * visitor's light/dark choice.
+ */
+.marketing-scope {
+  --brand: #0d9488; /* teal-600 — also the default accent a facility page gets */
+  --brand-strong: #0f766e; /* teal-700, for text on light fills */
+  --brand-soft: rgba(13, 148, 136, 0.1);
+  --brand-ring: rgba(13, 148, 136, 0.22);
+  --brand-on: #ffffff;
+
+  --ink: #0f2942; /* deep navy — the dark bands */
+  --ink-soft: #17395a;
+  --on-ink: #e8f1f8;
+  --on-ink-muted: #9db4c8;
+
+  --surface: #ffffff;
+  --surface-sunken: #f6f9fb;
+  --hairline: rgba(15, 41, 66, 0.1);
+}
+
+.dark .marketing-scope {
+  /* Lifted for contrast against a pitch-black background: teal-600 on #000 is
+     under 4.5:1 for text, teal-400 clears it. */
+  --brand: #2dd4bf;
+  --brand-strong: #5eead4;
+  --brand-soft: rgba(45, 212, 191, 0.12);
+  --brand-ring: rgba(45, 212, 191, 0.26);
+  --brand-on: #04211d;
+
+  --ink: #06131f;
+  --ink-soft: #0d2135;
+  --on-ink: #e8f1f8;
+  --on-ink-muted: #8ea8bd;
+
+  --surface: #09090b;
+  --surface-sunken: #0c0f13;
+  --hairline: rgba(232, 241, 248, 0.09);
+}
+
+body,
+button,
+input,
+select,
+textarea,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+span,
+div,
+a {
+  font-family:
+    'Neue Machina',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
 }
 
 body {
   margin: 0;
   background-color: var(--bg-color);
   color: var(--text-color);
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 /* Reduce font weight globally to make text sleeker and cleaner */
-h1, h2, h3, h4, h5, h6, .font-black, .font-extrabold {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.font-black,
+.font-extrabold {
   font-weight: 700 !important; /* Normalizes heavy weight to sleek bold */
 }
 
 /* Material Symbols alignment helper */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined' !important;
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
   display: inline-block;
   vertical-align: middle;
 }
@@ -128,8 +212,8 @@ h1, h2, h3, h4, h5, h6, .font-black, .font-extrabold {
 }
 
 /* Input Fields styling & Smooth animations */
-input:not(.bg-transparent):not(.border-none), 
-select:not(.bg-transparent):not(.border-none), 
+input:not(.bg-transparent):not(.border-none),
+select:not(.bg-transparent):not(.border-none),
 textarea:not(.bg-transparent):not(.border-none) {
   background-color: var(--input-bg) !important;
   color: var(--text-color) !important;
@@ -143,8 +227,8 @@ textarea:not(.bg-transparent):not(.border-none) {
 }
 
 /* Click / Focus transition and glow */
-input:not(.bg-transparent):not(.border-none):focus, 
-select:not(.bg-transparent):not(.border-none):focus, 
+input:not(.bg-transparent):not(.border-none):focus,
+select:not(.bg-transparent):not(.border-none):focus,
 textarea:not(.bg-transparent):not(.border-none):focus {
   outline: none !important;
   border-color: var(--tertiary-color) !important;
@@ -164,7 +248,8 @@ button:focus-visible {
 }
 
 /* Click animation feedback for buttons */
-button:active, .btn-active-feedback:active {
+button:active,
+.btn-active-feedback:active {
   transform: scale(0.96);
 }
 
@@ -195,7 +280,8 @@ button:active, .btn-active-feedback:active {
 
 /* Flashing Emergency Animation */
 @keyframes flashing-emergency {
-  0%, 100% {
+  0%,
+  100% {
     border-color: rgba(239, 68, 68, 0.3);
     box-shadow: 0 0 4px rgba(239, 68, 68, 0.1);
   }
@@ -216,42 +302,93 @@ button:active, .btn-active-feedback:active {
 
 /* Entrance: fade + rise (staggered via inline animation-delay) */
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(24px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 @keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.94); }
-  to   { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-.animate-fade-in-up { opacity: 0; animation: fadeInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.animate-fade-in    { opacity: 0; animation: fadeIn 0.8s ease-out forwards; }
-.animate-scale-in   { opacity: 0; animation: scaleIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-fade-in-up {
+  opacity: 0;
+  animation: fadeInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.animate-fade-in {
+  opacity: 0;
+  animation: fadeIn 0.8s ease-out forwards;
+}
+.animate-scale-in {
+  opacity: 0;
+  animation: scaleIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
 
 /* Staggering helpers */
-.delay-100 { animation-delay: 0.1s; }
-.delay-200 { animation-delay: 0.2s; }
-.delay-300 { animation-delay: 0.3s; }
-.delay-400 { animation-delay: 0.4s; }
-.delay-500 { animation-delay: 0.5s; }
-.delay-700 { animation-delay: 0.7s; }
+.delay-100 {
+  animation-delay: 0.1s;
+}
+.delay-200 {
+  animation-delay: 0.2s;
+}
+.delay-300 {
+  animation-delay: 0.3s;
+}
+.delay-400 {
+  animation-delay: 0.4s;
+}
+.delay-500 {
+  animation-delay: 0.5s;
+}
+.delay-700 {
+  animation-delay: 0.7s;
+}
 
 /* Ambient floating — for hero blobs / decorative orbs */
 @keyframes floatSlow {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33%      { transform: translate(14px, -18px) scale(1.05); }
-  66%      { transform: translate(-12px, 10px) scale(0.97); }
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(14px, -18px) scale(1.05);
+  }
+  66% {
+    transform: translate(-12px, 10px) scale(0.97);
+  }
 }
-.animate-float-slow { animation: floatSlow 14s ease-in-out infinite; }
+.animate-float-slow {
+  animation: floatSlow 14s ease-in-out infinite;
+}
 
 /* Aurora / mesh gradient drift */
 @keyframes gradientDrift {
-  0%, 100% { background-position: 0% 50%; }
-  50%      { background-position: 100% 50%; }
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
 }
 .animate-gradient {
   background-size: 220% 220%;
@@ -260,33 +397,50 @@ button:active, .btn-active-feedback:active {
 
 /* Shimmer sweep — skeletons & premium buttons */
 @keyframes shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 .animate-shimmer {
-  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.14) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.14) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2.2s linear infinite;
 }
 
 /* Soft breathing glow ring (status dots, live badges) */
 @keyframes glowPulse {
-  0%, 100% { box-shadow: 0 0 0 0 var(--facility-ring, rgba(13,148,136,0.4)); }
-  50%      { box-shadow: 0 0 0 8px transparent; }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--facility-ring, rgba(13, 148, 136, 0.4));
+  }
+  50% {
+    box-shadow: 0 0 0 8px transparent;
+  }
 }
-.animate-glow { animation: glowPulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+.animate-glow {
+  animation: glowPulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
 
 /* Marquee-lite ticker underline */
 @keyframes underlineSweep {
-  from { transform: scaleX(0); }
-  to   { transform: scaleX(1); }
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
 }
 
 /* Scroll-reveal — elements start hidden, .is-visible added by IntersectionObserver */
 .reveal {
   opacity: 0;
   transform: translateY(28px);
-  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: opacity, transform;
 }
 .reveal.is-visible {
@@ -296,25 +450,35 @@ button:active, .btn-active-feedback:active {
 
 /* Card hover elevation — theme-aware ring */
 .card-hover {
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+  transition:
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.3s ease,
+    border-color 0.3s ease;
 }
 .card-hover:hover {
   transform: translateY(-6px);
-  box-shadow: 0 18px 40px -12px var(--facility-ring, rgba(0,0,0,0.18));
+  box-shadow: 0 18px 40px -12px var(--facility-ring, rgba(0, 0, 0, 0.18));
 }
 
 /* Sheen that slides across premium CTA buttons on hover */
-.btn-sheen { position: relative; overflow: hidden; }
+.btn-sheen {
+  position: relative;
+  overflow: hidden;
+}
 .btn-sheen::after {
   content: '';
   position: absolute;
-  top: 0; left: -75%;
-  width: 50%; height: 100%;
-  background: linear-gradient(120deg, transparent, rgba(255,255,255,0.35), transparent);
+  top: 0;
+  left: -75%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.35), transparent);
   transform: skewX(-20deg);
   transition: left 0.6s ease;
 }
-.btn-sheen:hover::after { left: 130%; }
+.btn-sheen:hover::after {
+  left: 130%;
+}
 
 /* Respect users who prefer reduced motion — kill non-essential animation */
 @media (prefers-reduced-motion: reduce) {
@@ -326,8 +490,13 @@ button:active, .btn-active-feedback:active {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
-  .reveal { opacity: 1 !important; transform: none !important; }
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
   .animate-fade-in-up,
   .animate-fade-in,
-  .animate-scale-in { opacity: 1 !important; }
+  .animate-scale-in {
+    opacity: 1 !important;
+  }
 }
