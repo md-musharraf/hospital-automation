@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 const PatientSchema = new mongoose.Schema(
   {
@@ -19,5 +20,9 @@ PatientSchema.index({ phone: 1, hospital: 1 }, { unique: true });
 // facility's patients could not use it and scanned every patient on the
 // platform. This one leads with the tenant.
 PatientSchema.index({ hospital: 1, createdAt: -1 });
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+PatientSchema.plugin(tenantGuardPlugin, { modelName: 'Patient' });
 
 module.exports = mongoose.model('Patient', PatientSchema);

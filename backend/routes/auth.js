@@ -19,16 +19,11 @@ const {
   reconcileLegacyFlags,
   legacyModulesFrom
 } = require('../utils/facilityProfile');
-const rateLimit = require('express-rate-limit');
-
-// Login rate limiter: 10 attempts per 15 minutes per IP to prevent brute-force
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: 'Too many login attempts. Please try again after 15 minutes.' }
-});
+const { safeCompare, isProduction } = require('../utils/env');
+const logger = require('../utils/logger');
+// Keyed by IP *and* account, so one reception desk's staff do not share a single
+// ten-attempt budget between them. See middleware/rateLimits.js.
+const { loginLimiter } = require('../middleware/rateLimits');
 
 // Doctor Login (rate-limited)
 router.post('/doctor/login', loginLimiter, async (req, res) => {
@@ -222,13 +217,33 @@ router.get('/me', authenticateToken, async (req, res) => {
   }
 });
 
-// Middleware to verify Super Admin Secret Passcode
+// Middleware to verify Super Admin Secret Passcode.
+//
+// This used to read `process.env.ADMIN_SECRET || 'supersecret123'`. That
+// fallback is the whole platform's registration key, and it was written in a
+// file anyone could read — so a deploy that forgot the variable was wide open
+// while looking configured. There is no fallback now: an unset secret means
+// nobody can pass, which is the safe direction to fail.
+//
+// The comparison is timing-safe. The endpoint is unauthenticated by definition
+// (it is what grants admin access), so a plain `!==` hands an attacker a
+// character-by-character oracle for the one secret that guards tenant creation.
 const verifyAdminSecret = (req, res, next) => {
-  const adminSecret = req.headers['x-admin-secret'] || req.body.adminSecret;
-  const expectedSecret = process.env.ADMIN_SECRET || 'supersecret123';
-  if (!adminSecret || adminSecret !== expectedSecret) {
+  const submitted = req.headers['x-admin-secret'] || req.body.adminSecret;
+  const expected = process.env.ADMIN_SECRET;
+
+  if (!expected) {
+    logger.error('[AUTH] ADMIN_SECRET is not configured — refusing all super-admin access');
+    return res.status(503).json({
+      message: 'Super admin access is not configured on this server.'
+    });
+  }
+
+  if (!safeCompare(submitted, expected)) {
+    logger.warn('[AUTH] Rejected super-admin attempt', { ip: req.ip });
     return res.status(401).json({ message: 'Unauthorized: Invalid Admin Secret Passcode' });
   }
+
   next();
 };
 
@@ -1154,8 +1169,40 @@ router.delete('/super-admin/patient/:id', verifyAdminSecret, async (req, res) =>
   }
 });
 
-// POST Clear all demo/sample data (Super Admin Endpoint)
+// POST Clear all demo/sample data.
+//
+// This endpoint empties EVERY collection for EVERY facility: hospitals, staff,
+// patients, tokens and the archive that would otherwise be the only remaining
+// record of them. Its name says "demo data", but nothing about it is limited to
+// demo data — it is an unrecoverable wipe of the entire platform behind a route
+// that reads as housekeeping.
+//
+// It exists because seeding a clean slate during development is genuinely
+// useful. That value disappears the moment a real facility's patients are in the
+// database, so production refuses it outright rather than relying on nobody ever
+// pointing it at the wrong deployment. Removing tenants in production is done
+// one facility at a time, deliberately, through the per-facility endpoints.
+//
+// Outside production the caller must still name what they are destroying, so the
+// request cannot be replayed from history or fired by a stray click.
 router.post('/super-admin/clear-demo-data', verifyAdminSecret, async (req, res) => {
+  if (isProduction()) {
+    logger.error('[SUPER-ADMIN] Refused platform wipe in production', { ip: req.ip });
+    return res.status(403).json({
+      message:
+        'Refused: this endpoint erases every facility on the platform and is disabled in production. ' +
+        'Delete facilities individually instead.'
+    });
+  }
+
+  if (req.body.confirm !== 'DELETE ALL PLATFORM DATA') {
+    return res.status(400).json({
+      message:
+        'Refused: this erases every facility, patient and archive on this deployment. ' +
+        'Send { "confirm": "DELETE ALL PLATFORM DATA" } if that is genuinely what you want.'
+    });
+  }
+
   try {
     const Patient = require('../models/Patient');
     const ChatSession = require('../models/ChatSession');
@@ -1164,28 +1211,34 @@ router.post('/super-admin/clear-demo-data', verifyAdminSecret, async (req, res) 
     const Token = require('../models/Token');
     const Queue = require('../models/Queue');
 
+    // `allTenants` is required by the tenant guard on every one of these. The
+    // intent here really is platform-wide, and saying so is what distinguishes it
+    // from the forgotten-filter bug the guard exists to catch.
+    const everyTenant = { allTenants: true };
+
     await Hospital.deleteMany({});
-    await Doctor.deleteMany({});
-    await Staff.deleteMany({});
-    await LabAssistant.deleteMany({});
-    await Pharmacist.deleteMany({});
+    await Doctor.deleteMany({}, everyTenant);
+    await Staff.deleteMany({}, everyTenant);
+    await LabAssistant.deleteMany({}, everyTenant);
+    await Pharmacist.deleteMany({}, everyTenant);
     await Queue.deleteMany({});
-    await Token.deleteMany({});
-    await Patient.deleteMany({});
+    await Token.deleteMany({}, everyTenant);
+    await Patient.deleteMany({}, everyTenant);
     await ChatSession.deleteMany({});
-    await ArchivedToken.deleteMany({});
-    await Reminder.deleteMany({});
+    await ArchivedToken.deleteMany({}, everyTenant);
+    await Reminder.deleteMany({}, everyTenant);
+
+    logger.warn('[SUPER-ADMIN] Platform data cleared', { ip: req.ip });
 
     if (req.io) {
       req.io.emit('queue-reset');
     }
 
     res.json({
-      message:
-        'All demo and sample data cleared successfully! System is 100% clean for manual hospital entry.'
+      message: 'All data cleared on this non-production deployment.'
     });
   } catch (error) {
-    console.error('Super admin clear demo data error:', error);
+    logger.error('[SUPER-ADMIN] Clear demo data failed', { err: error.message });
     res.status(500).json({ message: 'Server error clearing demo data' });
   }
 });

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 const TokenSchema = new mongoose.Schema(
   {
@@ -140,5 +141,9 @@ TokenSchema.index({ hospital: 1, createdAt: -1 });
 
 // The queue reads: "what is in front of this doctor right now".
 TokenSchema.index({ doctor: 1, status: 1 });
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+TokenSchema.plugin(tenantGuardPlugin, { modelName: 'Token' });
 
 module.exports = mongoose.model('Token', TokenSchema);

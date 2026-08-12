@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 const InvoiceSchema = new mongoose.Schema(
   {
@@ -58,5 +59,9 @@ const InvoiceSchema = new mongoose.Schema(
 // billing tab scanned every invoice on the platform.
 InvoiceSchema.index({ hospital: 1, createdAt: -1 });
 InvoiceSchema.index({ hospital: 1, status: 1 });
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+InvoiceSchema.plugin(tenantGuardPlugin, { modelName: 'Invoice' });
 
 module.exports = mongoose.model('Invoice', InvoiceSchema);

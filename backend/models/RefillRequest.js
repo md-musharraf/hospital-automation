@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 // A chronic patient's request to repeat their previous medicines WITHOUT taking an
 // OPD slot. The patient raises it over chat/WhatsApp; the doctor approves or rejects
@@ -34,5 +35,9 @@ const RefillRequestSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+RefillRequestSchema.plugin(tenantGuardPlugin, { modelName: 'RefillRequest' });
 
 module.exports = mongoose.model('RefillRequest', RefillRequestSchema);

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 const HospitalMessageSchema = new mongoose.Schema({
   senderRole: {
@@ -34,5 +35,9 @@ const HospitalMessageSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+HospitalMessageSchema.plugin(tenantGuardPlugin, { modelName: 'HospitalMessage' });
 
 module.exports = mongoose.model('HospitalMessage', HospitalMessageSchema);

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 const ReminderSchema = new mongoose.Schema(
   {
@@ -50,5 +51,9 @@ const ReminderSchema = new mongoose.Schema(
 
 // Follow-ups are always read for one facility.
 ReminderSchema.index({ hospital: 1, createdAt: -1 });
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+ReminderSchema.plugin(tenantGuardPlugin, { modelName: 'Reminder' });
 
 module.exports = mongoose.model('Reminder', ReminderSchema);

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 // The facility's medical-store stock.
 //
@@ -32,5 +33,9 @@ const MedicineSchema = new mongoose.Schema(
 
 // One entry per medicine per facility (tenant-scoped, like every other model here).
 MedicineSchema.index({ hospital: 1, name: 1 }, { unique: true });
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+MedicineSchema.plugin(tenantGuardPlugin, { modelName: 'Medicine' });
 
 module.exports = mongoose.model('Medicine', MedicineSchema);

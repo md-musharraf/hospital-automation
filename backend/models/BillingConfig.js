@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { randomUUID } = require('crypto');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 /**
  * Per-facility billing environment.
@@ -70,5 +71,9 @@ const BillingConfigSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+BillingConfigSchema.plugin(tenantGuardPlugin, { modelName: 'BillingConfig' });
 
 module.exports = mongoose.model('BillingConfig', BillingConfigSchema);

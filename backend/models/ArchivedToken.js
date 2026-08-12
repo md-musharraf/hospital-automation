@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 const ArchivedTokenSchema = new mongoose.Schema(
   {
@@ -23,5 +24,9 @@ const ArchivedTokenSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+ArchivedTokenSchema.plugin(tenantGuardPlugin, { modelName: 'ArchivedToken' });
 
 module.exports = mongoose.model('ArchivedToken', ArchivedTokenSchema);

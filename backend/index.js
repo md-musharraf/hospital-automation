@@ -7,7 +7,13 @@ try {
   console.warn('Could not set custom DNS servers:', err.message);
 }
 
-if (process.env.USE_MOCK_DB === 'true') {
+// Check the environment before anything else — in particular before the mongoose
+// swap below, so a production process configured to run on an in-memory store
+// exits here instead of quietly serving a hospital from RAM.
+const { useMockDb, allowAnyOrigin, assertEnvironment } = require('./utils/env');
+assertEnvironment();
+
+if (useMockDb()) {
   const mongooseMock = require('./utils/mongooseMock');
   require.cache[require.resolve('mongoose')] = {
     exports: mongooseMock
@@ -40,11 +46,14 @@ const logger = require('./utils/logger');
 const { requestObservability, metricsSnapshot } = require('./middleware/observability');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
-const Token = require('./models/Token');
-const Queue = require('./models/Queue');
-const ChatSession = require('./models/ChatSession');
-const ArchivedToken = require('./models/ArchivedToken');
-const rateLimit = require('express-rate-limit');
+const { runDailyReset } = require('./jobs/dailyReset');
+const { apiLimiter } = require('./middleware/rateLimits');
+
+// Every facility this platform serves is in India, and the schedules that matter
+// to them — close-of-day, morning reminders — are stated in their local time, not
+// the hosting region's. Kept as one constant so a job can never silently inherit
+// UTC from the host again.
+const FACILITY_TIMEZONE = process.env.FACILITY_TIMEZONE || 'Asia/Kolkata';
 
 const app = express();
 const server = http.createServer(app);
@@ -56,22 +65,8 @@ const server = http.createServer(app);
 // DDoS/abuse throttling below to work at all in production.
 app.set('trust proxy', 1);
 
-// Global anti-DoS throttle: max 60 requests per minute per client IP across the
-// whole API. Abusive floods get a 429 while normal usage (a page load makes only
-// a handful of calls) stays well under the cap. The health check is exempt so
-// uptime monitors / Render health pings are never throttled.
-const apiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 60, // Limit each IP to 60 requests per windowMs
-  standardHeaders: true,
-  legacyHeaders: false,
-  // Note: mounted on '/api/', so req.path here is relative (mount stripped) —
-  // match on req.originalUrl to reliably exempt the health check + CORS preflight.
-  skip: (req) => req.originalUrl.startsWith('/api/v1/health') || req.method === 'OPTIONS',
-  message: {
-    message: 'Too many requests from this IP, please slow down and try again in a minute.'
-  }
-});
+// Abuse throttling, keyed by identity rather than IP — see middleware/rateLimits.js
+// for why a per-IP cap throttles an entire hospital through one NAT address.
 app.use('/api/', apiLimiter);
 
 const allowedOrigins = [
@@ -87,8 +82,10 @@ const allowedOrigins = [
 const checkOrigin = (origin, callback) => {
   if (!origin) return callback(null, true);
 
-  // In development, mock database, or non-production environment, allow all origins
-  if (process.env.NODE_ENV !== 'production' || process.env.USE_MOCK_DB === 'true') {
+  // Outside production, accept anything — that is what makes local work painless.
+  // This deliberately no longer consults USE_MOCK_DB: one database convenience
+  // flag must not be able to turn the allow-list off on a live server.
+  if (allowAnyOrigin()) {
     return callback(null, true);
   }
 
@@ -146,7 +143,7 @@ app.use((req, res, next) => {
   if (req.path === '/api/v1/health') {
     return next();
   }
-  if (process.env.USE_MOCK_DB !== 'true' && mongoose.connection.readyState !== 1) {
+  if (!useMockDb() && mongoose.connection.readyState !== 1) {
     return res.status(503).json({
       message:
         'Database connection is offline. Please verify you have whitelisted all IP addresses (0.0.0.0/0) in your MongoDB Atlas Network Access panel, or set USE_MOCK_DB=true in backend/.env to run in-memory.'
@@ -189,14 +186,14 @@ app.use('/api/v1/billing', billingRoutes);
 // live request metrics (volume, status mix, slowest routes). `?verbose=false`
 // gives just the heartbeat for cheap polling.
 app.get('/api/v1/health', (req, res) => {
-  const dbConnected = process.env.USE_MOCK_DB === 'true' || mongoose.connection.readyState === 1;
+  const dbConnected = useMockDb() || mongoose.connection.readyState === 1;
   const memory = process.memoryUsage();
 
   const body = {
     status: dbConnected ? 'healthy' : 'degraded',
     timestamp: new Date(),
     database: dbConnected ? 'connected' : 'disconnected',
-    mode: process.env.USE_MOCK_DB === 'true' ? 'in-memory' : 'mongodb'
+    mode: useMockDb() ? 'in-memory' : 'mongodb'
   };
 
   if (req.query.verbose !== 'false') {
@@ -247,85 +244,39 @@ io.on('connection', (socket) => {
   });
 });
 
-// Midnight Token Reset and Archival Cron Job
-// Scheduled for every night at 12:00 AM (0 0 * * *)
-cron.schedule('0 0 * * *', async () => {
-  console.log('--- Executing Midnight Queue Archival & Token Reset ---');
-  try {
-    // Find all active tokens to archive
-    const activeTokens = await Token.find().populate('patient').populate('doctor');
-
-    const archiveRecords = activeTokens.map((token) => {
-      return {
-        tokenNumber: token.tokenNumber,
-        status: token.status,
-        tokenType: token.tokenType,
-        patientDetails: token.patient
-          ? {
-              name: token.patient.name,
-              age: token.patient.age,
-              gender: token.patient.gender,
-              phone: token.patient.phone
-            }
-          : { name: 'Unknown' },
-        doctorDetails: token.doctor
-          ? {
-              name: token.doctor.name,
-              department: token.doctor.department,
-              currentRoom: token.doctor.currentRoom
-            }
-          : { name: 'Unknown' },
-        symptoms: token.symptoms,
-        calledAt: token.calledAt,
-        completedAt: token.completedAt
-      };
-    });
-
-    if (archiveRecords.length > 0) {
-      await ArchivedToken.insertMany(archiveRecords);
-      console.log(`Archived ${archiveRecords.length} completed tokens.`);
+// Close-of-day: archive the day's tokens and clear every facility's board.
+//
+// The timezone is explicit and NOT the server's. Render runs UTC, so a bare
+// '0 0 * * *' fired at 05:30 IST — in the middle of morning OPD preparation
+// rather than overnight. Every scheduled job below states its timezone for the
+// same reason.
+cron.schedule(
+  '0 0 * * *',
+  async () => {
+    try {
+      await runDailyReset(io);
+    } catch (error) {
+      logger.error('[DAILY-RESET] Close-of-day failed', { err: error.message });
     }
+  },
+  { timezone: FACILITY_TIMEZONE }
+);
 
-    // Delete active tokens to reset T-101 sequence
-    const deleteResult = await Token.deleteMany({});
-    console.log(`Cleared ${deleteResult.deletedCount} active tokens from database.`);
-
-    // Reset Doctor Queues
-    await Queue.updateMany(
-      {},
-      {
-        currentToken: null,
-        activeQueue: [],
-        bufferDelay: 0
-      }
-    );
-    console.log('Reset all doctor active queues and buffer times to 0.');
-
-    // Clear stale Chat sessions
-    const sessionResult = await ChatSession.deleteMany({});
-    console.log(`Cleared ${sessionResult.deletedCount} temporary chatbot sessions.`);
-
-    // Broadcast reset to all clients
-    io.emit('queue-reset');
-    console.log('Broadcasted queue-reset event to all dashboards.');
-    console.log('Midnight maintenance completed successfully. ✅');
-  } catch (error) {
-    console.error('Midnight archival cron failed:', error);
-  }
-});
-
-// Re-visit Reminder Processor Cron
-// Scheduled for every morning at 9:00 AM (0 9 * * *)
-cron.schedule('0 9 * * *', async () => {
-  console.log('--- Executing Morning Re-visit Reminders Dispatch ---');
-  try {
-    const { processPendingReminders } = require('./utils/reminderHelper');
-    const processed = await processPendingReminders();
-    console.log(`Processed and sent ${processed.length} re-visit reminders.`);
-  } catch (error) {
-    console.error('Error dispatching reminders cron:', error);
-  }
-});
+// Morning re-visit reminders. Same timezone reasoning: on a UTC host this used
+// to reach patients at 14:30 IST instead of 09:00.
+cron.schedule(
+  '0 9 * * *',
+  async () => {
+    try {
+      const { processPendingReminders } = require('./utils/reminderHelper');
+      const processed = await processPendingReminders();
+      logger.info('[REMINDERS] Morning dispatch complete', { sent: processed.length });
+    } catch (error) {
+      logger.error('[REMINDERS] Morning dispatch failed', { err: error.message });
+    }
+  },
+  { timezone: FACILITY_TIMEZONE }
+);
 
 // Periodic auto follow-up notifications checker (runs every 5 minutes)
 setInterval(

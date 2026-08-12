@@ -107,6 +107,21 @@ class Schema {
     }
     return this;
   }
+  // Schema middleware, accepted and ignored. The tenant guard registers `pre`
+  // hooks on every tenant-owned model; without these the whole app would fail to
+  // load under USE_MOCK_DB. The guard is a production safety net and the mock has
+  // no query pipeline to hang it off, so doing nothing here is the honest
+  // behaviour — not a silent downgrade of a check that could otherwise run.
+  pre() {
+    return this;
+  }
+  post() {
+    return this;
+  }
+  plugin(fn, options) {
+    if (typeof fn === 'function') fn(this, options);
+    return this;
+  }
 }
 
 // Types definition

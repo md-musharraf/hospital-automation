@@ -25,6 +25,7 @@ const { resolveLocation } = require('../utils/locationHelper');
 const { buildLandingPage } = require('../utils/facilityProfile');
 const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
 const logger = require('../utils/logger');
+const { useMockDb } = require('../utils/env');
 
 // Bilingual Translation Dictionary
 const dictionary = {
@@ -640,7 +641,11 @@ async function openFacilityPicker(session, text, { waPhone = null, lead = [] } =
 async function lastVisitedFacility(phone) {
   if (!phone) return null;
   const variants = phoneVariants(phone);
-  const patients = (await Patient.find({ $or: variants.map((p) => ({ phone: p })) })) || [];
+  // Deliberately across facilities: the question this answers is "which facility
+  // did this phone number last use", so it cannot be scoped to one of them. A
+  // patient may hold records at several tenants under the same number.
+  const patients =
+    (await Patient.find({ $or: variants.map((p) => ({ phone: p })) }, null, { allTenants: true })) || [];
   if (patients.length === 0) return null;
 
   // Most recently updated patient record wins — that is the last facility they
@@ -749,9 +754,18 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
 /**
  * Live status of one token. Returns null when the token does not exist so the
  * caller can decide what to say.
+ *
+ * The facility is required, not optional. Token numbers restart at T-1 every
+ * morning FOR EACH FACILITY, so `T-5` is not one token — it is one per tenant.
+ * Looking one up by number alone returned whichever T-5 the database reached
+ * first, which meant a patient asking about their own appointment could be shown
+ * a stranger's name, doctor and queue position at a hospital they have never
+ * visited. Wrong answer and cross-tenant disclosure from the same missing word.
  */
-async function lookupTokenStatus(tokenNumber, text) {
-  const token = await Token.findOne({ tokenNumber }).populate('patient').populate('doctor');
+async function lookupTokenStatus(tokenNumber, text, hospital) {
+  if (!hospital) return null;
+
+  const token = await Token.findOne({ tokenNumber, hospital }).populate('patient').populate('doctor');
 
   // token.doctor/token.patient can be null if the referenced Doctor or Patient
   // document was deleted after the token was created — treat that the same as
@@ -1389,7 +1403,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     //    navigate to option 4.
     const menuToken = parseTokenNumber(cleanMsg);
     if (menuToken && !['1', '2', '3', '4', '5'].includes(lowerMsg)) {
-      const statusMsgs = await lookupTokenStatus(menuToken, text);
+      const statusMsgs = await lookupTokenStatus(menuToken, text, currentHospId);
       if (statusMsgs) {
         session.currentState = 'WELCOME';
         session.markModified && session.markModified('tempData');
@@ -1438,7 +1452,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   // AWAITING_TOKEN state — patient is typing a token number to check its status.
   if (state === 'AWAITING_TOKEN') {
     const tokenNumber = parseTokenNumber(cleanMsg);
-    const statusMsgs = tokenNumber ? await lookupTokenStatus(tokenNumber, text) : null;
+    const statusMsgs = tokenNumber ? await lookupTokenStatus(tokenNumber, text, currentHospId) : null;
     if (!statusMsgs) {
       return { messages: [{ sender: 'bot', text: text.tokenNotFound }], options: [] };
     }
@@ -1645,7 +1659,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 router.post('/message', async (req, res) => {
   try {
     const mongoose = require('mongoose');
-    if (mongoose.connection.readyState !== 1 && process.env.USE_MOCK_DB !== 'true') {
+    if (mongoose.connection.readyState !== 1 && !useMockDb()) {
       return res.status(503).json({
         message:
           'Database connection is offline. Please verify you have whitelisted all IP addresses (0.0.0.0/0) in your MongoDB Atlas Network Access panel.'

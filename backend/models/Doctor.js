@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 const DoctorSchema = new mongoose.Schema(
   {
@@ -52,5 +53,9 @@ const DoctorSchema = new mongoose.Schema(
 
 // Compound index to ensure unique email per hospital tenant
 DoctorSchema.index({ email: 1, hospital: 1 }, { unique: true });
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+DoctorSchema.plugin(tenantGuardPlugin, { modelName: 'Doctor' });
 
 module.exports = mongoose.model('Doctor', DoctorSchema);

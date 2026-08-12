@@ -124,6 +124,20 @@ function createModel(name, prefix, registry) {
     return index >= 0 ? rows.splice(index, 1)[0] : null;
   };
   Model.countDocuments = async (query = {}) => rows.filter((row) => matches(row, query)).length;
+  Model.insertMany = async (docs = []) =>
+    docs.map((doc) => new Model(doc)).map((doc) => (rows.push(doc), doc));
+  Model.deleteMany = async (query = {}) => {
+    const keep = rows.filter((row) => !matches(row, query));
+    const deletedCount = rows.length - keep.length;
+    rows.length = 0;
+    rows.push(...keep);
+    return { deletedCount };
+  };
+  Model.updateMany = async (query = {}, update = {}) => {
+    const targets = rows.filter((row) => matches(row, query));
+    targets.forEach((row) => Object.assign(row, update));
+    return { modifiedCount: targets.length };
+  };
   return Model;
 }
 
@@ -132,6 +146,7 @@ const MODELS = [
   ['Patient', 'pt'],
   ['Doctor', 'doc'],
   ['Token', 'tk'],
+  ['ArchivedToken', 'atk'],
   ['Queue', 'q'],
   ['Hospital', 'h'],
   ['RefillRequest', 'rf'],

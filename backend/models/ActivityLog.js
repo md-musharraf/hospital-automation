@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { tenantGuardPlugin } = require('../utils/tenantGuard');
 
 // One line in the facility's live activity feed — "Dr. Sharma called T-105",
 // "Lab completed CBC for T-102 (ABNORMAL)", "Pharmacy dispensed T-101".
@@ -57,5 +58,9 @@ ActivityLogSchema.index({ hospital: 1, createdAt: -1 });
 // (ArchivedToken already covers the permanent record). 24h is plenty and keeps
 // the collection from growing without bound in a busy OPD.
 ActivityLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 });
+
+// Tenant-owned. An unscoped query on this collection would read or modify every
+// facility's rows at once, silently. See utils/tenantGuard.js.
+ActivityLogSchema.plugin(tenantGuardPlugin, { modelName: 'ActivityLog' });
 
 module.exports = mongoose.model('ActivityLog', ActivityLogSchema);
