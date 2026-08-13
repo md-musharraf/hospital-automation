@@ -7,9 +7,6 @@ const Reminder = require('../models/Reminder');
 const Patient = require('../models/Patient');
 const RefillRequest = require('../models/RefillRequest');
 const { authenticateToken, ensureRole } = require('../middleware/auth');
-
-// Role guard for this router (see middleware/auth.js).
-const ensureDoctor = ensureRole('doctor');
 const { recalculateQueueTimes, notifyUpcomingPatients } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
@@ -17,6 +14,73 @@ const { toRole, toFacility, logActivity, announceJourney } = require('../utils/r
 const { setStage, deriveStage, hasUndispensedRx } = require('../utils/journeyHelper');
 const { checkAvailability } = require('../utils/stockHelper');
 const logger = require('../utils/logger');
+
+/**
+ * Which cabin is this request for?
+ *
+ * Every route below reads `req.user.id` as a doctor's id — that came from a
+ * doctor's own login token, back when each doctor had a password. There is one
+ * facility credential now, so the facility picks a cabin in the console and
+ * exchanges its token for a *cabin token* (POST /auth/facility/cabin) carrying
+ * an `actingDoctor` claim. This middleware turns that claim back into the
+ * `req.user` shape the routes already expect, so not one of them changed.
+ *
+ * Putting the cabin in the token rather than in a header is what kept this
+ * change small: the console's eighteen existing calls send an Authorization
+ * header and nothing else, and they still work. A header is still accepted for
+ * API clients that would rather not mint a second token.
+ *
+ * Either way the claim is re-checked against the tenant before it is believed —
+ * a facility can only ever act as one of its own doctors. Without that check,
+ * this would be a way to run any cabin on the platform from any facility login.
+ *
+ * It also fills in `username` and `currentRoom`, which the call-next and
+ * prescription paths use in the messages patients actually receive. Those used
+ * to fall back to "Doctor" and "Cabin A" for everyone, because a doctor's login
+ * token never carried them either.
+ */
+async function resolveActingDoctor(req, res, next) {
+  try {
+    // A legacy per-role doctor token already IS the cabin; nothing to resolve.
+    if (req.user.role === 'doctor' && req.user.id) return next();
+
+    const actingId =
+      req.user.actingDoctor ||
+      req.headers['x-acting-doctor'] ||
+      (req.query && req.query.doctorId) ||
+      (req.body && req.body.doctorId);
+
+    if (!actingId) {
+      return res.status(400).json({
+        message: 'Choose which doctor you are working as before using the cabin.',
+        code: 'ACTING_DOCTOR_REQUIRED'
+      });
+    }
+
+    const doctor = await Doctor.findOne({ _id: actingId, hospital: req.user.hospital });
+    if (!doctor) {
+      // Same answer whether the id is nonsense or belongs to another facility —
+      // there is nothing to learn here about other tenants' doctors.
+      return res.status(403).json({ message: 'That doctor does not work at this facility.' });
+    }
+
+    req.user.id = doctor._id;
+    req.user.email = doctor.email;
+    req.user.username = doctor.name;
+    req.user.currentRoom = doctor.currentRoom;
+    req.actingDoctor = doctor;
+    next();
+  } catch (error) {
+    logger.error('Could not resolve acting doctor', { err: error.message });
+    res.status(500).json({ message: 'Server error identifying the cabin' });
+  }
+}
+
+/**
+ * The guard on every route in this router: the facility must run an OPD, and it
+ * must have said which cabin it is working as.
+ */
+const ensureDoctor = [ensureRole('doctor'), resolveActingDoctor];
 
 // GET logged-in doctor's live queue details
 router.get('/my-queue', authenticateToken, ensureDoctor, async (req, res) => {

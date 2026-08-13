@@ -26,6 +26,12 @@ const HospitalSchema = new mongoose.Schema(
       enum: ['Hospital', 'Clinic', 'Medical', 'Lab', 'Government Hospital', 'Government Lab', 'Government'],
       default: 'Hospital'
     },
+    // The facility's one credential is deliberately NOT a field here — it lives
+    // in its own collection (models/FacilityCredential.js). This document is
+    // served to the public directory, to every landing page and to the sign-in
+    // picker; a password hash stored on it would be one forgotten projection
+    // away from being published. See utils/facilityAuth.js.
+
     logoUrl: { type: String },
     heroImage: { type: String },
     galleryImages: [{ type: String }],

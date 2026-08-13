@@ -8,9 +8,18 @@ export default function InternalChatBox({ token, user, role }) {
   const [loading, setLoading] = useState(true);
   const messagesEndRef = useRef(null);
 
+  // Which room this intercom is being used from.
+  //
+  // The sender used to be read off the token: a lab token meant a message from
+  // the lab. Everyone at a facility shares one login now, so the token says
+  // which facility but not which desk — the screen has to say. The server
+  // checks the claim against the facility's actual units, so this cannot be
+  // used to speak as a room the facility does not have.
+  const speakingAs = String(role || 'staff').toLowerCase();
+
   const loadMessages = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/messages`, {
+      const res = await fetch(`${BACKEND_URL}/api/v1/messages?as=${encodeURIComponent(speakingAs)}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -65,7 +74,8 @@ export default function InternalChatBox({ token, user, role }) {
         },
         body: JSON.stringify({
           receiverRole,
-          content: text
+          content: text,
+          as: speakingAs
         })
       });
       const data = await res.json();

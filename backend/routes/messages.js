@@ -1,8 +1,59 @@
 const express = require('express');
 const router = express.Router();
 const HospitalMessage = require('../models/HospitalMessage');
+const Doctor = require('../models/Doctor');
 const { authenticateToken } = require('../middleware/auth');
 const logger = require('../utils/logger');
+
+/**
+ * Who is speaking, when everyone at a facility shares one login.
+ *
+ * The sender's role used to be read straight off the token — a lab token meant
+ * a message from the lab. With one facility credential the token no longer says
+ * which room you are standing in, so the console names the tab it is speaking
+ * from (`as=lab`), and that claim is checked against the scopes the facility
+ * actually has. A facility with no lab cannot post as its lab.
+ *
+ * `as=doctor` additionally resolves the cabin from the token's `actingDoctor`
+ * claim (see POST /auth/facility/cabin), so a reply reaches the doctor who sent
+ * it rather than every cabin in the building.
+ */
+const CONSOLE_SENDERS = {
+  staff: { role: 'Staff', name: 'Reception' },
+  lab: { role: 'Lab', name: 'Lab Workstation' },
+  pharmacy: { role: 'Staff', name: 'Pharmacy Counter' },
+  doctor: { role: 'Doctor', name: 'Doctor' }
+};
+
+async function identifySender(req) {
+  // Legacy per-role tokens are gone, but keep reading the role first so an
+  // unexpired token issued before this change still behaves for its last hours.
+  if (req.user.role !== 'facility') {
+    if (req.user.role === 'doctor') {
+      return { role: 'Doctor', name: req.user.name || 'Doctor', id: req.user.id || req.user._id || null };
+    }
+    if (req.user.role === 'lab') return { role: 'Lab', name: 'Lab Workstation', id: null };
+    return { role: 'Staff', name: req.user.username || 'Staff', id: null };
+  }
+
+  const asked = String((req.body && req.body.as) || (req.query && req.query.as) || 'staff').toLowerCase();
+  const scopes = Array.isArray(req.user.scopes) ? req.user.scopes : [];
+  const which = CONSOLE_SENDERS[asked] && scopes.includes(asked) ? asked : 'staff';
+  const sender = { ...CONSOLE_SENDERS[which], id: null };
+
+  if (which === 'doctor') {
+    const actingId = req.user.actingDoctor || req.headers['x-acting-doctor'];
+    if (actingId) {
+      const doctor = await Doctor.findOne({ _id: actingId, hospital: req.user.hospital });
+      if (doctor) {
+        sender.name = doctor.name;
+        sender.id = doctor._id;
+      }
+    }
+  }
+
+  return sender;
+}
 
 // POST a new internal message
 router.post('/', authenticateToken, async (req, res) => {
@@ -19,24 +70,11 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: 'Invalid receiverId' });
     }
 
-    // Identify sender details from JWT
-    let senderRole = 'Staff';
-    let senderName = 'Staff Room';
-
-    if (req.user.role === 'doctor') {
-      senderRole = 'Doctor';
-      senderName = req.user.name || 'Doctor';
-    } else if (req.user.role === 'lab') {
-      senderRole = 'Lab';
-      senderName = 'Lab Workstation';
-    } else if (req.user.role === 'staff') {
-      senderRole = 'Staff';
-      senderName = req.user.username || 'Staff';
-    }
+    const sender = await identifySender(req);
 
     const message = new HospitalMessage({
-      senderRole,
-      senderName,
+      senderRole: sender.role,
+      senderName: sender.name,
       receiverRole,
       receiverId: receiverId || null,
       hospital: req.user.hospital || 'general-hospital',
@@ -62,18 +100,12 @@ router.post('/', authenticateToken, async (req, res) => {
 // GET messages for the active session user within their hospital tenant
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    let role = 'Staff';
-    let docId = null;
     const userHosp = req.user.hospital || 'general-hospital';
-
-    if (req.user.role === 'doctor') {
-      role = 'Doctor';
-      docId = req.user.id || req.user._id;
-    } else if (req.user.role === 'lab') {
-      role = 'Lab';
-    } else if (req.user.role === 'staff') {
-      role = 'Staff';
-    }
+    // Same "which room am I in" question as sending — the inbox a facility sees
+    // depends on the tab it is reading from, not on the one credential it used.
+    const sender = await identifySender(req);
+    const role = sender.role;
+    const docId = sender.id;
 
     // Query messages sent TO this role, or generic broadcasts, or FROM this role within this hospital tenant
     const messages = await HospitalMessage.find({

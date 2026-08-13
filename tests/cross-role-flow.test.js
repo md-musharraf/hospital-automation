@@ -18,6 +18,11 @@ const BASE = process.env.API_BASE || 'http://localhost:5000/api/v1';
 const HOSPITAL = 'general-hospital';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'supersecret123';
 
+// The facility password AUTO_SEED wrote. Pin it with SEED_FACILITY_PASSWORD on
+// both the server and this run; otherwise the server generated one and printed
+// it, and there is nothing here to guess — which is the whole point of it.
+const FACILITY_PASSWORD = process.env.SEED_FACILITY_PASSWORD;
+
 async function api(path, { method = 'GET', token, body, headers = {} } = {}) {
   const response = await fetch(BASE + path, {
     method,
@@ -38,23 +43,36 @@ async function api(path, { method = 'GET', token, body, headers = {} } = {}) {
   return { status: response.status, json };
 }
 
-async function login(role, credentials) {
-  const { json } = await api(`/auth/${role}/login`, { method: 'POST', body: credentials });
-  if (!json.token) throw new Error(`${role} login failed: ${JSON.stringify(json)}`);
-  return json.token;
+/**
+ * Sign a facility in. One credential opens every unit it runs, so this is the
+ * only sign-in in the suite — where there used to be four, one per role.
+ *
+ * Reports the failure rather than throwing, so a broken seed shows up as a
+ * named failing check instead of a harness crash.
+ */
+async function signIn(hospital = HOSPITAL) {
+  const { json } = await api('/auth/facility/login', {
+    method: 'POST',
+    body: { hospital, password: FACILITY_PASSWORD }
+  });
+  return {
+    token: json.token || null,
+    scopes: (json.user && json.user.scopes) || [],
+    doctors: json.doctors || [],
+    error: json.token ? null : json.message || 'no token returned'
+  };
 }
 
-const DOCTOR_EMAIL = {
-  'Dr. Sarah Jenkins': 'sarah.jenkins@hospital.com',
-  'Dr. Robert Chen': 'robert.chen@hospital.com',
-  'Dr. Emily Taylor': 'emily.taylor@hospital.com'
-};
-
-/** Sign in and report the failure rather than throwing, so a broken seed shows
- *  up as a named failing check instead of a harness crash. */
-async function trySignIn(role, credentials) {
-  const { json } = await api(`/auth/${role}/login`, { method: 'POST', body: credentials });
-  return { token: json.token || null, error: json.token ? null : json.message || 'no token returned' };
+/**
+ * Take a cabin: narrow a facility token to one doctor.
+ *
+ * A cabin's queue belongs to a person, so the console picks which doctor it is
+ * running and exchanges its token for one carrying that claim. The server
+ * re-checks that the doctor belongs to this tenant.
+ */
+async function takeCabin(token, doctorId) {
+  const { json } = await api('/auth/facility/cabin', { method: 'POST', token, body: { doctorId } });
+  return json.token || null;
 }
 
 (async () => {
@@ -87,49 +105,62 @@ async function trySignIn(role, credentials) {
     Object.keys(landing.json)
   );
 
-  section('Every seeded portal account can sign in');
+  section('One facility login opens every room');
 
-  // This suite used to quietly create its own pharmacist because "the seed puts
-  // its pharmacist in another facility". It was worse than that: the seeded
-  // "Pharmacy Tech" was inserted into the LabAssistant collection, so the
-  // pharmacy portal had NO account anywhere and nobody could open it locally —
-  // and apex-pharmacy, a Medical facility that cannot have a lab, was holding a
-  // lab login. The workaround hid the bug for as long as it existed, so the
-  // seeded accounts are now signed into directly.
-  //
-  // These sign-ins ARE the sessions the rest of the suite runs on. Logging in
-  // twice would be the more obvious way to write this, but the login route is
-  // rate-limited to ten attempts per window — a check that trips the app's own
-  // brute-force protection would fail the whole run for the wrong reason.
-  const sessions = {};
-  for (const [label, key, role, creds] of [
-    ['reception', 'staff', 'staff', { username: 'alice_staff', password: 'password123', hospital: HOSPITAL }],
-    ['lab', 'lab', 'lab', { username: 'lab_assistant', password: 'password123', hospital: HOSPITAL }],
-    [
-      'pharmacy',
-      'pharmacy',
-      'pharmacy',
-      { username: 'gen_pharmacist', password: 'password123', hospital: HOSPITAL }
-    ],
-    [
-      'pharmacy (medical store)',
-      'storePharmacy',
-      'pharmacy',
-      { username: 'pharm_assistant', password: 'password123', hospital: 'apex-pharmacy' }
-    ]
-  ]) {
-    const { token, error } = await trySignIn(role, creds);
-    check(`seeded ${label} account signs in`, error === null, error);
-    sessions[key] = token;
-  }
-
-  const staff = sessions.staff;
-  const lab = sessions.lab;
-  const pharmacy = sessions.pharmacy;
-  if (!staff || !lab || !pharmacy) {
-    report(); // Nothing below can run without these; fail with what we know.
+  if (!FACILITY_PASSWORD) {
+    check(
+      'SEED_FACILITY_PASSWORD is set for both the server and this run',
+      false,
+      'Start the backend with SEED_FACILITY_PASSWORD=<12+ chars> and run this suite with the same value.'
+    );
+    report();
     return;
   }
+
+  // ONE sign-in, reused for every room below. Signing in per room would be the
+  // more obvious way to write this, but the login route is rate-limited to ten
+  // attempts per window — a check that trips the app's own brute-force
+  // protection would fail the whole run for the wrong reason. It is also the
+  // behaviour under test: the same token has to work at the desk, at the bench
+  // and at the counter.
+  const facility = await signIn();
+  check('the facility signs in', facility.error === null, facility.error);
+  if (!facility.token) {
+    report(); // Nothing below can run without this; fail with what we know.
+    return;
+  }
+
+  check(
+    'a hospital token opens reception, cabins, lab and pharmacy',
+    ['staff', 'doctor', 'lab', 'pharmacy'].every((sc) => facility.scopes.includes(sc)),
+    facility.scopes
+  );
+  check('the roster names the cabins that can be run', facility.doctors.length > 0, facility.doctors.length);
+
+  // A medical store is the negative case: same door, fewer rooms behind it.
+  const store = await signIn('apex-pharmacy');
+  check('the medical store signs in through the same door', store.error === null, store.error);
+  check('...and gets its counter', store.scopes.includes('pharmacy'), store.scopes);
+  check('...but no lab bench', !store.scopes.includes('lab'), store.scopes);
+
+  const refusedLab = await api('/lab/stats', { token: store.token });
+  check(
+    'the API refuses the lab bench to a facility that has none',
+    refusedLab.status === 403,
+    refusedLab.json
+  );
+
+  // A wrong password is refused, and says nothing about which part was wrong.
+  const wrong = await api('/auth/facility/login', {
+    method: 'POST',
+    body: { hospital: HOSPITAL, password: FACILITY_PASSWORD + '-wrong' }
+  });
+  check('a wrong facility password is refused', wrong.status === 401, wrong.json);
+
+  // Every room below runs on the one token.
+  const staff = facility.token;
+  const lab = facility.token;
+  const pharmacy = facility.token;
 
   section('Pharmacy stocks the medical store');
   const stockItems = [
@@ -165,11 +196,16 @@ async function trySignIn(role, credentials) {
   check('token created', Boolean(token && token.tokenNumber), walkIn.json);
   check('journey starts at Waiting', token.journeyStage === 'Waiting', token.journeyStage);
 
-  const doctor = await login('doctor', {
-    email: DOCTOR_EMAIL[token.doctor.name],
-    password: 'password123',
-    hospital: HOSPITAL
-  });
+  // The patient was auto-triaged to a doctor; take that doctor's cabin with the
+  // same facility token rather than signing in again as them.
+  const assigned = facility.doctors.find((d) => d.name === token.doctor.name);
+  check('the assigned doctor is on the facility roster', Boolean(assigned), token.doctor.name);
+  const doctor = assigned ? await takeCabin(facility.token, assigned.id) : null;
+  check('the cabin opens', Boolean(doctor), 'could not mint a cabin token');
+  if (!doctor) {
+    report();
+    return;
+  }
   console.log(`      (auto-assigned to ${token.doctor.name})`);
 
   section('Doctor calls the patient in');

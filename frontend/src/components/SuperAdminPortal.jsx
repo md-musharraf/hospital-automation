@@ -131,11 +131,10 @@ const SECTION_COUNT_LABEL = {
   pharmacy: ['pharmacy counter', 'pharmacy counters']
 };
 
-const blankStaff = () => ({ name: '', username: '', password: '', counterNumber: 'Reception Counter 1' });
+const blankStaff = () => ({ name: '', counterNumber: 'Reception Counter 1' });
 const blankDoctor = () => ({
   name: '',
   email: '',
-  password: '',
   department: 'General Medicine',
   specialization: '',
   doctorType: 'Consultant',
@@ -155,14 +154,19 @@ const blankDoctor = () => ({
   photoUrl: '',
   about: ''
 });
-const blankLab = () => ({ name: '', username: '', password: '' });
-const blankPharmacy = () => ({ name: '', username: '', password: '', counterNumber: 'Pharmacy Counter' });
+const blankLab = () => ({ name: '' });
+const blankPharmacy = () => ({ name: '', counterNumber: 'Pharmacy Counter' });
 
 export default function SuperAdminPortal() {
   const navigate = useNavigate();
 
-  // Secret passcode to restrict dynamic registration
-  const [adminSecret, setAdminSecret] = useState('supersecret123');
+  // Secret passcode to restrict dynamic registration.
+  //
+  // Starts empty. This used to be pre-filled with the passcode that was also the
+  // backend's fallback, which meant the real key to platform-wide facility
+  // creation shipped inside the public JavaScript bundle — readable by anyone
+  // who opened the page, whatever the server was configured with.
+  const [adminSecret, setAdminSecret] = useState('');
   const [authorized, setAuthorized] = useState(false);
   const [authError, setAuthError] = useState('');
 
@@ -210,10 +214,20 @@ export default function SuperAdminPortal() {
   const [hospitalList, setHospitalList] = useState([]);
   const [selectedHospital, setSelectedHospital] = useState('');
 
-  // Additional Account States
+  // The facility's one credential, set at onboarding. Everyone at the facility
+  // signs in with it; there are no per-role passwords to hand out any more.
+  const [facilityPassword, setFacilityPassword] = useState('');
+
+  // Which facilities can actually be signed into, keyed by facility id. A
+  // facility onboarded before single sign-in has no credential and is therefore
+  // unreachable by its own staff — invisible from every other screen, so the
+  // owner console is where it has to be surfaced.
+  const [credentialStatus, setCredentialStatus] = useState({});
+  const [resetPasswordFor, setResetPasswordFor] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+
+  // Adding one more person to an existing facility.
   const [addName, setAddName] = useState('');
-  const [addUsername, setAddUsername] = useState('');
-  const [addPassword, setAddPassword] = useState('');
   const [addCounterNumber, setAddCounterNumber] = useState('Reception Counter 1');
   const [addEmail, setAddEmail] = useState('');
   const [addDepartment, setAddDepartment] = useState('General Medicine');
@@ -566,8 +580,51 @@ export default function SuperAdminPortal() {
           setSelectedHospital(data[0].id);
         }
       }
+
+      // Which of them can actually be signed into. A facility with no password
+      // looks completely healthy on every other screen — it has a name, a page,
+      // doctors — right up until its staff try to sign in and cannot.
+      const credRes = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/facility-credentials`, {
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      const creds = await credRes.json();
+      if (credRes.ok && creds && typeof creds === 'object') setCredentialStatus(creds);
     } catch (err) {
       console.error('Error fetching hospitals:', err);
+    }
+  };
+
+  /**
+   * Set or reset one facility's password.
+   *
+   * The only way a facility becomes signable — onboarding uses the same code
+   * path on the server. Resetting takes effect for everyone at that facility on
+   * their next sign-in; sessions already open keep working until they expire,
+   * which beats cutting a console off mid-consultation.
+   */
+  const handleSetFacilityPassword = async (hospitalId) => {
+    setError('');
+    setSuccessMsg('');
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/api/v1/auth/super-admin/hospital/${encodeURIComponent(hospitalId)}/password`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': adminSecret },
+          body: JSON.stringify({ password: resetPassword })
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not set the facility password');
+      setSuccessMsg(data.message);
+      setResetPassword('');
+      setResetPasswordFor('');
+      fetchHospitals();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -687,11 +744,14 @@ export default function SuperAdminPortal() {
     return moduleKey ? moduleOn(moduleKey) : true;
   };
 
-  // A blank row left at the bottom of a list is not a half-made account.
-  const filledStaff = staffRows.filter((s) => s.username && s.password);
-  const filledDoctors = doctorRows.filter((d) => d.email && d.password);
-  const filledLabs = labRows.filter((l) => l.username && l.password);
-  const filledPharmacy = pharmacyRows.filter((p) => p.username && p.password);
+  // A blank row left at the bottom of a list is not a half-filled person.
+  // Nobody in these lists carries a credential any more — the facility password
+  // is the only one — so a row counts as filled once it has the field that
+  // identifies it: a name, or for a doctor the email that keys their cabin.
+  const filledStaff = staffRows.filter((s) => s.name);
+  const filledDoctors = doctorRows.filter((d) => d.email);
+  const filledLabs = labRows.filter((l) => l.name);
+  const filledPharmacy = pharmacyRows.filter((p) => p.name);
   const filledCount = {
     staff: sectionApplies('staff') ? filledStaff.length : 0,
     doctors: sectionApplies('doctors') ? filledDoctors.length : 0,
@@ -699,6 +759,33 @@ export default function SuperAdminPortal() {
     pharmacy: sectionApplies('pharmacy') ? filledPharmacy.length : 0
   };
   const missingRequired = (activeType?.requires || []).filter((kind) => filledCount[kind] === 0);
+
+  // What the owner needs to know before reading anything else on this screen.
+  const signable = hospitalList.filter((h) => credentialStatus[h.id]).length;
+  const locked = hospitalList.length - signable;
+  const platformStats = [
+    {
+      label: 'Facilities',
+      value: hospitalList.length,
+      hint: 'onboarded on this platform'
+    },
+    {
+      label: 'Can sign in',
+      value: signable,
+      hint: 'have a facility password'
+    },
+    {
+      label: 'Locked out',
+      value: locked,
+      hint: locked ? 'need a password set' : 'every facility is reachable',
+      alert: locked > 0
+    },
+    {
+      label: 'Cities',
+      value: new Set(hospitalList.map((h) => h.city).filter(Boolean)).size,
+      hint: 'covered by the directory'
+    }
+  ];
 
   // Departments to suggest for this facility: the subtype's own first (a dental
   // clinic should not have to scroll past Cardiology), then the rest of the ones
@@ -713,14 +800,14 @@ export default function SuperAdminPortal() {
     setError('');
     setSuccessMsg('');
 
-    // Say what is missing here rather than letting the API bounce it back — the
-    // admin is looking at the very section that needs a row.
-    if (missingRequired.length) {
-      setError(
-        `A ${type} needs at least one ${missingRequired
-          .map((k) => SECTION_LABEL[k])
-          .join(' and one ')} account. Fill in that section below.`
-      );
+    // What used to block here was "this facility type needs an account of kind
+    // X". That check existed because each account was a login, so a Lab with no
+    // lab account was a tenant nobody could sign into. The facility password
+    // below is what makes it signable now, and a hospital is routinely onboarded
+    // days before its doctors are entered — so the roster is a nudge above, not
+    // a gate here.
+    if (!facilityPassword) {
+      setError('Set a facility password below — it is the only credential this facility will have.');
       return;
     }
 
@@ -757,6 +844,10 @@ export default function SuperAdminPortal() {
         lng: parseFloat(lng)
       },
       type,
+      // The one credential for this facility. Validated on the server too, and
+      // there is no fallback if it is absent — a default password set at
+      // onboarding is a default password forever.
+      password: facilityPassword,
       parentHospital: parentHospital || null,
       // The module grid is the single source of truth for which units exist;
       // the two legacy booleans the rest of the app reads are derived from it
@@ -769,8 +860,8 @@ export default function SuperAdminPortal() {
       customServices,
       features,
       // Only the sections this facility type actually offers are sent, and only
-      // the rows the admin actually filled in — a blank row left at the bottom of
-      // a list is not a half-made account.
+      // the rows the admin actually filled in. These are people, not accounts:
+      // names, cabins and counters.
       staffMembers: sectionApplies('staff') ? filledStaff : [],
       doctors: sectionApplies('doctors') ? filledDoctors : [],
       labAssistants: sectionApplies('lab') ? filledLabs : [],
@@ -815,21 +906,19 @@ export default function SuperAdminPortal() {
     setSuccessMsg('');
     setLoading(true);
 
-    let url = '';
+    // One endpoint for all four kinds. There used to be four — register-staff,
+    // register-doctor, register-lab, register-pharmacist — because each created
+    // a login account with its own username and password. With no personal
+    // credentials left, the only difference between them is which list the
+    // person joins.
     const payload = {
+      kind: accountType,
       hospital: selectedHospital,
       name: addName
     };
 
-    if (accountType === 'staff') {
-      url = `${BACKEND_URL}/api/v1/auth/super-admin/register-staff`;
-      payload.username = addUsername;
-      payload.password = addPassword;
-      payload.counterNumber = addCounterNumber;
-    } else if (accountType === 'doctor') {
-      url = `${BACKEND_URL}/api/v1/auth/super-admin/register-doctor`;
+    if (accountType === 'doctor') {
       payload.email = addEmail;
-      payload.password = addPassword;
       payload.department = addDepartment;
       payload.currentRoom = addRoom;
       payload.specialization = addSpecialization;
@@ -837,16 +926,11 @@ export default function SuperAdminPortal() {
       payload.doctorType = addDoctorType;
       payload.dailyTokenLimit = addDailyTokenLimit;
       Object.assign(payload, addProfile);
-    } else if (accountType === 'lab') {
-      url = `${BACKEND_URL}/api/v1/auth/super-admin/register-lab`;
-      payload.username = addUsername;
-      payload.password = addPassword;
-    } else if (accountType === 'pharmacy') {
-      url = `${BACKEND_URL}/api/v1/auth/super-admin/register-pharmacist`;
-      payload.username = addUsername;
-      payload.password = addPassword;
+    } else if (accountType === 'staff' || accountType === 'pharmacy') {
       payload.counterNumber = addCounterNumber;
     }
+
+    const url = `${BACKEND_URL}/api/v1/auth/super-admin/facility/${encodeURIComponent(selectedHospital)}/people`;
 
     try {
       const res = await fetch(url, {
@@ -866,8 +950,6 @@ export default function SuperAdminPortal() {
       setSuccessMsg(data.message);
       // Reset form fields
       setAddName('');
-      setAddUsername('');
-      setAddPassword('');
       setAddEmail('');
     } catch (err) {
       if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
@@ -985,7 +1067,10 @@ export default function SuperAdminPortal() {
               </label>
               <input
                 type="password"
-                placeholder="Enter supersecret123 to verify..."
+                // The placeholder used to spell the passcode out. A hint that
+                // contains the secret is the secret, printed on the login screen.
+                placeholder="Enter the platform admin passcode"
+                autoComplete="off"
                 value={adminSecret}
                 onChange={(e) => setAdminSecret(e.target.value)}
                 className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-3 outline-none text-sm text-[var(--text-color)] font-bold transition-all"
@@ -1268,6 +1353,37 @@ export default function SuperAdminPortal() {
               <span className="material-symbols-outlined text-[16px]">delete_sweep</span>
               <span>Wipe Demo Data</span>
             </button>
+          </div>
+
+          {/* The platform at a glance.
+              Facility count alone says nothing about whether the platform is
+              working. The number that matters is how many facilities can
+              actually be signed into — a facility without a password is fully
+              onboarded and completely unusable, and that gap is invisible on
+              every other screen. */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            {platformStats.map((stat) => (
+              <div
+                key={stat.label}
+                className={`rounded-2xl border p-4 ${
+                  stat.alert
+                    ? 'border-amber-500/40 bg-amber-500/10'
+                    : 'border-[var(--border-color)]/30 bg-[var(--card-bg)]'
+                }`}
+              >
+                <p className="text-[10px] uppercase font-black tracking-widest text-[var(--text-secondary)]">
+                  {stat.label}
+                </p>
+                <p
+                  className={`text-2xl font-black mt-1 ${
+                    stat.alert ? 'text-amber-600 dark:text-amber-400' : 'text-[var(--text-color)]'
+                  }`}
+                >
+                  {stat.value}
+                </p>
+                <p className="text-[11px] font-semibold text-[var(--text-secondary)] mt-0.5">{stat.hint}</p>
+              </div>
+            ))}
           </div>
 
           <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-3xl p-6 md:p-8 shadow-[var(--card-shadow)] space-y-8">
@@ -1850,35 +1966,23 @@ export default function SuperAdminPortal() {
                       )}
                     </h3>
                     <p className="text-[11px] text-[var(--text-secondary)] font-semibold">
-                      One login per counter — each sees the same facility, signed in as itself.
+                      Who works the front desk. Names and counters — everyone signs in with the one facility
+                      password below.
                     </p>
 
                     {staffRows.map((s, i) => (
                       <div key={i} className="grid grid-cols-1 md:grid-cols-9 gap-2 items-center">
                         <input
-                          placeholder="Full name"
+                          placeholder="Full name *"
                           value={s.name}
                           onChange={(e) => patchRow(setStaffRows, i, 'name', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
-                        />
-                        <input
-                          placeholder="Username *"
-                          value={s.username}
-                          onChange={(e) => patchRow(setStaffRows, i, 'username', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
-                        />
-                        <input
-                          type="password"
-                          placeholder="Password *"
-                          value={s.password}
-                          onChange={(e) => patchRow(setStaffRows, i, 'password', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
+                          className={`${fieldCls} md:col-span-4`}
                         />
                         <input
                           placeholder="Counter name"
                           value={s.counterNumber}
                           onChange={(e) => patchRow(setStaffRows, i, 'counterNumber', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
+                          className={`${fieldCls} md:col-span-4`}
                         />
                         <button
                           type="button"
@@ -1957,16 +2061,9 @@ export default function SuperAdminPortal() {
                           />
                           <input
                             type="email"
-                            placeholder="Login email *"
+                            placeholder="Email *"
                             value={d.email}
                             onChange={(e) => patchRow(setDoctorRows, i, 'email', e.target.value)}
-                            className={fieldCls}
-                          />
-                          <input
-                            type="password"
-                            placeholder="Password *"
-                            value={d.password}
-                            onChange={(e) => patchRow(setDoctorRows, i, 'password', e.target.value)}
                             className={fieldCls}
                           />
                         </div>
@@ -2096,30 +2193,17 @@ export default function SuperAdminPortal() {
                       )}
                     </h3>
                     <p className="text-[11px] text-[var(--text-secondary)] font-semibold">
-                      Logins for the facility&apos;s own lab bench — they see the doctors&apos; test orders
-                      and upload the reports.
+                      Who works the facility&apos;s own lab bench — they see the doctors&apos; test orders and
+                      upload the reports.
                     </p>
 
                     {labRows.map((l, i) => (
                       <div key={i} className="grid grid-cols-1 md:grid-cols-7 gap-2 items-center">
                         <input
-                          placeholder="Lab assistant name"
+                          placeholder="Lab assistant name *"
                           value={l.name}
                           onChange={(e) => patchRow(setLabRows, i, 'name', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
-                        />
-                        <input
-                          placeholder="Username *"
-                          value={l.username}
-                          onChange={(e) => patchRow(setLabRows, i, 'username', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
-                        />
-                        <input
-                          type="password"
-                          placeholder="Password *"
-                          value={l.password}
-                          onChange={(e) => patchRow(setLabRows, i, 'password', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
+                          className={`${fieldCls} md:col-span-6`}
                         />
                         <button
                           type="button"
@@ -2168,23 +2252,10 @@ export default function SuperAdminPortal() {
                     {pharmacyRows.map((p, i) => (
                       <div key={i} className="grid grid-cols-1 md:grid-cols-9 gap-2 items-center">
                         <input
-                          placeholder="Pharmacist name"
+                          placeholder="Pharmacist name *"
                           value={p.name}
                           onChange={(e) => patchRow(setPharmacyRows, i, 'name', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
-                        />
-                        <input
-                          placeholder="Username *"
-                          value={p.username}
-                          onChange={(e) => patchRow(setPharmacyRows, i, 'username', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
-                        />
-                        <input
-                          type="password"
-                          placeholder="Password *"
-                          value={p.password}
-                          onChange={(e) => patchRow(setPharmacyRows, i, 'password', e.target.value)}
-                          className={`${fieldCls} md:col-span-2`}
+                          className={`${fieldCls} md:col-span-4`}
                         />
                         <input
                           placeholder="Counter name"
@@ -2246,11 +2317,38 @@ export default function SuperAdminPortal() {
                   </div>
                   {missingRequired.length > 0 && (
                     <p className="text-[11px] font-bold text-rose-500 mt-2">
-                      A {type} needs at least one{' '}
-                      {missingRequired.map((k) => SECTION_LABEL[k]).join(' and one ')} account before it can
-                      go live.
+                      A {type} usually has at least one{' '}
+                      {missingRequired.map((k) => SECTION_LABEL[k]).join(' and one ')} on its roster. You can
+                      add them later.
                     </p>
                   )}
+                </div>
+
+                {/* The facility's one credential.
+                    This section replaces up to eight password boxes — one per
+                    reception counter, doctor, lab bench and pharmacy counter.
+                    Everyone at the facility signs in with this, and what they
+                    can reach is decided by the modules ticked above, not by
+                    which password they were handed. */}
+                <div className="space-y-3 border-t border-[var(--border-color)]/20 pt-5">
+                  <h3 className="text-sm font-black text-[var(--text-color)] flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px]">key</span>
+                    Facility password
+                  </h3>
+                  <p className="text-[11px] text-[var(--text-secondary)] font-semibold">
+                    The one credential this facility signs in with. Hand it to whoever runs the desk — it
+                    opens every unit switched on above. There is no default: without this the facility cannot
+                    be signed into at all.
+                  </p>
+                  <input
+                    type="password"
+                    placeholder="At least 12 characters — a phrase works best"
+                    value={facilityPassword}
+                    onChange={(e) => setFacilityPassword(e.target.value)}
+                    className={fieldCls}
+                    minLength={12}
+                    required
+                  />
                 </div>
 
                 <button
@@ -2359,17 +2457,6 @@ export default function SuperAdminPortal() {
                           placeholder="david.miller@hospital.com"
                           value={addEmail}
                           onChange={(e) => setAddEmail(e.target.value)}
-                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-1">Doctor Password *</label>
-                        <input
-                          type="password"
-                          placeholder="••••••••"
-                          value={addPassword}
-                          onChange={(e) => setAddPassword(e.target.value)}
                           className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                           required
                         />
@@ -2486,28 +2573,6 @@ export default function SuperAdminPortal() {
                           required
                         />
                       </div>
-                      <div>
-                        <label className="block mb-1">Username (Login ID) *</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. city_staff"
-                          value={addUsername}
-                          onChange={(e) => setAddUsername(e.target.value)}
-                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-1">Password *</label>
-                        <input
-                          type="password"
-                          placeholder="••••••••"
-                          value={addPassword}
-                          onChange={(e) => setAddPassword(e.target.value)}
-                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                          required
-                        />
-                      </div>
                     </div>
 
                     <div>
@@ -2540,28 +2605,6 @@ export default function SuperAdminPortal() {
                           required
                         />
                       </div>
-                      <div>
-                        <label className="block mb-1">Lab Assistant Username *</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. city_lab"
-                          value={addUsername}
-                          onChange={(e) => setAddUsername(e.target.value)}
-                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-1">Password *</label>
-                        <input
-                          type="password"
-                          placeholder="••••••••"
-                          value={addPassword}
-                          onChange={(e) => setAddPassword(e.target.value)}
-                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                          required
-                        />
-                      </div>
                     </div>
                   </div>
                 )}
@@ -2579,28 +2622,6 @@ export default function SuperAdminPortal() {
                           placeholder="e.g. Store Pharmacist"
                           value={addName}
                           onChange={(e) => setAddName(e.target.value)}
-                          className={fieldCls}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-1">Pharmacy Username *</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. city_pharmacy"
-                          value={addUsername}
-                          onChange={(e) => setAddUsername(e.target.value)}
-                          className={fieldCls}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-1">Password *</label>
-                        <input
-                          type="password"
-                          placeholder="••••••••"
-                          value={addPassword}
-                          onChange={(e) => setAddPassword(e.target.value)}
                           className={fieldCls}
                           required
                         />
@@ -2668,6 +2689,55 @@ export default function SuperAdminPortal() {
                       </select>
                     )}
                   </div>
+
+                  {/* This facility's one credential.
+                      A facility with no password is fully configured, has a
+                      public page, and cannot be signed into by anyone who works
+                      there — a state that is invisible everywhere else, so it is
+                      called out here in the one place that can fix it. */}
+                  {editHospId && (
+                    <div
+                      className={`rounded-xl border p-3.5 space-y-2.5 ${
+                        credentialStatus[editHospId]
+                          ? 'border-[var(--border-color)]/40 bg-[var(--bg-color)]'
+                          : 'border-amber-500/40 bg-amber-500/10'
+                      }`}
+                    >
+                      <p className="text-[12px] font-black text-[var(--text-color)] flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[16px]">
+                          {credentialStatus[editHospId] ? 'key' : 'key_off'}
+                        </span>
+                        {credentialStatus[editHospId]
+                          ? 'Facility password is set'
+                          : 'No facility password — nobody here can sign in'}
+                      </p>
+                      <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
+                        {credentialStatus[editHospId]
+                          ? 'One password opens every unit this facility runs. Reset it when someone leaves — the new one applies from their next sign-in.'
+                          : 'Set one now. This facility has a public page and a queue, but its staff have no way in until it has a password.'}
+                      </p>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="password"
+                          placeholder="New password — at least 12 characters"
+                          value={resetPasswordFor === editHospId ? resetPassword : ''}
+                          onChange={(e) => {
+                            setResetPasswordFor(editHospId);
+                            setResetPassword(e.target.value);
+                          }}
+                          className={`${fieldCls} flex-1`}
+                        />
+                        <button
+                          type="button"
+                          disabled={loading || resetPasswordFor !== editHospId || !resetPassword}
+                          onClick={() => handleSetFacilityPassword(editHospId)}
+                          className="px-4 py-2 rounded-xl bg-[var(--primary-color)] text-[var(--primary-text)] font-black text-xs disabled:opacity-40 shrink-0"
+                        >
+                          {credentialStatus[editHospId] ? 'Reset password' : 'Set password'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Edit Core Profile */}

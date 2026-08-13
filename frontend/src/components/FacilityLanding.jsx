@@ -244,12 +244,12 @@ function FacilityNav({ page, theme }) {
   );
 }
 
-/** Which portal each account kind signs into. */
-const TEAM_PORTALS = {
-  staff: { path: '/login', role: 'staff', label: 'Reception Desk', icon: 'support_agent' },
-  doctors: { path: '/login', role: 'doctor', label: 'Doctor Console', icon: 'stethoscope' },
-  lab: { path: '/login', role: 'lab', label: 'Lab Console', icon: 'science' },
-  pharmacy: { path: '/login', role: 'pharmacy', label: 'Pharmacy Counter', icon: 'local_pharmacy' }
+/** The units a facility runs, named for its own staff to recognise. */
+const TEAM_UNITS = {
+  staff: { label: 'Reception', icon: 'support_agent' },
+  doctors: { label: 'Cabins', icon: 'stethoscope' },
+  lab: { label: 'Lab', icon: 'science' },
+  pharmacy: { label: 'Pharmacy', icon: 'local_pharmacy' }
 };
 
 function FacilityFooter({ page, theme }) {
@@ -262,38 +262,38 @@ function FacilityFooter({ page, theme }) {
     { key: 'x', icon: 'tag', url: social.x }
   ].filter((l) => l.url);
 
-  // Only the portals this facility actually runs. A dental clinic with no lab
-  // should not offer its staff a lab login they can never sign into, and the
+  // One link, because there is one login. This used to be a row of up to four
+  // sign-in buttons — one per role — which was really a list of which of the
+  // facility's four passwords you might be holding. The units are still named,
+  // as a reminder of what is inside, but they all open the same door. The
   // `?facility=` param means nobody has to find their own employer in a
   // dropdown of every partner on the platform.
-  const portals = (page.logins || [])
-    .map((kind) => TEAM_PORTALS[kind])
-    .filter(Boolean)
-    .map((p) => ({
-      ...p,
-      href: `${p.path}?role=${p.role}&facility=${encodeURIComponent(facility.id)}`
-    }));
+  const units = (page.logins || []).map((kind) => TEAM_UNITS[kind]).filter(Boolean);
+  const consoleHref = `/login?facility=${encodeURIComponent(facility.id)}`;
 
   return (
     <footer className="border-t border-[var(--border-color)]/30 bg-[var(--card-bg)] py-10 px-6 sm:px-10">
       <div className="max-w-[1200px] mx-auto space-y-6 text-center">
-        {portals.length > 0 && (
+        {units.length > 0 && (
           <div className="pb-2 space-y-2.5">
             <p className="text-[10px] uppercase font-black tracking-widest text-[var(--text-secondary)]">
               For our team
             </p>
-            <div className="flex flex-wrap justify-center gap-2">
-              {portals.map((p) => (
-                <Link
-                  key={p.path}
-                  to={p.href}
-                  className="px-3.5 py-2 rounded-xl text-[11px] font-black border border-[var(--border-color)]/50 text-[var(--text-secondary)] hover:border-[var(--primary-color)]/50 hover:text-[var(--primary-color)] transition-colors flex items-center gap-1.5"
-                >
-                  <Icon name={p.icon} className="text-[15px]" />
-                  {p.label}
-                </Link>
+            <Link
+              to={consoleHref}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-[12px] font-black border border-[var(--border-color)]/50 text-[var(--text-secondary)] hover:border-[var(--primary-color)]/50 hover:text-[var(--primary-color)] transition-colors"
+            >
+              <Icon name="login" className="text-[16px]" />
+              Staff sign in
+            </Link>
+            <p className="flex flex-wrap justify-center items-center gap-x-2.5 gap-y-1 text-[11px] font-bold text-[var(--text-secondary)]">
+              {units.map((u) => (
+                <span key={u.label} className="inline-flex items-center gap-1">
+                  <Icon name={u.icon} className="text-[14px]" />
+                  {u.label}
+                </span>
               ))}
-            </div>
+            </p>
           </div>
         )}
         {links.length > 0 && (

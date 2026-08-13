@@ -9,7 +9,7 @@ import {
   useLocation,
   useSearchParams
 } from 'react-router-dom';
-import { MessageSquare, Shield, Stethoscope, Activity } from 'lucide-react';
+import { MessageSquare, Shield, Activity } from 'lucide-react';
 
 const getBackendUrl = () => {
   if (import.meta.env.VITE_BACKEND_URL) {
@@ -59,19 +59,10 @@ const DigitalPrescriptionViewer = React.lazy(() => import('./components/DigitalP
 const PublicTVDisplay = React.lazy(() => import('./components/PublicTVDisplay'));
 const SuperAdminPortal = React.lazy(() => import('./components/SuperAdminPortal'));
 
-// Named imports for lazy loaded modules
-const StaffDashboard = React.lazy(() =>
-  import('./components/StaffPortal').then((module) => ({ default: module.StaffDashboard }))
-);
-const DoctorDashboard = React.lazy(() =>
-  import('./components/DoctorPortal').then((module) => ({ default: module.DoctorDashboard }))
-);
-const LabDashboard = React.lazy(() =>
-  import('./components/LabPortal').then((module) => ({ default: module.LabDashboard }))
-);
-const PharmacyDashboard = React.lazy(() =>
-  import('./components/PharmacyPortal').then((module) => ({ default: module.PharmacyDashboard }))
-);
+// The one staff-facing surface. It lazy-loads the four dashboards itself as
+// rooms, so signing in no longer pulls four bundles for the three consoles this
+// facility is not currently standing in.
+const FacilityConsole = React.lazy(() => import('./components/FacilityConsole'));
 
 const LoadingFallback = () => (
   <div className="flex-1 flex flex-col items-center justify-center bg-[var(--bg-color)] space-y-4 min-h-[400px]">
@@ -83,19 +74,23 @@ const LoadingFallback = () => (
 );
 
 /**
- * The old per-role login paths, kept alive.
+ * The old per-role paths, kept alive.
  *
- * They now hand off to the one sign-in page with the role already chosen, and
- * carry the `?facility=` hint through — a facility's landing page links its own
- * staff in that way, and printed cards and bookmarks still point at the old
- * URLs. Redirecting beats deleting: the alternative is a 404 for someone who
- * has been typing the same address for a year.
+ * `/staff/login`, `/doctor/dashboard` and the rest were four separate consoles
+ * with four separate accounts. There is one facility login and one console now,
+ * so they all land in the same place — carrying the `?facility=` hint through,
+ * because a facility's landing page links its own staff that way and printed
+ * cards and bookmarks still point at the old URLs.
+ *
+ * Redirecting beats deleting: the alternative is a 404 for someone who has been
+ * typing the same address for a year.
  */
-function RoleLoginRedirect({ role }) {
+function LegacyRoleRedirect({ signedIn }) {
   const [params] = useSearchParams();
   const facility = params.get('facility');
-  const query = new URLSearchParams({ role, ...(facility ? { facility } : {}) });
-  return <Navigate to={`/login?${query.toString()}`} replace />;
+  if (signedIn) return <Navigate to="/console" replace />;
+  const query = facility ? `?${new URLSearchParams({ facility }).toString()}` : '';
+  return <Navigate to={`/login${query}`} replace />;
 }
 
 export default function App() {
@@ -106,43 +101,24 @@ export default function App() {
   );
 }
 
+/** localStorage that never throws and never returns the string "undefined". */
+const readStored = (key) => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw && raw !== 'undefined' ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+};
+
 function AppContent() {
-  const [staffToken, setStaffToken] = useState(localStorage.getItem('staffToken') || '');
-  const [staffUser, setStaffUser] = useState(() => {
-    try {
-      const u = localStorage.getItem('staffUser');
-      return u && u !== 'undefined' ? JSON.parse(u) : null;
-    } catch (e) {
-      return null;
-    }
-  });
-  const [doctorToken, setDoctorToken] = useState(localStorage.getItem('doctorToken') || '');
-  const [doctorUser, setDoctorUser] = useState(() => {
-    try {
-      const u = localStorage.getItem('doctorUser');
-      return u && u !== 'undefined' ? JSON.parse(u) : null;
-    } catch (e) {
-      return null;
-    }
-  });
-  const [labToken, setLabToken] = useState(localStorage.getItem('labToken') || '');
-  const [labUser, setLabUser] = useState(() => {
-    try {
-      const u = localStorage.getItem('labUser');
-      return u && u !== 'undefined' ? JSON.parse(u) : null;
-    } catch (e) {
-      return null;
-    }
-  });
-  const [pharmacyToken, setPharmacyToken] = useState(localStorage.getItem('pharmacyToken') || '');
-  const [pharmacyUser, setPharmacyUser] = useState(() => {
-    try {
-      const u = localStorage.getItem('pharmacyUser');
-      return u && u !== 'undefined' ? JSON.parse(u) : null;
-    } catch (e) {
-      return null;
-    }
-  });
+  // One facility session, where there used to be four role sessions with four
+  // tokens and four user blobs in localStorage. A facility signs in once; which
+  // consoles it can open is carried in the token's scopes, not in which of four
+  // keys happened to be filled in.
+  const [token, setToken] = useState(localStorage.getItem('facilityToken') || '');
+  const [facility, setFacility] = useState(() => readStored('facilityUser'));
+  const [doctors, setDoctors] = useState(() => readStored('facilityDoctors') || []);
 
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const navigate = useNavigate();
@@ -169,37 +145,68 @@ function AppContent() {
     };
   }, []);
 
-  const handleStaffLogout = () => {
-    localStorage.removeItem('staffToken');
-    localStorage.removeItem('staffUser');
-    setStaffToken('');
-    setStaffUser(null);
-    navigate('/staff/login');
+  const handleAuthenticated = (nextToken, nextFacility, nextDoctors) => {
+    localStorage.setItem('facilityToken', nextToken);
+    localStorage.setItem('facilityUser', JSON.stringify(nextFacility));
+    localStorage.setItem('facilityDoctors', JSON.stringify(nextDoctors || []));
+    setToken(nextToken);
+    setFacility(nextFacility);
+    setDoctors(nextDoctors || []);
   };
 
-  const handleDoctorLogout = () => {
-    localStorage.removeItem('doctorToken');
-    localStorage.removeItem('doctorUser');
-    setDoctorToken('');
-    setDoctorUser(null);
-    navigate('/doctor/login');
+  const handleLogout = () => {
+    localStorage.removeItem('facilityToken');
+    localStorage.removeItem('facilityUser');
+    localStorage.removeItem('facilityDoctors');
+    // The four per-role keys a session from before single sign-in would have
+    // left behind. Clearing them here means one sign-out genuinely ends the
+    // session rather than leaving a stale token in a key nothing reads.
+    ['staff', 'doctor', 'lab', 'pharmacy'].forEach((role) => {
+      localStorage.removeItem(`${role}Token`);
+      localStorage.removeItem(`${role}User`);
+    });
+    setToken('');
+    setFacility(null);
+    setDoctors([]);
+    navigate('/login');
   };
 
-  const handleLabLogout = () => {
-    localStorage.removeItem('labToken');
-    localStorage.removeItem('labUser');
-    setLabToken('');
-    setLabUser(null);
-    navigate('/lab/login');
-  };
+  /**
+   * Re-read the session on load.
+   *
+   * A facility that had a module switched on, or a doctor added, since it last
+   * signed in should see that on the next page load rather than after someone
+   * thinks to sign out and back in. A rejected token means the session is over —
+   * clearing it here is what stops a dead token rendering an empty console.
+   */
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
 
-  const handlePharmacyLogout = () => {
-    localStorage.removeItem('pharmacyToken');
-    localStorage.removeItem('pharmacyUser');
-    setPharmacyToken('');
-    setPharmacyUser(null);
-    navigate('/pharmacy/login');
-  };
+    fetch(`${BACKEND_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (res) => {
+        if (res.status === 401 || res.status === 403) {
+          if (!cancelled) handleLogout();
+          return null;
+        }
+        return res.ok ? res.json() : null;
+      })
+      .then((data) => {
+        if (cancelled || !data || !data.user) return;
+        localStorage.setItem('facilityUser', JSON.stringify(data.user));
+        localStorage.setItem('facilityDoctors', JSON.stringify(data.doctors || []));
+        setFacility(data.user);
+        setDoctors(data.doctors || []);
+      })
+      // A network blip on load is not a reason to sign someone out — the stored
+      // session stays and the next call will surface any real problem.
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   // The demo role-switcher is a tool for showing the product, not part of it.
   // On our own home page and the sign-in page it is the first thing a visiting
@@ -243,36 +250,16 @@ function AppContent() {
               <span className="hidden sm:inline-block">Patient Portal</span>
             </button>
 
+            {/* One console, so one button. This bar used to offer four —
+                Staff, Doctor, Lab, Pharmacy — because they were four separate
+                logins; a visiting hospital met a row of consoles it could not
+                open. Now it is the door the facility already came through. */}
             <button
-              onClick={() => navigate(staffToken ? '/staff/dashboard' : '/staff/login')}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/staff') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
+              onClick={() => navigate(token ? '/console' : '/login')}
+              className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/console') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
             >
               <Shield className="h-4 w-4 shrink-0" />
-              <span className="hidden sm:inline-block">Staff Dashboard</span>
-            </button>
-
-            <button
-              onClick={() => navigate(doctorToken ? '/doctor/dashboard' : '/doctor/login')}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/doctor') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
-            >
-              <Stethoscope className="h-4 w-4 shrink-0" />
-              <span className="hidden sm:inline-block">Doctor Console</span>
-            </button>
-
-            <button
-              onClick={() => navigate(labToken ? '/lab/dashboard' : '/lab/login')}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/lab') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
-            >
-              <span className="material-symbols-outlined text-[16px] shrink-0">science</span>
-              <span className="hidden sm:inline-block">Lab Console</span>
-            </button>
-
-            <button
-              onClick={() => navigate(pharmacyToken ? '/pharmacy/dashboard' : '/pharmacy/login')}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-all flex items-center space-x-1.5 active:scale-95 duration-100 ${location.pathname.startsWith('/pharmacy') ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-lg shadow-[var(--primary-color)]/20' : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'}`}
-            >
-              <span className="material-symbols-outlined text-[16px] shrink-0">local_pharmacy</span>
-              <span className="hidden sm:inline-block">Pharmacy</span>
+              <span className="hidden sm:inline-block">{facility ? facility.name : 'Facility console'}</span>
             </button>
           </div>
         </div>
@@ -290,28 +277,34 @@ function AppContent() {
             <Route path="/" element={<MarketingHome />} />
             <Route path="/facilities" element={<HospitalHub />} />
 
-            {/* One door for every role. A facility we onboard hands its people
-                a single address; they pick who they are and their own console
-                opens. The four per-role paths below still work and land here
-                with the role chosen, so printed cards and bookmarks keep
-                working. */}
+            {/* One door, one console. A facility we onboard hands its people a
+                single address and a single password; every unit that facility
+                runs is a room inside what opens. The eight per-role paths below
+                still work and redirect here, so printed cards and bookmarks
+                keep working. */}
             <Route
               path="/login"
               element={
-                <UnifiedLogin
-                  onAuthenticated={(role, token, user) => {
-                    const setters = {
-                      staff: [setStaffToken, setStaffUser],
-                      doctor: [setDoctorToken, setDoctorUser],
-                      lab: [setLabToken, setLabUser],
-                      pharmacy: [setPharmacyToken, setPharmacyUser]
-                    }[role];
-                    localStorage.setItem(`${role}Token`, token);
-                    localStorage.setItem(`${role}User`, JSON.stringify(user));
-                    setters[0](token);
-                    setters[1](user);
-                  }}
-                />
+                token ? (
+                  <Navigate to="/console" replace />
+                ) : (
+                  <UnifiedLogin onAuthenticated={handleAuthenticated} />
+                )
+              }
+            />
+            <Route
+              path="/console"
+              element={
+                token && facility ? (
+                  <FacilityConsole
+                    token={token}
+                    facility={facility}
+                    doctors={doctors}
+                    onLogout={handleLogout}
+                  />
+                ) : (
+                  <Navigate to="/login" replace />
+                )
               }
             />
 
@@ -320,88 +313,17 @@ function AppContent() {
                 links into, so existing WhatsApp links and QR codes still work. */}
             <Route path="/h/:hospitalId" element={<FacilityLanding />} />
             <Route path="/hospital/:hospitalId" element={<PatientPortal />} />
-            <Route
-              path="/staff/login"
-              element={
-                staffToken ? <Navigate to="/staff/dashboard" replace /> : <RoleLoginRedirect role="staff" />
-              }
-            />
-            <Route
-              path="/staff/dashboard"
-              element={
-                staffToken ? (
-                  <StaffDashboard
-                    staffToken={staffToken}
-                    staffUser={staffUser}
-                    onLogout={handleStaffLogout}
-                  />
-                ) : (
-                  <Navigate to="/staff/login" replace />
-                )
-              }
-            />
-            <Route
-              path="/doctor/login"
-              element={
-                doctorToken ? (
-                  <Navigate to="/doctor/dashboard" replace />
-                ) : (
-                  <RoleLoginRedirect role="doctor" />
-                )
-              }
-            />
-            <Route
-              path="/doctor/dashboard"
-              element={
-                doctorToken ? (
-                  <DoctorDashboard
-                    doctorToken={doctorToken}
-                    doctorUser={doctorUser}
-                    onLogout={handleDoctorLogout}
-                  />
-                ) : (
-                  <Navigate to="/doctor/login" replace />
-                )
-              }
-            />
-            <Route
-              path="/lab/login"
-              element={labToken ? <Navigate to="/lab/dashboard" replace /> : <RoleLoginRedirect role="lab" />}
-            />
-            <Route
-              path="/lab/dashboard"
-              element={
-                labToken ? (
-                  <LabDashboard labToken={labToken} labUser={labUser} onLogout={handleLabLogout} />
-                ) : (
-                  <Navigate to="/lab/login" replace />
-                )
-              }
-            />
-            <Route
-              path="/pharmacy/login"
-              element={
-                pharmacyToken ? (
-                  <Navigate to="/pharmacy/dashboard" replace />
-                ) : (
-                  <RoleLoginRedirect role="pharmacy" />
-                )
-              }
-            />
-            <Route
-              path="/pharmacy/dashboard"
-              element={
-                pharmacyToken ? (
-                  <PharmacyDashboard
-                    pharmacyToken={pharmacyToken}
-                    pharmacyUser={pharmacyUser}
-                    onLogout={handlePharmacyLogout}
-                  />
-                ) : (
-                  <Navigate to="/pharmacy/login" replace />
-                )
-              }
-            />
+
+            {/* The retired per-role routes. */}
+            {['staff', 'doctor', 'lab', 'pharmacy'].map((role) => (
+              <React.Fragment key={role}>
+                <Route path={`/${role}/login`} element={<LegacyRoleRedirect signedIn={Boolean(token)} />} />
+                <Route
+                  path={`/${role}/dashboard`}
+                  element={<LegacyRoleRedirect signedIn={Boolean(token)} />}
+                />
+              </React.Fragment>
+            ))}
             <Route path="/track/:tokenId" element={<PatientLiveTracker />} />
             <Route path="/prescription/:tokenId" element={<DigitalPrescriptionViewer />} />
             <Route path="/public-display" element={<PublicTVDisplay />} />

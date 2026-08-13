@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Icon } from './DashboardKit';
 import { navFor } from './roleNav';
+import { useFacilitySession } from './facilitySession';
 import useFacilityBranding from '../../hooks/useFacilityBranding';
 
 /**
@@ -28,6 +29,9 @@ export default function DashboardShell({
   const nav = navFor(role);
   const branding = useFacilityBranding(user?.hospital);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Present whenever this dashboard is running inside the facility console,
+  // absent on any standalone render. See dashboard/facilitySession.js.
+  const session = useFacilitySession();
 
   const current = nav.items.find((i) => i.key === activeKey);
   const initial = (user?.name || '?')
@@ -39,6 +43,50 @@ export default function DashboardShell({
     setMobileNavOpen(false);
     if (onNavigate) onNavigate(key);
   };
+
+  /**
+   * The room switcher.
+   *
+   * One facility login opens every unit that facility runs, so moving from the
+   * reception desk to the lab bench is a click here rather than a sign-out and
+   * a second password. It sits above the room's own screens, and it renders
+   * only the rooms this facility actually has — the same list the API enforces.
+   *
+   * A facility with exactly one room (a standalone pathology lab, say) gets no
+   * switcher at all: a control with a single option is decoration.
+   */
+  const roomSwitcher =
+    session && session.rooms.length > 1 ? (
+      <div className="mb-4">
+        <p className="px-3.5 pb-1.5 text-[11px] uppercase font-black tracking-wider text-[var(--text-secondary)]">
+          Rooms
+        </p>
+        <div className="space-y-1">
+          {session.rooms.map((room) => {
+            const active = room.key === session.activeRoom;
+            return (
+              <button
+                key={room.key}
+                type="button"
+                onClick={() => {
+                  setMobileNavOpen(false);
+                  session.onSwitchRoom(room.key);
+                }}
+                className={`w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-[13px] font-black transition-all ${
+                  active
+                    ? 'bg-[var(--primary-color)] text-white shadow-md shadow-[var(--primary-color)]/25'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--border-color)]/20 hover:text-[var(--text-color)]'
+                }`}
+              >
+                <Icon name={room.icon} className="text-[20px] shrink-0" />
+                <span className="truncate">{room.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-3 mx-3 border-t border-[var(--border-color)]/40" />
+      </div>
+    ) : null;
 
   const navList = (
     <nav className="space-y-1">
@@ -103,7 +151,10 @@ export default function DashboardShell({
       <aside className="hidden md:flex w-60 shrink-0 flex-col justify-between bg-[var(--card-bg)] border-r border-[var(--border-color)]/40">
         <div className="min-w-0">
           <div className="p-5 border-b border-[var(--border-color)]/30">{brandBlock}</div>
-          <div className="p-3">{navList}</div>
+          <div className="p-3">
+            {roomSwitcher}
+            {navList}
+          </div>
         </div>
 
         <div className="p-3 border-t border-[var(--border-color)]/30 flex items-center gap-2.5">
@@ -121,6 +172,20 @@ export default function DashboardShell({
               {subtitle || nav.title}
             </span>
           </span>
+          {/* Leaving a cabin is not signing out. A doctor finishing their OPD
+              hands the same console back to whoever is on next, so the way out
+              of a cabin has to sit next to — and be distinct from — the way out
+              of the facility. */}
+          {session && session.activeRoom === 'doctor' && session.actingDoctor && (
+            <button
+              type="button"
+              onClick={session.onLeaveCabin}
+              title="Switch to a different cabin"
+              className="p-2 rounded-lg text-[var(--text-secondary)] hover:text-[var(--primary-color)] hover:bg-[var(--primary-color)]/10 transition-colors shrink-0"
+            >
+              <Icon name="swap_horiz" className="text-[20px]" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onLogout}
@@ -161,6 +226,7 @@ export default function DashboardShell({
 
         {mobileNavOpen && (
           <div className="md:hidden p-3 bg-[var(--card-bg)] border-b border-[var(--border-color)]/40">
+            {roomSwitcher}
             {navList}
             <button
               type="button"

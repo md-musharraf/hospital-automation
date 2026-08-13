@@ -37,6 +37,7 @@ const TENANT_MODELS = [
   'ArchivedToken',
   'BillingConfig',
   'Doctor',
+  'FacilityCredential',
   'HospitalMessage',
   'Invoice',
   'LabAssistant',

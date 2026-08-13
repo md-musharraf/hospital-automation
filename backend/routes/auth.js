@@ -7,8 +7,15 @@ const Staff = require('../models/Staff');
 const LabAssistant = require('../models/LabAssistant');
 const Pharmacist = require('../models/Pharmacist');
 const Hospital = require('../models/Hospital');
+const FacilityCredential = require('../models/FacilityCredential');
 const Queue = require('../models/Queue');
 const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
+const {
+  scopesForFacility,
+  rejectWeakPassword,
+  facilityTokenClaims,
+  PASSWORD_MIN_LENGTH
+} = require('../utils/facilityAuth');
 const {
   FACILITY_TYPE_RULES,
   FACILITY_MODULES,
@@ -17,7 +24,8 @@ const {
   normalizeLanding,
   normalizeDoctorProfile,
   reconcileLegacyFlags,
-  legacyModulesFrom
+  legacyModulesFrom,
+  defaultCoverFor
 } = require('../utils/facilityProfile');
 const { safeCompare, isProduction } = require('../utils/env');
 const logger = require('../utils/logger');
@@ -25,194 +33,229 @@ const logger = require('../utils/logger');
 // ten-attempt budget between them. See middleware/rateLimits.js.
 const { loginLimiter } = require('../middleware/rateLimits');
 
-// Doctor Login (rate-limited)
-router.post('/doctor/login', loginLimiter, async (req, res) => {
+/**
+ * The facility session — everything the console needs to draw itself.
+ *
+ * Never includes the credential: the hash lives in its own collection and is
+ * read only by the sign-in handler below. See models/FacilityCredential.js.
+ */
+function facilitySession(facility) {
+  return {
+    role: 'facility',
+    hospital: facility.id,
+    id: facility.id,
+    name: facility.name,
+    type: facility.type,
+    city: facility.city,
+    logoUrl: facility.logoUrl || '',
+    primaryColor: facility.primaryColor,
+    secondaryColor: facility.secondaryColor,
+    modules: facility.modules || {},
+    // Which consoles this facility runs. The console renders one tab per scope,
+    // and the API enforces the same list — so a lab never sees a cabin tab it
+    // would only be refused at.
+    scopes: scopesForFacility(facility)
+  };
+}
+
+/** The cabin roster: who this facility's OPD tab can be operated as. */
+async function doctorRoster(hospitalId) {
+  const doctors = await Doctor.find({ hospital: hospitalId }).select('-passwordHash');
+  return doctors.map((d) => ({
+    id: d._id,
+    _id: d._id,
+    name: d.name,
+    email: d.email,
+    hospital: d.hospital,
+    department: d.department,
+    specialization: d.specialization,
+    doctorType: d.doctorType,
+    currentRoom: d.currentRoom,
+    availabilityStatus: d.availabilityStatus,
+    averageCheckupTime: d.averageCheckupTime,
+    dailyTokenLimit: d.dailyTokenLimit,
+    photoUrl: d.photoUrl || ''
+  }));
+}
+
+/**
+ * Facility sign-in — the only login this platform has (rate-limited).
+ *
+ * One credential per facility opens reception, the cabins, the lab bench and the
+ * pharmacy counter. There used to be four endpoints here, one per role, which
+ * meant a four-person clinic was handed four passwords and kept all four on the
+ * same sticky note. See utils/facilityAuth.js for the reasoning.
+ *
+ * The facility id is public — it is in the directory and the sign-in picker —
+ * so the password is the whole secret, and the endpoint is rate-limited by IP
+ * *and* account accordingly (middleware/rateLimits.js).
+ */
+router.post('/facility/login', loginLimiter, async (req, res) => {
   try {
-    const { email, password, hospital } = req.body;
-    if (!email || !password || !hospital) {
-      return res.status(400).json({ message: 'Email, password, and hospital selection are required' });
+    const { hospital, password } = req.body;
+    if (!hospital || !password) {
+      return res.status(400).json({ message: 'Choose your facility and enter its password.' });
     }
 
-    const doctor = await Doctor.findOne({ email, hospital });
-    if (!doctor) {
-      return res.status(401).json({ message: 'Invalid credentials for the selected hospital' });
+    const facility = await Hospital.findOne({ id: hospital });
+    if (!facility) {
+      return res.status(401).json({ message: 'Invalid facility or password.' });
     }
 
-    const isMatch = await bcrypt.compare(password, doctor.passwordHash);
+    const credential = await FacilityCredential.findOne({ hospital });
+    if (!credential) {
+      // Deliberately specific. A facility whose password was never set is not a
+      // wrong-password case, and telling reception "invalid password" would send
+      // them round a loop they cannot exit — the owner has to act, and they need
+      // to be told that. Nothing secret is revealed: the facility's existence is
+      // already public in the directory.
+      return res.status(403).json({
+        message:
+          'This facility has no password yet. Ask the platform owner to set one from the owner console.'
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, credential.passwordHash);
     if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid facility or password.' });
     }
+
+    const token = jwt.sign(facilityTokenClaims(facility), JWT_SECRET, { expiresIn: '12h' });
+
+    res.json({
+      token,
+      user: facilitySession(facility),
+      doctors: await doctorRoster(facility.id)
+    });
+  } catch (error) {
+    logger.error('[AUTH] Facility login failed', { err: error.message });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * The current session, re-read from the database.
+ *
+ * The console calls this on load so a facility that had a module switched on (or
+ * a doctor added) since sign-in sees it without anyone signing out. The token's
+ * scopes still govern what the API will allow until it expires — this is what
+ * the screen shows, not what the server permits.
+ */
+router.get('/me', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'facility') {
+      return res.status(400).json({ message: 'Not a facility session. Sign in again.' });
+    }
+
+    const facility = await Hospital.findOne({ id: req.user.hospital });
+    if (!facility) return res.status(404).json({ message: 'Facility not found' });
+
+    res.json({
+      user: facilitySession(facility),
+      doctors: await doctorRoster(facility.id)
+    });
+  } catch (error) {
+    logger.error('[AUTH] Session read failed', { err: error.message });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * Take a cabin.
+ *
+ * The facility console posts the doctor it is about to work as, and gets back a
+ * token that is its own session plus one claim: which cabin. Everything else —
+ * tenant, scopes, expiry — is carried over unchanged, so this grants nothing the
+ * facility did not already have. It is a narrowing, not an escalation.
+ *
+ * Why a token and not a header: the doctor console makes eighteen calls that
+ * already send an Authorization header and nothing else. Putting the cabin in
+ * the token meant none of them had to learn about a second header, and it means
+ * a reload cannot land in a state where the console thinks it is in a cabin and
+ * the server does not.
+ *
+ * Switching doctor is simply asking for another one.
+ */
+router.post('/facility/cabin', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'facility') {
+      return res.status(403).json({ message: 'Facility session required' });
+    }
+    if (!Array.isArray(req.user.scopes) || !req.user.scopes.includes('doctor')) {
+      return res.status(403).json({ message: 'This facility does not run an OPD.' });
+    }
+
+    const { doctorId } = req.body;
+    if (!doctorId) return res.status(400).json({ message: 'Choose a doctor to work as.' });
+
+    // The tenant check that makes this safe: only this facility's own doctors.
+    const doctor = await Doctor.findOne({ _id: doctorId, hospital: req.user.hospital });
+    if (!doctor) {
+      return res.status(403).json({ message: 'That doctor does not work at this facility.' });
+    }
+
+    const facility = await Hospital.findOne({ id: req.user.hospital });
+    if (!facility) return res.status(404).json({ message: 'Facility not found' });
 
     const token = jwt.sign(
-      { id: doctor._id, email: doctor.email, role: 'doctor', hospital: doctor.hospital },
+      { ...facilityTokenClaims(facility), actingDoctor: String(doctor._id) },
       JWT_SECRET,
-      { expiresIn: '12h' }
+      {
+        expiresIn: '12h'
+      }
     );
 
     res.json({
       token,
-      user: {
+      doctor: {
         id: doctor._id,
+        _id: doctor._id,
         name: doctor.name,
         email: doctor.email,
+        hospital: doctor.hospital,
         department: doctor.department,
         specialization: doctor.specialization,
-        availabilityStatus: doctor.availabilityStatus,
         currentRoom: doctor.currentRoom,
-        hospital: doctor.hospital,
+        availabilityStatus: doctor.availabilityStatus,
+        averageCheckupTime: doctor.averageCheckupTime,
+        dailyTokenLimit: doctor.dailyTokenLimit,
         role: 'doctor'
       }
     });
   } catch (error) {
-    console.error('Doctor login error:', error);
-    res.status(500).json({ message: 'Server error' });
+    logger.error('[AUTH] Cabin token mint failed', { err: error.message });
+    res.status(500).json({ message: 'Server error opening that cabin' });
   }
 });
 
-// Staff Login (rate-limited)
-router.post('/staff/login', loginLimiter, async (req, res) => {
+/**
+ * The facility's own team directory — the cabins, the desks, the bench and the
+ * counter, as people rather than as accounts.
+ *
+ * None of these carry a password any more. They exist so the console can say
+ * "Dr. Sharma, Cabin 3" instead of an id, and so the owner can see who works
+ * where. Nothing here is a credential.
+ */
+router.get('/facility/team', authenticateToken, async (req, res) => {
   try {
-    const { username, password, hospital } = req.body;
-    if (!username || !password || !hospital) {
-      return res.status(400).json({ message: 'Username, password, and hospital selection are required' });
+    if (req.user.role !== 'facility') {
+      return res.status(403).json({ message: 'Facility session required' });
     }
-
-    const staff = await Staff.findOne({ username, hospital });
-    if (!staff) {
-      return res.status(401).json({ message: 'Invalid credentials for the selected hospital' });
-    }
-
-    const isMatch = await bcrypt.compare(password, staff.passwordHash);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign(
-      { id: staff._id, username: staff.username, role: 'staff', hospital: staff.hospital },
-      JWT_SECRET,
-      { expiresIn: '12h' }
-    );
+    const hospital = req.user.hospital;
+    const [staff, labAssistants, pharmacists] = await Promise.all([
+      Staff.find({ hospital }).select('-passwordHash'),
+      LabAssistant.find({ hospital }).select('-passwordHash'),
+      Pharmacist.find({ hospital }).select('-passwordHash')
+    ]);
 
     res.json({
-      token,
-      user: {
-        id: staff._id,
-        name: staff.name,
-        username: staff.username,
-        counterNumber: staff.counterNumber,
-        hospital: staff.hospital,
-        role: 'staff'
-      }
+      doctors: await doctorRoster(hospital),
+      staff: staff.map((s) => ({ id: s._id, name: s.name, counterNumber: s.counterNumber })),
+      labAssistants: labAssistants.map((l) => ({ id: l._id, name: l.name })),
+      pharmacists: pharmacists.map((p) => ({ id: p._id, name: p.name, counterNumber: p.counterNumber }))
     });
   } catch (error) {
-    console.error('Staff login error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Lab Assistant Login (rate-limited)
-router.post('/lab/login', loginLimiter, async (req, res) => {
-  try {
-    const { username, password, hospital } = req.body;
-    if (!username || !password || !hospital) {
-      return res.status(400).json({ message: 'Username, password, and hospital selection are required' });
-    }
-
-    const lab = await LabAssistant.findOne({ username, hospital });
-    if (!lab) {
-      return res.status(401).json({ message: 'Invalid credentials for the selected hospital' });
-    }
-
-    const isMatch = await bcrypt.compare(password, lab.passwordHash);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign(
-      { id: lab._id, username: lab.username, role: 'lab', hospital: lab.hospital },
-      JWT_SECRET,
-      { expiresIn: '12h' }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: lab._id,
-        name: lab.name,
-        username: lab.username,
-        hospital: lab.hospital,
-        role: 'lab'
-      }
-    });
-  } catch (error) {
-    console.error('Lab login error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Pharmacist Login (rate-limited)
-router.post('/pharmacy/login', loginLimiter, async (req, res) => {
-  try {
-    const { username, password, hospital } = req.body;
-    if (!username || !password || !hospital) {
-      return res.status(400).json({ message: 'Username, password, and facility selection are required' });
-    }
-
-    const pharmacist = await Pharmacist.findOne({ username, hospital });
-    if (!pharmacist) {
-      return res.status(401).json({ message: 'Invalid credentials for the selected facility' });
-    }
-
-    const isMatch = await bcrypt.compare(password, pharmacist.passwordHash);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign(
-      { id: pharmacist._id, username: pharmacist.username, role: 'pharmacy', hospital: pharmacist.hospital },
-      JWT_SECRET,
-      { expiresIn: '12h' }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: pharmacist._id,
-        name: pharmacist.name,
-        username: pharmacist.username,
-        counterNumber: pharmacist.counterNumber,
-        hospital: pharmacist.hospital,
-        role: 'pharmacy'
-      }
-    });
-  } catch (error) {
-    console.error('Pharmacy login error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Get currently logged-in user
-router.get('/me', authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role === 'doctor') {
-      const doctor = await Doctor.findById(req.user.id).select('-passwordHash');
-      if (!doctor) return res.status(404).json({ message: 'Doctor not found' });
-      return res.json({ user: { ...doctor.toObject(), role: 'doctor' } });
-    } else if (req.user.role === 'staff') {
-      const staff = await Staff.findById(req.user.id).select('-passwordHash');
-      if (!staff) return res.status(404).json({ message: 'Staff member not found' });
-      return res.json({ user: { ...staff.toObject(), role: 'staff' } });
-    } else if (req.user.role === 'lab') {
-      const lab = await LabAssistant.findById(req.user.id).select('-passwordHash');
-      if (!lab) return res.status(404).json({ message: 'Lab Assistant not found' });
-      return res.json({ user: { ...lab.toObject(), role: 'lab' } });
-    } else if (req.user.role === 'pharmacy') {
-      const pharmacist = await Pharmacist.findById(req.user.id).select('-passwordHash');
-      if (!pharmacist) return res.status(404).json({ message: 'Pharmacist not found' });
-      return res.json({ user: { ...pharmacist.toObject(), role: 'pharmacy' } });
-    }
-    res.status(400).json({ message: 'Invalid role' });
-  } catch (error) {
+    logger.error('[AUTH] Team read failed', { err: error.message });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -340,6 +383,13 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       });
     }
 
+    // The one credential this facility will ever sign in with. Checked before
+    // anything is written, so a rejected password cannot leave a half-created
+    // tenant behind — and there is no fallback if it is missing, because a
+    // default password set at onboarding is a default password forever.
+    const weak = rejectWeakPassword(b.password);
+    if (weak) return res.status(400).json({ message: weak });
+
     // Which units this facility runs. The admin panel posts a module map
     // ("runs its own lab? has an ambulance? how many ICU beds?"); an older
     // client posts only the two booleans. Either way we end up with one
@@ -355,11 +405,17 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
     const hasInternalPharmacy = legacyFlags.hasInternalPharmacy;
     const landing = normalizeLanding(b.landing);
 
-    // Normalize personnel: accept either the new ARRAY form (doctors[],
-    // staffMembers[], labAssistants[], pharmacists[]) or the legacy single-account
-    // fields, so an admin can onboard "2-3 doctors, 1-2 labs, a pharmacy" in ONE
-    // registration. Internal lab/pharmacy accounts are only created when the
-    // facility declares it has that unit.
+    // Normalize personnel: accept either the ARRAY form (doctors[],
+    // staffMembers[], labAssistants[], pharmacists[]) or the legacy single-entry
+    // fields, so an admin can onboard "2-3 doctors, a lab tech, a pharmacist" in
+    // ONE registration.
+    //
+    // None of these are accounts any more — they are the facility's people. The
+    // whole tenant signs in with the one facility password validated above; a
+    // doctor is chosen inside the console, not authenticated at the door. Any
+    // `password` still posted by an older admin panel is ignored rather than
+    // rejected, so an in-flight form does not 400 on a field that no longer
+    // means anything.
     const doctors =
       Array.isArray(b.doctors) && b.doctors.length
         ? b.doctors
@@ -368,7 +424,6 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
               {
                 name: b.docName,
                 email: b.docEmail,
-                password: b.docPassword,
                 department: b.docDepartment,
                 currentRoom: b.docRoom,
                 specialization: b.docSpecialization,
@@ -380,41 +435,26 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
     const staffMembers =
       Array.isArray(b.staffMembers) && b.staffMembers.length
         ? b.staffMembers
-        : b.staffUsername
-          ? [
-              {
-                name: b.staffName,
-                username: b.staffUsername,
-                password: b.staffPassword,
-                counterNumber: b.counterNumber
-              }
-            ]
+        : b.staffName || b.staffUsername
+          ? [{ name: b.staffName, counterNumber: b.counterNumber }]
           : [];
 
     const labAssistants = hasInternalLab
       ? Array.isArray(b.labAssistants) && b.labAssistants.length
         ? b.labAssistants
-        : b.labUsername
-          ? [{ name: b.labName, username: b.labUsername, password: b.labPassword }]
+        : b.labName || b.labUsername
+          ? [{ name: b.labName }]
           : []
       : [];
 
     const pharmacists = hasInternalPharmacy
       ? Array.isArray(b.pharmacists) && b.pharmacists.length
         ? b.pharmacists
-        : b.pharmUsername
-          ? [
-              {
-                name: b.pharmName,
-                username: b.pharmUsername,
-                password: b.pharmPassword,
-                counterNumber: b.pharmCounter
-              }
-            ]
+        : b.pharmName || b.pharmUsername
+          ? [{ name: b.pharmName, counterNumber: b.pharmCounter }]
           : []
       : [];
 
-    // The facility type decides which accounts this tenant actually needs.
     const typeRule = FACILITY_TYPE_RULES[type];
     if (!typeRule) {
       return res.status(400).json({
@@ -422,66 +462,23 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       });
     }
 
-    // A facility must have at least one login account to be operable
-    if (!staffMembers.length && !doctors.length && !labAssistants.length && !pharmacists.length) {
-      return res.status(400).json({
-        message:
-          'At least one account (reception, doctor, lab, or pharmacy) is required to register a facility.'
-      });
-    }
+    // What made a facility operable used to be "has at least one account of the
+    // right kind" — a Lab with no lab login was a tenant nobody could sign into.
+    // With one credential per facility that check has moved: the facility
+    // password is what makes it signable, and `normalizeModules` already refuses
+    // to switch off the unit its type requires. So a hospital can be onboarded
+    // today and have its doctors entered tomorrow, which is how onboarding
+    // actually goes.
 
-    // ...and specifically the account that makes THIS type of facility work: a
-    // lab with no lab login, or a medical store with no pharmacy login, is a
-    // tenant nobody can ever sign into to do the actual job.
-    const accountCounts = {
-      staff: staffMembers.length,
-      doctors: doctors.length,
-      lab: labAssistants.length,
-      pharmacy: pharmacists.length
-    };
-    const accountLabels = { staff: 'reception', doctors: 'doctor', lab: 'lab', pharmacy: 'pharmacy' };
-    const missing = typeRule.requires.filter((kind) => accountCounts[kind] === 0);
-    if (missing.length) {
-      return res.status(400).json({
-        message: `A ${type} needs at least one ${missing.map((k) => accountLabels[k]).join(' and one ')} account.`
-      });
-    }
-
-    // Validate each account + reject duplicates WITHIN this request
-    const seen = { doctor: new Set(), staff: new Set(), lab: new Set(), pharmacy: new Set() };
+    // A doctor is identified by email within the tenant (it is the unique index),
+    // so duplicates within one request still have to be caught here.
+    const seenDoctorEmails = new Set();
     for (const d of doctors) {
-      if (!d.email || !d.password)
-        return res.status(400).json({ message: 'Every doctor needs an email and password.' });
-      if (seen.doctor.has(d.email))
+      if (!d.email)
+        return res.status(400).json({ message: 'Every doctor needs an email — it identifies the cabin.' });
+      if (seenDoctorEmails.has(d.email))
         return res.status(400).json({ message: `Duplicate doctor email '${d.email}' in this registration.` });
-      seen.doctor.add(d.email);
-    }
-    for (const s of staffMembers) {
-      if (!s.username || !s.password)
-        return res.status(400).json({ message: 'Every reception account needs a username and password.' });
-      if (seen.staff.has(s.username))
-        return res
-          .status(400)
-          .json({ message: `Duplicate reception username '${s.username}' in this registration.` });
-      seen.staff.add(s.username);
-    }
-    for (const l of labAssistants) {
-      if (!l.username || !l.password)
-        return res.status(400).json({ message: 'Every lab account needs a username and password.' });
-      if (seen.lab.has(l.username))
-        return res
-          .status(400)
-          .json({ message: `Duplicate lab username '${l.username}' in this registration.` });
-      seen.lab.add(l.username);
-    }
-    for (const p of pharmacists) {
-      if (!p.username || !p.password)
-        return res.status(400).json({ message: 'Every pharmacy account needs a username and password.' });
-      if (seen.pharmacy.has(p.username))
-        return res
-          .status(400)
-          .json({ message: `Duplicate pharmacy username '${p.username}' in this registration.` });
-      seen.pharmacy.add(p.username);
+      seenDoctorEmails.add(d.email);
     }
 
     // Check if facility ID or slug is already taken
@@ -490,34 +487,15 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       return res.status(400).json({ message: 'Facility ID or Slug is already registered.' });
     }
 
-    // Check credential collisions against existing accounts in this tenant
-    for (const s of staffMembers) {
-      if (await Staff.findOne({ username: s.username, hospital: id }))
-        return res
-          .status(400)
-          .json({ message: `Reception username '${s.username}' is already taken in this facility.` });
-    }
+    // Doctors are still keyed by email within the tenant — that unique index is
+    // what stops the same cabin being entered twice. The other three kinds carry
+    // no unique identifier any more, so there is nothing left to collide.
     for (const d of doctors) {
       if (await Doctor.findOne({ email: d.email, hospital: id }))
         return res
           .status(400)
           .json({ message: `Doctor email '${d.email}' is already registered in this facility.` });
     }
-    for (const l of labAssistants) {
-      if (await LabAssistant.findOne({ username: l.username, hospital: id }))
-        return res
-          .status(400)
-          .json({ message: `Lab username '${l.username}' is already taken in this facility.` });
-    }
-    for (const p of pharmacists) {
-      if (await Pharmacist.findOne({ username: p.username, hospital: id }))
-        return res
-          .status(400)
-          .json({ message: `Pharmacy username '${p.username}' is already taken in this facility.` });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hash = (pw) => bcrypt.hash(pw, salt);
 
     // Create the facility
     const newHospital = new Hospital({
@@ -527,9 +505,12 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       address,
       phone,
       whatsappNumber,
-      coverImage:
-        coverImage ||
-        'https://images.unsplash.com/photo-1517122497576-4b2eb7482b8b?q=80&w=800&auto=format&fit=crop',
+      // A facility that uploads nothing still gets a picture that looks like the
+      // kind of place it is. This used to be one hardcoded Unsplash photo for
+      // every tenant, so a pharmacy, a pathology lab and a district hospital all
+      // opened with the same stock ward — on a product whose pitch is that every
+      // facility gets its own page.
+      coverImage: coverImage || defaultCoverFor(type),
       description: description || 'Specialized clinical care service.',
       city,
       coordinates,
@@ -554,54 +535,54 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
     });
     await newHospital.save();
 
-    // Create every personnel account for this facility tenant
+    // The facility's one credential. Written straight after the facility itself,
+    // before any personnel, so the tenant is signable from the moment it exists.
+    await new FacilityCredential({
+      hospital: id,
+      passwordHash: await bcrypt.hash(b.password, 10),
+      setBy: 'owner'
+    }).save();
+
+    // Everyone who works here. Names and rooms — no usernames, no passwords.
     const created = { staff: [], doctors: [], labAssistants: [], pharmacists: [] };
 
     for (const s of staffMembers) {
       const doc = new Staff({
         name: s.name || 'Reception Staff',
-        username: s.username,
-        passwordHash: await hash(s.password),
         counterNumber: s.counterNumber || 'Counter 1',
         hospital: id
       });
       await doc.save();
-      created.staff.push(doc.username);
+      created.staff.push(doc.name);
     }
     for (const d of doctors) {
-      const doc = new Doctor({
-        ...buildDoctorFields(d, id),
-        passwordHash: await hash(d.password)
-      });
+      const doc = new Doctor(buildDoctorFields(d, id));
       await doc.save();
       await new Queue({ doctor: doc._id, currentToken: null, activeQueue: [] }).save();
       created.doctors.push(doc.email);
     }
     for (const l of labAssistants) {
-      const doc = new LabAssistant({
-        name: l.name || 'Lab Assistant',
-        username: l.username,
-        passwordHash: await hash(l.password),
-        hospital: id
-      });
+      const doc = new LabAssistant({ name: l.name || 'Lab Assistant', hospital: id });
       await doc.save();
-      created.labAssistants.push(doc.username);
+      created.labAssistants.push(doc.name);
     }
     for (const p of pharmacists) {
       const doc = new Pharmacist({
         name: p.name || 'Pharmacist',
-        username: p.username,
-        passwordHash: await hash(p.password),
         counterNumber: p.counterNumber || 'Pharmacy Counter',
         hospital: id
       });
       await doc.save();
-      created.pharmacists.push(doc.username);
+      created.pharmacists.push(doc.name);
     }
 
     res.status(201).json({
-      message: `Facility '${name}' registered with ${created.staff.length} reception, ${created.doctors.length} doctor(s), ${created.labAssistants.length} lab, ${created.pharmacists.length} pharmacy account(s).`,
+      message:
+        `Facility '${name}' registered. Its people can sign in at /login by choosing ${name} ` +
+        `and entering the facility password you just set — ${scopesForFacility(newHospital).join(', ')} ` +
+        `consoles all open from it.`,
       hospital: newHospital,
+      scopes: scopesForFacility(newHospital),
       created
     });
   } catch (error) {
@@ -610,208 +591,155 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
   }
 });
 
-// Register Additional Staff Member
-router.post('/super-admin/register-staff', verifyAdminSecret, async (req, res) => {
+/**
+ * Set (or reset) a facility's one password.
+ *
+ * This is the only way a facility becomes signable. Onboarding calls the same
+ * code path; this endpoint is what an owner uses afterwards — when a
+ * receptionist leaves, when a facility asks, or when a tenant registered before
+ * single sign-in and has no credential row at all.
+ *
+ * Resetting is immediate and total: every person at that facility signs in with
+ * the new password from the next shift. Tokens already issued stay valid until
+ * they expire (12h), which is deliberate — cutting off a console mid-consultation
+ * to enforce a password change is worse than the few hours of overlap.
+ */
+router.put('/super-admin/hospital/:id/password', verifyAdminSecret, async (req, res) => {
   try {
-    const { hospital, name, username, password, counterNumber } = req.body;
-    if (!hospital || !username || !password) {
-      return res.status(400).json({ message: 'Hospital selection, username, and password are required' });
+    const { id } = req.params;
+    const { password } = req.body;
+
+    const facility = await Hospital.findOne({ id });
+    if (!facility) return res.status(404).json({ message: 'Facility not found' });
+
+    const weak = rejectWeakPassword(password);
+    if (weak) return res.status(400).json({ message: weak });
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const existing = await FacilityCredential.findOne({ hospital: id });
+
+    if (existing) {
+      existing.passwordHash = passwordHash;
+      existing.setAt = new Date();
+      existing.setBy = 'owner';
+      await existing.save();
+    } else {
+      await new FacilityCredential({ hospital: id, passwordHash, setBy: 'owner' }).save();
     }
 
-    // Verify hospital exists
-    const existingHospital = await Hospital.findOne({ id: hospital });
-    if (!existingHospital) {
-      return res.status(404).json({ message: 'Selected hospital does not exist' });
-    }
+    logger.warn('[SUPER-ADMIN] Facility password set', { hospital: id, ip: req.ip });
 
-    // Check if staff username is already taken in this hospital tenant
-    const existingStaff = await Staff.findOne({ username, hospital });
-    if (existingStaff) {
-      return res
-        .status(400)
-        .json({ message: `Staff username '${username}' is already taken in this hospital tenant.` });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
-
-    const newStaff = new Staff({
-      name: name || 'Staff Assistant',
-      username,
-      passwordHash,
-      counterNumber: counterNumber || 'Counter 1',
-      hospital
-    });
-    await newStaff.save();
-
-    res.status(201).json({
-      message: `Staff account '${username}' registered successfully!`,
-      staff: {
-        id: newStaff._id,
-        name: newStaff.name,
-        username: newStaff.username,
-        counterNumber: newStaff.counterNumber,
-        hospital: newStaff.hospital
-      }
+    res.json({
+      message: existing
+        ? `Password reset for '${facility.name}'. Everyone there signs in with the new one from now on.`
+        : `Password set for '${facility.name}'. It can now be signed into.`,
+      hospital: id,
+      hasPassword: true,
+      scopes: scopesForFacility(facility)
     });
   } catch (error) {
-    console.error('Super admin staff registration error:', error);
-    res.status(500).json({ message: 'Server error registering staff account' });
+    logger.error('[SUPER-ADMIN] Facility password set failed', { err: error.message });
+    res.status(500).json({ message: 'Server error setting the facility password' });
   }
 });
 
-// Register Additional Doctor
-router.post('/super-admin/register-doctor', verifyAdminSecret, async (req, res) => {
+/**
+ * Which facilities can actually be signed into.
+ *
+ * The owner console draws a warning badge from this. A facility onboarded before
+ * single sign-in — or one created by an older admin panel — has no credential
+ * row and is therefore unreachable by its own staff, which is invisible from
+ * every other screen. Hashes are never included: only whether one exists.
+ */
+router.get('/super-admin/facility-credentials', verifyAdminSecret, async (req, res) => {
   try {
-    const { hospital, email, password } = req.body;
-    if (!hospital || !email || !password) {
-      return res.status(400).json({ message: 'Hospital selection, email, and password are required' });
-    }
-
-    // Verify hospital exists
-    const existingHospital = await Hospital.findOne({ id: hospital });
-    if (!existingHospital) {
-      return res.status(404).json({ message: 'Selected hospital does not exist' });
-    }
-
-    // Check if doctor email is already registered in this hospital tenant
-    const existingDoc = await Doctor.findOne({ email, hospital });
-    if (existingDoc) {
-      return res
-        .status(400)
-        .json({ message: `Doctor email '${email}' is already registered in this hospital tenant.` });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
-
-    // Same normalization as registration, so a doctor added to a facility later
-    // carries exactly the same fields as one created during onboarding.
-    const newDoctor = new Doctor({ ...buildDoctorFields(req.body, hospital), passwordHash });
-    await newDoctor.save();
-
-    // Increment doctor count on hospital
-    existingHospital.doctorCount = (existingHospital.doctorCount || 0) + 1;
-    await existingHospital.save();
-
-    // Create Queue for Doctor
-    const newQueue = new Queue({
-      doctor: newDoctor._id,
-      currentToken: null,
-      activeQueue: []
-    });
-    await newQueue.save();
-
-    res.status(201).json({
-      message: `${newDoctor.doctorType} '${email}' registered successfully!`,
-      doctor: {
-        id: newDoctor._id,
-        name: newDoctor.name,
-        email: newDoctor.email,
-        department: newDoctor.department,
-        doctorType: newDoctor.doctorType,
-        hospital: newDoctor.hospital
-      }
-    });
+    const rows = await FacilityCredential.find({}, null, { allTenants: true });
+    res.json(
+      rows.reduce((acc, row) => {
+        acc[row.hospital] = { hasPassword: true, setAt: row.setAt, setBy: row.setBy };
+        return acc;
+      }, {})
+    );
   } catch (error) {
-    console.error('Super admin doctor registration error:', error);
-    res.status(500).json({ message: 'Server error registering doctor account' });
+    logger.error('[SUPER-ADMIN] Credential status read failed', { err: error.message });
+    res.status(500).json({ message: 'Server error reading credential status' });
   }
 });
 
-// Register Additional Lab Assistant
-router.post('/super-admin/register-lab', verifyAdminSecret, async (req, res) => {
+/**
+ * Add one person to a facility — a doctor, a receptionist, a lab tech, a
+ * pharmacist.
+ *
+ * This replaces four near-identical `register-<role>` endpoints. They were four
+ * because each created a login account with its own username and password; now
+ * that nobody has a personal credential, the only real difference between them
+ * is which collection the row lands in and which fields it carries. One endpoint
+ * with a `kind` is that difference, stated once.
+ */
+const PERSON_KINDS = {
+  doctor: { label: 'Doctor', model: Doctor },
+  staff: { label: 'Reception', model: Staff },
+  lab: { label: 'Lab', model: LabAssistant },
+  pharmacy: { label: 'Pharmacy', model: Pharmacist }
+};
+
+router.post('/super-admin/facility/:id/people', verifyAdminSecret, async (req, res) => {
   try {
-    const { hospital, name, username, password } = req.body;
-    if (!hospital || !username || !password) {
-      return res.status(400).json({ message: 'Hospital selection, username, and password are required' });
-    }
+    const { id } = req.params;
+    const { kind, name } = req.body;
 
-    // Verify hospital exists
-    const existingHospital = await Hospital.findOne({ id: hospital });
-    if (!existingHospital) {
-      return res.status(404).json({ message: 'Selected hospital does not exist' });
-    }
-
-    // Check if lab assistant username is already taken in this hospital tenant
-    const existingLab = await LabAssistant.findOne({ username, hospital });
-    if (existingLab) {
+    const spec = PERSON_KINDS[kind];
+    if (!spec) {
       return res
         .status(400)
-        .json({ message: `Lab assistant username '${username}' is already taken in this hospital tenant.` });
+        .json({ message: `Unknown kind '${kind}'. Choose one of: ${Object.keys(PERSON_KINDS).join(', ')}.` });
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
+    const facility = await Hospital.findOne({ id });
+    if (!facility) return res.status(404).json({ message: 'Selected facility does not exist' });
 
-    const newLab = new LabAssistant({
-      name: name || 'Lab Assistant',
-      username,
-      passwordHash,
-      hospital
-    });
-    await newLab.save();
+    if (kind === 'doctor') {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: 'A doctor needs an email — it identifies the cabin.' });
+      }
+      if (await Doctor.findOne({ email, hospital: id })) {
+        return res.status(400).json({ message: `Doctor email '${email}' already exists in this facility.` });
+      }
+
+      // Same normalization as onboarding, so a doctor added later carries
+      // exactly the same fields as one created during registration.
+      const doctor = new Doctor(buildDoctorFields(req.body, id));
+      await doctor.save();
+      await new Queue({ doctor: doctor._id, currentToken: null, activeQueue: [] }).save();
+
+      facility.doctorCount = (facility.doctorCount || 0) + 1;
+      await facility.save();
+
+      return res.status(201).json({
+        message: `${doctor.doctorType} '${doctor.name}' added. They appear in the facility console's cabin picker.`,
+        person: { id: doctor._id, kind, name: doctor.name, email: doctor.email }
+      });
+    }
+
+    if (!name) {
+      return res.status(400).json({ message: `A ${spec.label.toLowerCase()} entry needs a name.` });
+    }
+
+    const fields = { name, hospital: id };
+    if (kind === 'staff') fields.counterNumber = req.body.counterNumber || 'Counter 1';
+    if (kind === 'pharmacy') fields.counterNumber = req.body.counterNumber || 'Pharmacy Counter';
+
+    const person = new spec.model(fields);
+    await person.save();
 
     res.status(201).json({
-      message: `Lab assistant account '${username}' registered successfully!`,
-      lab: {
-        id: newLab._id,
-        name: newLab.name,
-        username: newLab.username,
-        hospital: newLab.hospital
-      }
+      message: `${spec.label} '${name}' added to ${facility.name}.`,
+      person: { id: person._id, kind, name: person.name, counterNumber: person.counterNumber }
     });
   } catch (error) {
-    console.error('Super admin lab registration error:', error);
-    res.status(500).json({ message: 'Server error registering lab assistant account' });
-  }
-});
-
-// Register Additional Pharmacist (Medical store operator)
-router.post('/super-admin/register-pharmacist', verifyAdminSecret, async (req, res) => {
-  try {
-    const { hospital, name, username, password, counterNumber } = req.body;
-    if (!hospital || !username || !password) {
-      return res.status(400).json({ message: 'Facility selection, username, and password are required' });
-    }
-
-    const existingHospital = await Hospital.findOne({ id: hospital });
-    if (!existingHospital) {
-      return res.status(404).json({ message: 'Selected facility does not exist' });
-    }
-
-    const existingPharmacist = await Pharmacist.findOne({ username, hospital });
-    if (existingPharmacist) {
-      return res
-        .status(400)
-        .json({ message: `Pharmacy username '${username}' is already taken in this facility.` });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
-
-    const newPharmacist = new Pharmacist({
-      name: name || 'Pharmacist',
-      username,
-      passwordHash,
-      counterNumber: counterNumber || 'Pharmacy Counter',
-      hospital
-    });
-    await newPharmacist.save();
-
-    res.status(201).json({
-      message: `Pharmacy account '${username}' registered successfully!`,
-      pharmacist: {
-        id: newPharmacist._id,
-        name: newPharmacist.name,
-        username: newPharmacist.username,
-        counterNumber: newPharmacist.counterNumber,
-        hospital: newPharmacist.hospital
-      }
-    });
-  } catch (error) {
-    console.error('Super admin pharmacist registration error:', error);
-    res.status(500).json({ message: 'Server error registering pharmacist account' });
+    logger.error('[SUPER-ADMIN] Add person failed', { err: error.message });
+    res.status(500).json({ message: 'Server error adding this person' });
   }
 });
 
@@ -919,6 +847,9 @@ router.delete('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) =
     await Staff.deleteMany({ hospital: id });
     await LabAssistant.deleteMany({ hospital: id });
     await Pharmacist.deleteMany({ hospital: id });
+    // The credential goes with the tenant. A leftover row would make the facility
+    // id un-reusable in a way nothing on screen explains.
+    await FacilityCredential.deleteMany({ hospital: id });
 
     // Delete Hospital document
     await Hospital.deleteOne({ id });
@@ -982,8 +913,7 @@ router.put('/super-admin/doctor/:id', verifyAdminSecret, async (req, res) => {
       currentRoom,
       availabilityStatus,
       averageCheckupTime,
-      dailyTokenLimit,
-      password
+      dailyTokenLimit
     } = req.body;
 
     const doctor = await Doctor.findById(id);
@@ -1009,7 +939,6 @@ router.put('/super-admin/doctor/:id', verifyAdminSecret, async (req, res) => {
     // Public profile fields — only the ones this request actually mentioned, so
     // editing a cabin number never silently blanks a doctor's qualifications.
     Object.assign(doctor, normalizeDoctorProfile(req.body));
-    if (password) doctor.passwordHash = await bcrypt.hash(password, 10);
 
     await doctor.save();
     res.json({ message: 'Doctor updated successfully', doctor });
@@ -1036,15 +965,13 @@ router.delete('/super-admin/doctor/:id', verifyAdminSecret, async (req, res) => 
 router.put('/super-admin/staff/:id', verifyAdminSecret, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, username, counterNumber, password } = req.body;
+    const { name, counterNumber } = req.body;
 
     const staff = await Staff.findById(id);
     if (!staff) return res.status(404).json({ message: 'Staff member not found' });
 
     if (name) staff.name = name;
-    if (username) staff.username = username;
     if (counterNumber) staff.counterNumber = counterNumber;
-    if (password) staff.passwordHash = await bcrypt.hash(password, 10);
 
     await staff.save();
     res.json({ message: 'Staff updated successfully', staff });
@@ -1070,14 +997,12 @@ router.delete('/super-admin/staff/:id', verifyAdminSecret, async (req, res) => {
 router.put('/super-admin/lab-assistant/:id', verifyAdminSecret, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, username, password } = req.body;
+    const { name } = req.body;
 
     const lab = await LabAssistant.findById(id);
     if (!lab) return res.status(404).json({ message: 'Lab Assistant not found' });
 
     if (name) lab.name = name;
-    if (username) lab.username = username;
-    if (password) lab.passwordHash = await bcrypt.hash(password, 10);
 
     await lab.save();
     res.json({ message: 'Lab Assistant updated successfully', labAssistant: lab });
@@ -1103,15 +1028,13 @@ router.delete('/super-admin/lab-assistant/:id', verifyAdminSecret, async (req, r
 router.put('/super-admin/pharmacist/:id', verifyAdminSecret, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, username, counterNumber, password } = req.body;
+    const { name, counterNumber } = req.body;
 
     const pharmacist = await Pharmacist.findById(id);
     if (!pharmacist) return res.status(404).json({ message: 'Pharmacist not found' });
 
     if (name) pharmacist.name = name;
-    if (username) pharmacist.username = username;
     if (counterNumber) pharmacist.counterNumber = counterNumber;
-    if (password) pharmacist.passwordHash = await bcrypt.hash(password, 10);
 
     await pharmacist.save();
     res.json({ message: 'Pharmacist updated successfully', pharmacist });
@@ -1217,6 +1140,7 @@ router.post('/super-admin/clear-demo-data', verifyAdminSecret, async (req, res) 
     const everyTenant = { allTenants: true };
 
     await Hospital.deleteMany({});
+    await FacilityCredential.deleteMany({}, everyTenant);
     await Doctor.deleteMany({}, everyTenant);
     await Staff.deleteMany({}, everyTenant);
     await LabAssistant.deleteMany({}, everyTenant);

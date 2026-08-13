@@ -14,7 +14,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node tests/chat-engine.test.js && node tests/billing.test.js && node tests/lab-pdf.test.js && node tests/facility-landing.test.js && node tests/daily-reset.test.js && node tests/tenant-guard.test.js && node tests/env-guard.test.js && node tests/uploads.test.js",
+    "test": "node tests/chat-engine.test.js && node tests/billing.test.js && node tests/lab-pdf.test.js && node tests/facility-landing.test.js && node tests/daily-reset.test.js && node tests/tenant-guard.test.js && node tests/env-guard.test.js && node tests/uploads.test.js && node tests/facility-auth.test.js",
     "test:integration": "node tests/cross-role-flow.test.js",
     "verify": "npm run lint && npm test",
     "prepare": "husky"

@@ -18,20 +18,32 @@ const api = async (path, { method = 'GET', token, body } = {}) => {
   return { status: res.status, json: await res.json().catch(() => ({})) };
 };
 
-const login = async (role, body) => (await api(`/auth/${role}/login`, { method: 'POST', body })).json.token;
+/** One credential opens every room; start the backend with the same value. */
+const signIn = async (hospital) =>
+  (
+    await api('/auth/facility/login', {
+      method: 'POST',
+      body: { hospital, password: process.env.SEED_FACILITY_PASSWORD }
+    })
+  ).json;
 
-const DOCTOR_EMAIL = {
-  'Dr. Sarah Jenkins': 'sarah.jenkins@hospital.com',
-  'Dr. Emily Taylor': 'emily.taylor@hospital.com'
-};
+/** Narrow the facility token to one doctor's cabin. */
+const takeCabin = async (token, doctorId) =>
+  (await api('/auth/facility/cabin', { method: 'POST', token, body: { doctorId } })).json.token;
 
 (async () => {
   const hospital = 'general-hospital';
-  const staff = await login('staff', { username: 'alice_staff', password: 'password123', hospital });
+  if (!process.env.SEED_FACILITY_PASSWORD) {
+    throw new Error(
+      'Set SEED_FACILITY_PASSWORD to the same value the backend was started with — there is no default.'
+    );
+  }
+  const facility = await signIn(hospital);
+  if (!facility.token) throw new Error(`sign-in failed: ${facility.message || 'no token'}`);
 
   const walkIn = await api('/staff/tokens/walk-in', {
     method: 'POST',
-    token: staff,
+    token: facility.token,
     body: {
       name: 'Ramesh Yadav',
       age: 55,
@@ -43,11 +55,9 @@ const DOCTOR_EMAIL = {
   const token = walkIn.json.token;
   console.log('registered:', token.tokenNumber, '->', token.doctor.name, '| type:', token.tokenType);
 
-  const doctor = await login('doctor', {
-    email: DOCTOR_EMAIL[token.doctor.name],
-    password: 'password123',
-    hospital
-  });
+  const assigned = facility.doctors.find((d) => d.name === token.doctor.name);
+  if (!assigned) throw new Error(`${token.doctor.name} is not on this facility's roster`);
+  const doctor = await takeCabin(facility.token, assigned.id);
 
   await api('/doctor/queue/call-next', { method: 'POST', token: doctor });
   const order = await api('/doctor/queue/lab-request', {

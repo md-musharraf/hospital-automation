@@ -98,11 +98,14 @@ function threw(fn) {
 
   section('Tenant guard — coverage');
 
-  check('Every tenant-owned collection is listed', TENANT_MODELS.length === 14, TENANT_MODELS.length);
+  check('Every tenant-owned collection is listed', TENANT_MODELS.length === 15, TENANT_MODELS.length);
   check('Token is guarded', TENANT_MODELS.includes('Token'));
   check('Patient is guarded', TENANT_MODELS.includes('Patient'));
   check('Invoice is guarded', TENANT_MODELS.includes('Invoice'));
   check('ArchivedToken is guarded', TENANT_MODELS.includes('ArchivedToken'));
+  // The facility passwords. An unscoped query here would hand back every
+  // facility's hash at once — the single worst read on the platform.
+  check('FacilityCredential is guarded', TENANT_MODELS.includes('FacilityCredential'));
 
   check('Reads are guarded', GUARDED_METHODS.includes('find') && GUARDED_METHODS.includes('findOne'));
   check(

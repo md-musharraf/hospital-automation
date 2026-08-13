@@ -5,7 +5,10 @@ const DoctorSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, index: true },
-    passwordHash: { type: String, required: true },
+    // No password. A doctor is not an account — the facility signs in once and
+    // picks which cabin it is running (see utils/facilityAuth.js). The email is
+    // kept because it is this doctor's unique handle within the tenant and is
+    // where their own copies of reports go.
     department: { type: String, required: true },
     specialization: { type: String },
     // What KIND of doctor this is at the facility — a visiting consultant who sits

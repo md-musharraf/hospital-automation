@@ -516,14 +516,11 @@ const seedMockData = async () => {
     const docCount = await Doctor.countDocuments();
     if (docCount === 0) {
       console.log('[Mock DB] Seeding initial mock data...');
-      const salt = await bcrypt.genSalt(10);
-      const passwordHash = await bcrypt.hash('password123', salt);
 
       const doctors = await Doctor.insertMany([
         {
           name: 'Dr. Sarah Jenkins',
           email: 'sarah.jenkins@hospital.com',
-          passwordHash,
           department: 'Cardiology',
           specialization: 'Heart Failure & Arrhythmias',
           availabilityStatus: 'Available',
@@ -534,7 +531,6 @@ const seedMockData = async () => {
         {
           name: 'Dr. Robert Chen',
           email: 'robert.chen@hospital.com',
-          passwordHash,
           department: 'Pediatrics',
           specialization: 'Child Healthcare',
           availabilityStatus: 'Available',
@@ -545,7 +541,6 @@ const seedMockData = async () => {
         {
           name: 'Dr. Emily Taylor',
           email: 'emily.taylor@hospital.com',
-          passwordHash,
           department: 'General Medicine',
           specialization: 'General Diagnosis',
           availabilityStatus: 'Available',
@@ -556,7 +551,6 @@ const seedMockData = async () => {
         {
           name: 'Dr. Alan Green',
           email: 'alan.green@lab.com',
-          passwordHash,
           department: 'Emergency',
           specialization: 'Hematology Specialist',
           availabilityStatus: 'Available',
@@ -567,7 +561,6 @@ const seedMockData = async () => {
         {
           name: 'Dr. Clara Watson',
           email: 'clara.watson@medical.com',
-          passwordHash,
           department: 'General Medicine',
           specialization: 'Pharmacist Consultations',
           availabilityStatus: 'Available',
@@ -584,29 +577,21 @@ const seedMockData = async () => {
       await Staff.insertMany([
         {
           name: 'Alice Smith',
-          username: 'alice_staff',
-          passwordHash,
           counterNumber: 'Reception Counter 1',
           hospital: 'general-hospital'
         },
         {
           name: 'Bob Jones',
-          username: 'bob_staff',
-          passwordHash,
           counterNumber: 'Reception Counter 2',
           hospital: 'bright-dental-clinic'
         },
         {
           name: 'Charlie Brown',
-          username: 'charlie_staff',
-          passwordHash,
           counterNumber: 'Lab Ticket Counter 1',
           hospital: 'care-diagnostics'
         },
         {
           name: 'David Miller',
-          username: 'david_staff',
-          passwordHash,
           counterNumber: 'Billing Counter 1',
           hospital: 'apex-pharmacy'
         }
@@ -616,20 +601,14 @@ const seedMockData = async () => {
       await LabAssistant.insertMany([
         {
           name: 'CareeAi Lab Tech',
-          username: 'lab_assistant',
-          passwordHash,
           hospital: 'general-hospital'
         },
         {
           name: 'St. Jude Lab Tech',
-          username: 'ped_lab_assistant',
-          passwordHash,
           hospital: 'bright-dental-clinic'
         },
         {
           name: 'Diagnostic Lab Tech',
-          username: 'diag_lab_assistant',
-          passwordHash,
           hospital: 'care-diagnostics'
         }
       ]);
@@ -644,20 +623,52 @@ const seedMockData = async () => {
       await Pharmacist.insertMany([
         {
           name: 'Pharmacy Tech',
-          username: 'pharm_assistant',
-          passwordHash,
           counterNumber: 'Pharmacy Counter 1',
           hospital: 'apex-pharmacy'
         },
         {
           name: 'Hospital Pharmacist',
-          username: 'gen_pharmacist',
-          passwordHash,
           counterNumber: 'Pharmacy Counter',
           hospital: 'general-hospital'
         }
       ]);
-      console.log('[Mock DB] Seeding completed successfully. Login ready.');
+      console.log('[Mock DB] Seeding completed successfully.');
+    }
+
+    // One credential per facility — the only thing anyone signs in with. This
+    // runs on every start rather than only alongside the personnel seed, so a
+    // database seeded before single sign-in becomes reachable instead of
+    // silently refusing every login.
+    //
+    // The password is taken from SEED_FACILITY_PASSWORD, or generated fresh and
+    // printed once. Deliberately not a constant: this file ships to every
+    // deployment that ever sets AUTO_SEED, and a password written here would be
+    // the same password on all of them.
+    const FacilityCredential = require('./models/FacilityCredential');
+    const unseeded = [];
+    for (const facility of await Hospital.find({})) {
+      if (!(await FacilityCredential.findOne({ hospital: facility.id }))) unseeded.push(facility.id);
+    }
+
+    if (unseeded.length) {
+      const configured = process.env.SEED_FACILITY_PASSWORD;
+      const generated = !configured || configured.length < 12;
+      const password = generated
+        ? `seed-${require('crypto').randomBytes(9).toString('base64url')}`
+        : configured;
+      const passwordHash = await bcrypt.hash(password, 10);
+
+      for (const hospital of unseeded) {
+        await new FacilityCredential({ hospital, passwordHash, setBy: 'auto-seed' }).save();
+      }
+
+      console.log(
+        `[Mock DB] Facility password set for ${unseeded.length} facilities: ${unseeded.join(', ')}`
+      );
+      console.log(`[Mock DB] Sign in at /login — password: ${password}`);
+      if (generated) {
+        console.log('[Mock DB] (generated for this run; set SEED_FACILITY_PASSWORD to pin it)');
+      }
     }
   } catch (err) {
     console.error('[Mock DB] Auto-seeding failed:', err);
