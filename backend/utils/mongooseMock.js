@@ -478,8 +478,17 @@ function model(name, schema) {
   return MockModel;
 }
 
+/** A connection string with any username/password stripped out. */
+function redactUri(uri) {
+  return String(uri || '').replace(/\/\/[^@/]*@/, '//***:***@');
+}
+
 async function connect(uri) {
-  console.log(`\n[MOCK CONNECTED] In-memory SQLite/JSON simulator active on: ${uri}\n`);
+  // Redacted. A `mongodb+srv://` string carries the database password in plain
+  // text, and printing it puts the credential into the hosting platform's log
+  // stream — and into every screenshot and pasted log a developer shares while
+  // asking for help. The host is enough to tell which cluster was targeted.
+  console.log(`\n[MOCK CONNECTED] In-memory simulator active (target: ${redactUri(uri)})\n`);
   return true;
 }
 

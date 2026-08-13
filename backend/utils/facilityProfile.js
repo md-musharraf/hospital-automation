@@ -1040,10 +1040,40 @@ function accountKindsFor(modules, type) {
   return Array.from(kinds);
 }
 
+/**
+ * The cover photo a facility starts with when it uploads none.
+ *
+ * Registration used to hardcode a single Unsplash ward photo for every tenant,
+ * so a medical store and a district hospital opened with the identical picture —
+ * on a product that sells each facility its own page. These are still stock
+ * images, and the point is only that they are not all the SAME stock image: an
+ * administrator who has not uploaded anything yet should still recognise their
+ * own kind of place. Uploading a real photo replaces this (see the branding
+ * uploader in the profile editor).
+ */
+const DEFAULT_COVERS = {
+  Lab: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?q=80&w=1200&auto=format&fit=crop',
+  'Government Lab':
+    'https://images.unsplash.com/photo-1579154204601-01588f351e67?q=80&w=1200&auto=format&fit=crop',
+  Medical: 'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?q=80&w=1200&auto=format&fit=crop',
+  Clinic: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?q=80&w=1200&auto=format&fit=crop',
+  Hospital: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?q=80&w=1200&auto=format&fit=crop',
+  'Government Hospital':
+    'https://images.unsplash.com/photo-1538108149393-fbbd81895907?q=80&w=1200&auto=format&fit=crop',
+  Government: 'https://images.unsplash.com/photo-1538108149393-fbbd81895907?q=80&w=1200&auto=format&fit=crop'
+};
+
+const DEFAULT_COVER_FALLBACK = DEFAULT_COVERS.Hospital;
+
+/** The stock cover for a facility type, never undefined. */
+const defaultCoverFor = (type) => DEFAULT_COVERS[type] || DEFAULT_COVER_FALLBACK;
+
 module.exports = {
   FIELD,
   ALL_SECTIONS,
   FACILITY_TYPE_RULES,
+  DEFAULT_COVERS,
+  defaultCoverFor,
   FACILITY_MODULES,
   OPD_DAYS,
   accountKindsFor,

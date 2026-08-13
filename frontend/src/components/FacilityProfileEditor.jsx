@@ -1,4 +1,5 @@
 import React from 'react';
+import ImageUploadField from './ImageUploadField';
 
 /**
  * The two halves of a facility's profile that the super-admin panel edits in
@@ -184,6 +185,40 @@ export const modulesFrom = (catalogue, type, stored) => {
 const inputCls =
   'w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-lg px-3 py-1.5 outline-none text-xs text-[var(--text-color)] font-semibold transition-all';
 const labelCls = 'block mb-1 text-[10px] uppercase font-black tracking-wider text-[var(--text-secondary)]';
+
+/**
+ * The public page's photo strip.
+ *
+ * A gallery is a list, so it gets one uploader per existing image plus one empty
+ * slot to add the next — rather than a comma-separated URL box, which asked an
+ * administrator to hand-edit a delimited string to delete the third photo.
+ * Clearing a slot removes it, so there is no separate delete control to find.
+ */
+function GalleryUploader({ value = [], onChange }) {
+  const rows = [...value, ''];
+
+  const setAt = (index, url) => {
+    const next = [...value];
+    if (url) next[index] = url;
+    else next.splice(index, 1);
+    onChange(next.filter(Boolean));
+  };
+
+  return (
+    <div className="space-y-3">
+      {rows.map((url, i) => (
+        <ImageUploadField
+          key={`${url || 'new'}-${i}`}
+          label={i < value.length ? `Gallery photo ${i + 1}` : 'Add a gallery photo'}
+          purpose="gallery"
+          value={url}
+          onChange={(next) => setAt(i, next)}
+          hint={i === rows.length - 1 ? 'Clearing a photo removes it from the page.' : undefined}
+        />
+      ))}
+    </div>
+  );
+}
 
 function Field({ label, children }) {
   return (
@@ -528,14 +563,13 @@ export function DoctorProfileFields({ value, onPatch }) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-        <Field label="Photo URL">
-          <input
-            className={inputCls}
-            placeholder="https://…"
-            value={value.photoUrl}
-            onChange={(e) => onPatch({ photoUrl: e.target.value })}
-          />
-        </Field>
+        <ImageUploadField
+          label="Photo"
+          purpose="doctor"
+          value={value.photoUrl}
+          onChange={(url) => onPatch({ photoUrl: url })}
+          hint="Shown on the facility's public page next to this doctor."
+        />
         <Field label="Medical council reg. no.">
           <input
             className={inputCls}
@@ -651,15 +685,13 @@ export function LandingEditor({ value, onChange, templates, facilityName }) {
               className={inputCls}
             />
           </Field>
-          <Field label="Hero image URL">
-            <input
-              type="text"
-              placeholder="https://…"
-              value={value.heroImage}
-              onChange={(e) => set({ heroImage: e.target.value })}
-              className={inputCls}
-            />
-          </Field>
+          <ImageUploadField
+            label="Hero image"
+            purpose="hero"
+            value={value.heroImage}
+            onChange={(url) => set({ heroImage: url })}
+            hint="The large image at the top of the public page. Wide photos work best."
+          />
         </div>
       </Group>
 
@@ -807,12 +839,7 @@ export function LandingEditor({ value, onChange, templates, facilityName }) {
           value={value.languages}
           onChange={(v) => set({ languages: v })}
         />
-        <ListInput
-          label="Gallery image URLs"
-          placeholder="https://img1…, https://img2…"
-          value={value.gallery}
-          onChange={(v) => set({ gallery: v })}
-        />
+        <GalleryUploader value={value.gallery} onChange={(v) => set({ gallery: v })} />
       </Group>
 
       <Group title="FAQs" icon="quiz" count={value.faqs.length}>
