@@ -20,15 +20,15 @@ const {
   useMockDb,
   allowAnyOrigin,
   safeCompare
-} = require('../backend/utils/env');
+} = require('../backend/dist/utils/env');
 
-/** Every .js file under backend/, excluding dependencies. */
+/** Every .js/.ts file under backend/, excluding dependencies. */
 function backendSources(dir = BACKEND, found = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+    if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) backendSources(full, found);
-    else if (entry.name.endsWith('.js')) found.push(full);
+    else if (entry.name.endsWith('.js') || entry.name.endsWith('.ts')) found.push(full);
   }
   return found;
 }
@@ -59,27 +59,33 @@ const GOOD = {
 (async () => {
   section('Env guard — required names must match what the code reads');
 
-  const sources = backendSources().filter((f) => !f.endsWith(path.join('utils', 'env.js')));
+  const sources = backendSources().filter(
+    (f) => !f.endsWith(path.join('utils', 'env.ts')) && !f.endsWith(path.join('utils', 'env.js'))
+  );
   const corpus = sources.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 
   // Reach into the module's own list rather than restating it here — a copy
   // would drift exactly the way the original bug did.
-  const required = require('../backend/utils/env');
+  const required = require('../backend/dist/utils/env');
   const names = ['JWT_SECRET', 'ADMIN_SECRET', 'MONGODB_URI'];
 
   names.forEach((name) => {
     check(
       `${name} is actually read somewhere in backend/`,
       corpus.includes(`process.env.${name}`),
-      `no 'process.env.${name}' found outside utils/env.js`
+      `no 'process.env.${name}' found outside utils/env.ts`
     );
   });
+
+  const envSrcPath = fs.existsSync(path.join(BACKEND, 'utils', 'env.ts'))
+    ? path.join(BACKEND, 'utils', 'env.ts')
+    : path.join(BACKEND, 'utils', 'env.js');
 
   check(
     'The wrong name from the failed deploy is gone',
     !JSON.stringify(required).includes('MONGO_URI"') &&
-      !fs.readFileSync(path.join(BACKEND, 'utils', 'env.js'), 'utf8').includes("name: 'MONGO_URI'"),
-    'utils/env.js still requires MONGO_URI, which nothing reads'
+      !fs.readFileSync(envSrcPath, 'utf8').includes("name: 'MONGO_URI'"),
+    'utils/env.ts still requires MONGO_URI, which nothing reads'
   );
 
   section('Env guard — what blocks a production boot');

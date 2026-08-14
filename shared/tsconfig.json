@@ -1,0 +1,20 @@
+{
+  // The one module both runtimes share.
+  //
+  // Emitted as CommonJS so the backend can `require()` it with no loader and no
+  // change to how Node starts. The frontend does NOT consume this output — Vite
+  // aliases `@shared` straight to `src/`, so a change here hot-reloads in the
+  // browser instead of needing a rebuild first. One authoring location, two
+  // consumption paths, no duplicated implementation.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // node16 rather than the legacy node10 resolution: node10 is deprecated in
+    // TypeScript 6 and errors outright in 7. `shared/package.json` declares
+    // `"type": "commonjs"`, which is what tells node16 to emit `require`.
+    "module": "node16",
+    "moduleResolution": "node16",
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*.ts"]
+}

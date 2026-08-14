@@ -31,12 +31,12 @@ const {
   rejectWeakPassword,
   facilityTokenClaims,
   PASSWORD_MIN_LENGTH
-} = require('../backend/utils/facilityAuth');
+} = require('../backend/dist/utils/facilityAuth');
 
 // middleware/auth.js refuses to load without a secret, and generating one per
 // run is exactly what it does for development anyway.
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-not-used-for-signing-here';
-const { ensureRole } = require('../backend/middleware/auth');
+const { ensureRole } = require('../backend/dist/middleware/auth');
 
 /** Capture what a middleware did instead of letting it talk to a socket. */
 function runGuard(guard, user) {
@@ -174,7 +174,7 @@ const hospitalWith = (modules, type = 'Hospital') => ({ id: 'h1', name: 'Test Fa
   // The failure this prevents is not subtle, it is just easy: someone adds a
   // convenience default to unblock a local run, and it ships. A grep is a blunt
   // instrument and exactly the right one here.
-  const BACKEND = path.resolve(__dirname, '..', 'backend');
+  const { BACKEND_DIST: BACKEND } = require('./helpers/backendPath');
   const sources = [];
   (function walk(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

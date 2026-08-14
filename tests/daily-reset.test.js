@@ -10,9 +10,9 @@ const path = require('path');
 const { installMockDb } = require('./helpers/mockDb');
 const { section, check, report } = require('./helpers/assert');
 
-const BACKEND = path.resolve(__dirname, '..', 'backend');
+const { BACKEND_DIST: BACKEND } = require('./helpers/backendPath');
 const { models } = installMockDb(BACKEND);
-const { runDailyReset } = require('../backend/jobs/dailyReset');
+const { runDailyReset } = require('../backend/dist/jobs/dailyReset');
 
 /** Records every room an event was addressed to, so we can prove tenant scoping. */
 function fakeIo() {

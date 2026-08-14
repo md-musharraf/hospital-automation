@@ -1,0 +1,44 @@
+{
+  // Compiler settings every part of the repo inherits. The backend and the
+  // frontend disagree about module system and DOM globals, so those live in
+  // their own tsconfigs — everything about STRICTNESS is decided once, here.
+  //
+  // The point of this migration was that a phone number could be stored as
+  // "98765 43210" or "+919876543210" and an email as "A@x.com" or "a@x.com",
+  // producing two records for one person. Settings below are chosen to make
+  // that class of bug a compile error rather than a support ticket:
+  //
+  //   strict                        — no implicit any, real null checking
+  //   exactOptionalPropertyTypes    — `{phone?: string}` cannot be set to
+  //                                   undefined by accident
+  //   noUncheckedIndexedAccess      — `arr[0]` is `T | undefined`, which is
+  //                                   what it actually is
+  //   noImplicitOverride/Returns    — cheap, catches real slips
+  //
+  // `verbatimModuleSyntax` is deliberately OFF: the backend emits CommonJS and
+  // turning it on would force `import type` discipline across a codebase that
+  // is still half JavaScript during the migration.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    // Unused locals/params are ESLint's job here — it already reports them as
+    // warnings, and making them compile errors would block the migration on
+    // stylistic cleanup in files that are otherwise correct.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  }
+}

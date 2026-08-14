@@ -1,0 +1,13 @@
+{
+  "name": "@careeai/shared",
+  "version": "1.0.0",
+  "description": "Field types and request parsing shared by the CareeAi backend and frontend",
+  "private": true,
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

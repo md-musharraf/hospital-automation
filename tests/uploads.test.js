@@ -21,8 +21,8 @@ function loadWith(env) {
     if (env[k] === undefined) delete process.env[k];
     else process.env[k] = env[k];
   });
-  delete require.cache[require.resolve('../backend/utils/imagekit')];
-  const mod = require('../backend/utils/imagekit');
+  delete require.cache[require.resolve('../backend/dist/utils/imagekit')];
+  const mod = require('../backend/dist/utils/imagekit');
   const result = { mod, restore: () => (process.env = saved) };
   return result;
 }

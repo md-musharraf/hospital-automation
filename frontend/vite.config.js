@@ -1,8 +1,23 @@
+import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+
+  resolve: {
+    alias: {
+      // Point at the shared SOURCE, not its compiled dist.
+      //
+      // The backend consumes `shared/dist` because Node needs JavaScript; the
+      // browser build does not, and aliasing to source means editing a
+      // normalization rule hot-reloads the form that uses it instead of
+      // silently serving a stale `dist` until someone remembers to rebuild.
+      // Both paths are the same TypeScript file, so the two runtimes cannot
+      // disagree about what a phone number is.
+      '@careeai/shared': fileURLToPath(new URL('../shared/src/index.ts', import.meta.url))
+    }
+  },
 
   build: {
     // Split the vendor libraries out of the app bundle. React, the router and

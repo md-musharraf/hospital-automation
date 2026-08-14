@@ -2,9 +2,9 @@ const path = require('path');
 const { installMockDb } = require('./helpers/mockDb');
 const { section, check, report } = require('./helpers/assert');
 
-const BACKEND = path.resolve(__dirname, '..', 'backend');
+const { BACKEND_DIST: BACKEND } = require('./helpers/backendPath');
 const { models } = installMockDb(BACKEND);
-const { generateUniqueTokenNumber } = require('../backend/utils/tokenHelper');
+const { generateUniqueTokenNumber } = require('../backend/dist/utils/tokenHelper');
 
 (async () => {
   section('Daily Token Reset & Lab PDF Report Tests');

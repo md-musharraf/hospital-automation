@@ -11,7 +11,7 @@ const {
   tenantGuardPlugin,
   TENANT_MODELS,
   GUARDED_METHODS
-} = require('../backend/utils/tenantGuard');
+} = require('../backend/dist/utils/tenantGuard');
 const { section, check, report } = require('./helpers/assert');
 
 /**

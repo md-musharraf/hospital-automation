@@ -1,0 +1,174 @@
+// Realtime backbone for CareeAi.
+//
+// Before this module every change in the building emitted one blunt
+// `queue-updated` into a single global room, so: (a) every facility's dashboards
+// woke up for every other facility's events — a tenant leak in the live layer and
+// a lot of pointless re-fetching, and (b) a portal could not tell "a lab report
+// landed" apart from "a doctor added buffer time", so it just re-fetched
+// everything or ignored it.
+//
+// Here events are addressed to a FACILITY and, optionally, to a ROLE inside it,
+// and they carry a specific name. `queue-updated` is still emitted alongside the
+// new events so nothing that listens for it today breaks.
+
+import ActivityLog from '../models/ActivityLog';
+import logger from './logger';
+
+/** Room names. Every portal joins `hospital:<id>` and `role:<role>:<id>`. */
+export const facilityRoom = (hospital?: string | null): string =>
+  `hospital:${hospital || 'general-hospital'}`;
+export const roleRoom = (role: string, hospital?: string | null): string =>
+  `role:${role}:${hospital || 'general-hospital'}`;
+export const doctorRoom = (doctorId: string): string => `doctor:${doctorId}`;
+export const patientRoom = (tokenId: string): string => `patient:${tokenId}`;
+
+/**
+ * Emit an event to everyone in one facility.
+ * `alsoLegacy` additionally fires the old global `queue-updated` so existing
+ * listeners (PublicTVDisplay, PatientLiveTracker, older portals) keep working.
+ */
+export function toFacility(
+  io: any,
+  hospital: string,
+  event: string,
+  payload: Record<string, any> = {},
+  { alsoLegacy = false }: { alsoLegacy?: boolean } = {}
+): void {
+  if (!io) return;
+  try {
+    const body = { hospital, at: new Date().toISOString(), ...payload };
+    io.to(facilityRoom(hospital)).emit(event, body);
+    if (alsoLegacy) {
+      io.to(facilityRoom(hospital)).emit('queue-updated', body);
+      io.to('queue:global').emit('queue-updated', body);
+    }
+  } catch (err: any) {
+    console.error(`[REALTIME] emit ${event} failed:`, err.message);
+  }
+}
+
+/** Emit to one role inside one facility (e.g. only the lab bench screens). */
+export function toRole(
+  io: any,
+  role: string,
+  hospital: string,
+  event: string,
+  payload: Record<string, any> = {}
+): void {
+  if (!io) return;
+  try {
+    io.to(roleRoom(role, hospital)).emit(event, { hospital, at: new Date().toISOString(), ...payload });
+  } catch (err: any) {
+    console.error(`[REALTIME] role emit ${event} failed:`, err.message);
+  }
+}
+
+/** Emit to a single doctor's console. */
+export function toDoctor(io: any, doctorId: string, event: string, payload: Record<string, any> = {}): void {
+  if (!io || !doctorId) return;
+  try {
+    io.to(doctorRoom(doctorId)).emit(event, { at: new Date().toISOString(), ...payload });
+  } catch (err: any) {
+    console.error(`[REALTIME] doctor emit ${event} failed:`, err.message);
+  }
+}
+
+/** Emit to the patient watching one specific token (live tracker / portal). */
+export function toPatient(io: any, tokenId: string, event: string, payload: Record<string, any> = {}): void {
+  if (!io || !tokenId) return;
+  try {
+    io.to(patientRoom(tokenId)).emit(event, { at: new Date().toISOString(), ...payload });
+  } catch (err: any) {
+    console.error(`[REALTIME] patient emit ${event} failed:`, err.message);
+  }
+}
+
+/**
+ * Record one line in the facility's activity feed AND push it live.
+ * Always best-effort: the feed is an observability nicety, so a failure here must
+ * never break the clinical action that triggered it.
+ */
+export async function logActivity(io: any, entry: Record<string, any> = {}): Promise<any> {
+  const {
+    hospital = 'general-hospital',
+    type = 'system',
+    role = 'system',
+    actor,
+    message,
+    tokenNumber,
+    refId,
+    severity = 'info'
+  } = entry;
+
+  if (!message) return null;
+
+  let saved: any = null;
+  try {
+    saved = await new (ActivityLog as any)({
+      hospital,
+      type,
+      role,
+      actor,
+      message,
+      tokenNumber,
+      refId: refId ? String(refId) : undefined,
+      severity
+    }).save();
+  } catch (err: any) {
+    logger.error('[ACTIVITY] persist failed', { err: err.message });
+  }
+
+  // Push even if persistence failed — a live viewer still wants to see it.
+  toFacility(io, hospital, 'activity', {
+    _id: saved && saved._id,
+    type,
+    role,
+    actor,
+    message,
+    tokenNumber,
+    refId: refId ? String(refId) : undefined,
+    severity,
+    createdAt: (saved && saved.createdAt) || new Date()
+  });
+
+  return saved;
+}
+
+/**
+ * The one call a route makes after changing a token: tell the whole facility the
+ * patient moved, keep legacy listeners alive, and (optionally) drop a feed line.
+ */
+export async function announceJourney(
+  io: any,
+  { hospital, token, stage, actor, role, message, type, severity }: any
+): Promise<void> {
+  toFacility(
+    io,
+    hospital,
+    'journey-updated',
+    {
+      tokenId: token && String(token._id),
+      tokenNumber: token && token.tokenNumber,
+      stage,
+      doctorId: token && token.doctor && String(token.doctor._id || token.doctor)
+    },
+    { alsoLegacy: true }
+  );
+
+  if (token) {
+    toPatient(io, String(token._id), 'journey-updated', { stage, tokenNumber: token.tokenNumber });
+  }
+
+  if (message) {
+    await logActivity(io, {
+      hospital,
+      type: type || 'system',
+      role,
+      actor,
+      message,
+      tokenNumber: token && token.tokenNumber,
+      refId: token && token._id,
+      severity
+    });
+  }
+}

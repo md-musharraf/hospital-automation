@@ -13,7 +13,7 @@ const {
   accountKindsFor,
   LANDING_TEMPLATES,
   ALL_SECTIONS
-} = require(path.resolve(__dirname, '..', 'backend', 'utils', 'facilityProfile'));
+} = require(path.resolve(__dirname, '..', 'backend', 'dist', 'utils', 'facilityProfile'));
 
 (async () => {
   section('Facility Modules — what a facility is allowed to have');

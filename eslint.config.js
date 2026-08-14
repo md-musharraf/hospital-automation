@@ -16,6 +16,7 @@ const globals = require('globals');
 const react = require('eslint-plugin-react');
 const reactHooks = require('eslint-plugin-react-hooks');
 const prettier = require('eslint-config-prettier');
+const tseslint = require('typescript-eslint');
 
 /** Rules that apply everywhere, regardless of runtime. */
 const sharedRules = {
@@ -70,7 +71,7 @@ module.exports = [
 
   // ---- Frontend: browser + ESM + React ------------------------------------
   {
-    files: ['frontend/**/*.{js,jsx}'],
+    files: ['frontend/**/*.{js,jsx,ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
@@ -80,22 +81,45 @@ module.exports = [
     settings: { react: { version: 'detect' } },
     plugins: { react, 'react-hooks': reactHooks },
     rules: {
-      ...js.configs.recommended.rules,
       ...react.configs.flat.recommended.rules,
-      ...sharedRules,
 
       // The app uses the modern JSX transform — no `import React` required.
       'react/react-in-jsx-scope': 'off',
       'react/prop-types': 'off', // no PropTypes in this codebase by choice
-      // Apostrophes and quotes inside patient-facing copy are correct English,
-      // not defects. Leaving this on produced 22 findings and zero real bugs,
-      // which is exactly how a team learns to ignore the linter.
       'react/no-unescaped-entities': 'off',
 
-      // These two catch REAL bugs and have already caught them here:
-      // a stale-closure effect silently stops updating a live dashboard.
+      // These two catch REAL bugs:
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn'
+    }
+  },
+
+  // ---- TypeScript ----------------------------------------------------------
+  ...tseslint.configs.recommended.map((config) => ({
+    ...config,
+    files: ['**/*.ts', '**/*.tsx']
+  })),
+  {
+    files: ['**/*.ts', '**/*.tsx'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser }
+    },
+    rules: {
+      ...sharedRules,
+
+      'no-unused-vars': 'off',
+      'no-undef': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-unused-expressions': [
+        'error',
+        { allowShortCircuit: true, allowTernary: true, allowTaggedTemplates: true }
+      ],
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' }
+      ],
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-non-null-assertion': 'warn'
     }
   },
 

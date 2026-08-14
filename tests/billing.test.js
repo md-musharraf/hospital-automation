@@ -2,7 +2,7 @@ const path = require('path');
 const { installMockDb } = require('./helpers/mockDb');
 const { section, check, report } = require('./helpers/assert');
 
-const BACKEND = path.resolve(__dirname, '..', 'backend');
+const { BACKEND_DIST: BACKEND } = require('./helpers/backendPath');
 const { models } = installMockDb(BACKEND);
 
 // The real money maths and rate-card resolution, not a copy of them — a drift

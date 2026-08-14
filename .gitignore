@@ -5,6 +5,16 @@ frontend/node_modules/
 
 # Production builds
 frontend/dist/
+backend/dist/
+
+# NOT ignored: shared/dist.
+#
+# It is generated, and generated output normally does not belong in git. This is
+# the exception: the backend `require()`s it at boot, and the production build
+# command lives in Render's dashboard rather than in this repo — so there is no
+# guarantee anything runs `tsc` before `node index.js` does. A committed dist
+# means the server boots even if nothing built it. `npm test` rebuilds it first,
+# so a stale copy shows up as an unexpected git diff rather than as drift.
 
 # Local env file containing secrets
 backend/.env
