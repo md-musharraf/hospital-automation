@@ -109,6 +109,96 @@ export function rejectWeakPassword(password?: string | null): string | null {
   return null;
 }
 
+/**
+ * Minimum length for ONE PERSON's password.
+ *
+ * Shorter than a facility's twelve, deliberately. A facility credential is the
+ * skeleton key to a whole tenant and is typed a handful of times a week; a
+ * personal password is typed at the start of every shift by someone standing at
+ * a counter with patients waiting, and a rule that makes it painful is a rule
+ * that produces one password written on the monitor for the whole department —
+ * which is the exact failure the personal login exists to remove. Eight, plus
+ * the same guessable-prefix ban, is the honest trade.
+ */
+export const PERSON_PASSWORD_MIN_LENGTH = 8;
+
+/**
+ * Is this password good enough for one person's sign-in?
+ * Returns `null` when it is, or the sentence to show the admin when it is not.
+ */
+export function rejectWeakPersonPassword(password?: string | null): string | null {
+  if (typeof password !== 'string' || !password.trim()) {
+    return 'A password is required.';
+  }
+  if (password.length < PERSON_PASSWORD_MIN_LENGTH) {
+    return `A personal password must be at least ${PERSON_PASSWORD_MIN_LENGTH} characters.`;
+  }
+  if (BANNED_PASSWORD_PATTERNS.some((re) => re.test(password))) {
+    return 'That password starts with something guessable (password / hospital / admin / 123456). Choose something nobody would try first.';
+  }
+  return null;
+}
+
+/**
+ * The four collections a person can sign in from, and the console each opens.
+ *
+ * Written as data rather than a switch because three separate places need to
+ * walk the same list — sign-in, password-setting, and the roster the admin panel
+ * shows — and a role that exists in one of those and not the others is how a
+ * pharmacist ends up creatable but unable to log in.
+ *
+ * `scope` is what the token carries; every route guard in this app is written
+ * against these four strings (see ALL_SCOPES).
+ */
+export const PERSON_ROLES: Array<{ scope: string; model: string; label: string }> = [
+  { scope: 'staff', model: 'Staff', label: 'Reception' },
+  { scope: 'doctor', model: 'Doctor', label: 'Doctor' },
+  { scope: 'lab', model: 'LabAssistant', label: 'Lab' },
+  { scope: 'pharmacy', model: 'Pharmacist', label: 'Pharmacy' }
+];
+
+export interface PersonTokenClaims {
+  role: string;
+  hospital: string;
+  name: string;
+  scopes: string[];
+  personId: string;
+  personRole: string;
+  actingDoctor?: string;
+}
+
+/**
+ * The claims ONE PERSON's session carries.
+ *
+ * Shaped to slot into the guards that already exist rather than to be tidy:
+ * `role` is the scope string because `ensureRole` compares against exactly that,
+ * and `scopes` is the same single value as a list because the facility session
+ * carries a list and the multi-scope routes check it. A person therefore reaches
+ * precisely one console, which is the whole point — a receptionist's token has
+ * no doctor scope in it at all.
+ *
+ * For a doctor, `actingDoctor` is set here at sign-in. The facility flow gets
+ * that claim from POST /facility/cabin after choosing from a roster; a doctor
+ * signing in as themselves has already answered that question by logging in, so
+ * asking again would be asking someone to confirm who they are.
+ */
+export function personTokenClaims(person: any, scope: string, hospitalId: string): PersonTokenClaims {
+  const claims: PersonTokenClaims = {
+    role: scope,
+    hospital: hospitalId,
+    name: person.name,
+    scopes: [scope],
+    personId: String(person._id),
+    personRole: scope
+  };
+
+  if (scope === 'doctor') {
+    claims.actingDoctor = String(person._id);
+  }
+
+  return claims;
+}
+
 export interface FacilityTokenClaims {
   role: string;
   hospital: string;

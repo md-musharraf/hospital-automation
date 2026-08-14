@@ -242,17 +242,21 @@ const hospitalWith = (modules, type = 'Hospital') => ({ id: 'h1', name: 'Test Fa
 
   section('The retired per-role logins are gone');
 
+  // Still gone, and still worth asserting — but "exactly one login" is no longer
+  // the rule. There are two doors now: the shared facility password, and a
+  // personal email+password that resolves the role from the PERSON rather than
+  // from which of four URLs was posted to. See tests/person-login.test.js.
   for (const removed of ['/doctor/login', '/staff/login', '/lab/login', '/pharmacy/login']) {
     check(
       `${removed} no longer exists`,
       !new RegExp(`router\\.post\\('${removed}'`).test(authRoute),
-      `${removed} is still registered — there should be exactly one login`
+      `${removed} is still registered — the role must come from the person, not the route`
     );
   }
   check(
-    'the one facility login exists',
+    'the facility login exists',
     /router\.post\('\/facility\/login'/.test(authRoute),
-    'POST /auth/facility/login is the only sign-in route'
+    'POST /auth/facility/login is the shared credential every live facility uses'
   );
   check(
     'the facility login is rate-limited',

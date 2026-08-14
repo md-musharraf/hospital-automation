@@ -25,10 +25,17 @@ const DoctorSchema = new mongoose.Schema(
       lowercase: true,
       set: (v: any) => normalizeEmail(v)
     },
-    // No password. A doctor is not an account — the facility signs in once and
-    // picks which cabin it is running (see utils/facilityAuth.js). The email is
-    // kept because it is this doctor's unique handle within the tenant and is
-    // where their own copies of reports go.
+    // Optional, because a doctor is not REQUIRED to be an account.
+    //
+    // The facility credential still opens every room and picks a cabin from the
+    // roster, so a clinic that wants one password kept on the front desk carries
+    // on unchanged. Setting a password here adds a second, narrower way in: the
+    // doctor signs in as themselves and the cabin is implied by who they are,
+    // instead of being chosen from a list after the fact.
+    //
+    // Never selected by default — every read of this collection that reaches a
+    // client goes through `.select('-passwordHash')`.
+    passwordHash: { type: String, select: false },
     department: { type: String, required: true },
     specialization: { type: String },
     // What KIND of doctor this is at the facility — a visiting consultant who sits

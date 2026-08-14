@@ -133,10 +133,26 @@ const SECTION_COUNT_LABEL = {
   pharmacy: ['pharmacy counter', 'pharmacy counters']
 };
 
-const blankStaff = () => ({ name: '', counterNumber: 'Reception Counter 1' });
+// `loginEmail` / `password` are optional on every person.
+//
+// Left blank the person is a name on the roster and reaches their console
+// through the shared facility password, exactly as before. Filled in they also
+// get their own sign-in, which opens only their room. Onboarding usually happens
+// before anyone has decided who gets an account, so these must never be required
+// — a registration that stalls on eight passwords is a registration abandoned
+// halfway.
+const blankStaff = () => ({
+  name: '',
+  counterNumber: 'Reception Counter 1',
+  loginEmail: '',
+  password: ''
+});
 const blankDoctor = () => ({
   name: '',
   email: '',
+  // A doctor's email already exists as their handle in the tenant, so a password
+  // alone turns them into an account — no second address to type.
+  password: '',
   department: 'General Medicine',
   specialization: '',
   doctorType: 'Consultant',
@@ -156,8 +172,13 @@ const blankDoctor = () => ({
   photoUrl: '',
   about: ''
 });
-const blankLab = () => ({ name: '' });
-const blankPharmacy = () => ({ name: '', counterNumber: 'Pharmacy Counter' });
+const blankLab = () => ({ name: '', loginEmail: '', password: '' });
+const blankPharmacy = () => ({
+  name: '',
+  counterNumber: 'Pharmacy Counter',
+  loginEmail: '',
+  password: ''
+});
 
 export default function SuperAdminPortal() {
   const navigate = useNavigate();
@@ -1977,8 +1998,9 @@ export default function SuperAdminPortal() {
                       )}
                     </h3>
                     <p className="text-[11px] text-[var(--text-secondary)] font-semibold">
-                      Who works the front desk. Names and counters — everyone signs in with the one facility
-                      password below.
+                      Who works the front desk. Email and password are optional — leave them blank and this
+                      person signs in with the facility password; fill them in and they get their own login
+                      that opens reception only.
                     </p>
 
                     {staffRows.map((s, i) => (
@@ -2004,6 +2026,21 @@ export default function SuperAdminPortal() {
                         >
                           ×
                         </button>
+                        <input
+                          type="email"
+                          placeholder="Their login email (optional)"
+                          value={s.loginEmail}
+                          onChange={(e) => patchRow(setStaffRows, i, 'loginEmail', e.target.value)}
+                          className={`${fieldCls} md:col-span-4`}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Their password (optional)"
+                          value={s.password}
+                          onChange={(e) => patchRow(setStaffRows, i, 'password', e.target.value)}
+                          className={`${fieldCls} md:col-span-4`}
+                        />
+                        <span />
                       </div>
                     ))}
                     <button
@@ -2079,6 +2116,18 @@ export default function SuperAdminPortal() {
                             placeholder="Email *"
                             value={d.email}
                             onChange={(email) => patchRow(setDoctorRows, i, 'email', email)}
+                            className={fieldCls}
+                          />
+                          {/* Optional. Set it and this doctor signs in with the
+                              email above and lands straight in their own cabin —
+                              no roster, no chance of running a colleague's. Left
+                              blank they are reached through the facility
+                              password exactly as before. */}
+                          <input
+                            type="text"
+                            placeholder="Their password (optional)"
+                            value={d.password}
+                            onChange={(e) => patchRow(setDoctorRows, i, 'password', e.target.value)}
                             className={fieldCls}
                           />
                         </div>
@@ -2229,6 +2278,21 @@ export default function SuperAdminPortal() {
                         >
                           ×
                         </button>
+                        <input
+                          type="email"
+                          placeholder="Their login email (optional)"
+                          value={l.loginEmail}
+                          onChange={(e) => patchRow(setLabRows, i, 'loginEmail', e.target.value)}
+                          className={`${fieldCls} md:col-span-3`}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Their password (optional)"
+                          value={l.password}
+                          onChange={(e) => patchRow(setLabRows, i, 'password', e.target.value)}
+                          className={`${fieldCls} md:col-span-3`}
+                        />
+                        <span />
                       </div>
                     ))}
                     <button
@@ -2286,6 +2350,21 @@ export default function SuperAdminPortal() {
                         >
                           ×
                         </button>
+                        <input
+                          type="email"
+                          placeholder="Their login email (optional)"
+                          value={p.loginEmail}
+                          onChange={(e) => patchRow(setPharmacyRows, i, 'loginEmail', e.target.value)}
+                          className={`${fieldCls} md:col-span-4`}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Their password (optional)"
+                          value={p.password}
+                          onChange={(e) => patchRow(setPharmacyRows, i, 'password', e.target.value)}
+                          className={`${fieldCls} md:col-span-4`}
+                        />
+                        <span />
                       </div>
                     ))}
                     <button

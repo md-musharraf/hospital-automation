@@ -176,7 +176,10 @@ export default function DashboardShell({
               hands the same console back to whoever is on next, so the way out
               of a cabin has to sit next to — and be distinct from — the way out
               of the facility. */}
-          {session && session.activeRoom === 'doctor' && session.actingDoctor && (
+          {/* `onLeaveCabin` is withheld for a doctor signed in as themselves:
+              their cabin came from their own credential, so there is nothing to
+              switch to and no token that could switch it. */}
+          {session && session.activeRoom === 'doctor' && session.actingDoctor && session.onLeaveCabin && (
             <button
               type="button"
               onClick={session.onLeaveCabin}

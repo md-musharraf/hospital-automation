@@ -126,13 +126,33 @@ function CabinPicker({ doctors, onPick, busy, error }) {
 }
 
 export default function FacilityConsole({ token, facility, doctors, onLogout }) {
-  const rooms = useMemo(() => roomsFor(facility?.scopes), [facility?.scopes]);
+  // Only the shared facility credential opens the whole building. A personal
+  // sign-in carries the person's single scope and gets that one room.
+  const rooms = useMemo(
+    () => roomsFor(facility?.scopes, facility?.role === 'facility'),
+    [facility?.scopes, facility?.role]
+  );
   const [activeRoom, setActiveRoom] = useState(() => (rooms[0] ? rooms[0].key : 'staff'));
 
   // The cabin, once one is taken: a token narrowed to one doctor plus that
   // doctor's record. Held here rather than in a room so switching to the lab and
   // back does not ask again mid-shift.
-  const [cabin, setCabin] = useState(null);
+  //
+  // A doctor who signed in as THEMSELVES already has this: their session token
+  // names their cabin, so it starts filled and the roster is never shown. Asking
+  // someone who just typed their own address to now pick themselves off a list
+  // is asking them to confirm who they are.
+  const [cabin, setCabin] = useState(() =>
+    facility?.actingDoctor
+      ? {
+          token,
+          doctor: (doctors || []).find((d) => String(d.id) === String(facility.actingDoctor)) || {
+            id: facility.actingDoctor,
+            name: facility.personName || 'Your cabin'
+          }
+        }
+      : null
+  );
   const [cabinBusy, setCabinBusy] = useState(false);
   const [cabinError, setCabinError] = useState('');
   const branding = useFacilityBranding(facility?.id);
@@ -172,6 +192,12 @@ export default function FacilityConsole({ token, facility, doctors, onLogout }) 
     }
   };
 
+  // A doctor signed in as themselves has exactly one cabin — their own — and no
+  // way back into it: POST /facility/cabin needs the shared facility token, so
+  // "leave cabin" would drop them onto a roster the API refuses them. Withheld
+  // rather than shown-and-broken.
+  const ownCabinOnly = Boolean(facility?.actingDoctor);
+
   const session = useMemo(
     () => ({
       facility,
@@ -179,9 +205,9 @@ export default function FacilityConsole({ token, facility, doctors, onLogout }) 
       activeRoom,
       onSwitchRoom: setActiveRoom,
       actingDoctor: cabin ? cabin.doctor : null,
-      onLeaveCabin: () => setCabin(null)
+      onLeaveCabin: ownCabinOnly ? null : () => setCabin(null)
     }),
-    [facility, rooms, activeRoom, cabin]
+    [facility, rooms, activeRoom, cabin, ownCabinOnly]
   );
 
   // A facility whose token carries no rooms at all cannot happen through the

@@ -4,21 +4,26 @@ import { BACKEND_URL } from '../App';
 import { Icon } from './dashboard/DashboardKit';
 
 /**
- * One door into the whole system, and now one key.
+ * One door into the whole system, with two keys that fit it.
  *
- * A facility we onboard gets a single address and a single password. Whoever is
- * on shift opens it and every room that facility runs is inside: reception, the
- * cabins, the lab bench, the pharmacy counter.
+ * A facility gets a single shared password: whoever is on shift opens it and
+ * every room that facility runs is inside — reception, the cabins, the lab
+ * bench, the pharmacy counter. That is still here and still the default,
+ * because it is the thing a three-person clinic can actually keep track of.
  *
- * This page used to ask two questions — which facility, and which of four roles
- * are you — because each role was a separate account with its own password.
- * That meant onboarding a four-person clinic involved handing over four
- * passwords, and the "I am" grid was really asking "which of our four passwords
- * do you happen to hold". The role question is gone: what a facility can reach
- * is decided by the modules it runs, and the console shows exactly those.
+ * A person can also be given their own email and password. That opens exactly
+ * ONE room — a receptionist's session cannot reach the pharmacy API at all —
+ * and for a doctor it also settles which cabin they are running, so there is no
+ * roster to pick from and no way to end up working as a colleague. Bigger
+ * hospitals want that; the same building's front desk may still share one
+ * password. Both work at once, and neither took the other away.
  *
- * The four per-role routes still redirect here, so printed cards and old
- * bookmarks keep working — they just land on one form now.
+ * What this page deliberately does NOT do is ask which of four roles you are.
+ * That grid used to exist when each role was its own account, and it was really
+ * asking "which of our four passwords do you hold". A personal sign-in already
+ * knows the answer from the address; a shared one gets every room the facility
+ * runs. The four per-role routes still redirect here, so printed cards and old
+ * bookmarks keep working.
  */
 export default function UnifiedLogin({ onAuthenticated }) {
   const navigate = useNavigate();
@@ -28,6 +33,10 @@ export default function UnifiedLogin({ onAuthenticated }) {
   const [facility, setFacility] = useState(params.get('facility') || '');
   const [facilityQuery, setFacilityQuery] = useState('');
   const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
+  // Shared facility password by default: it is what every facility has, and a
+  // personal account is the exception someone has been told about.
+  const [personal, setPersonal] = useState(params.get('as') === 'me');
   const [error, setError] = useState('');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -67,17 +76,25 @@ export default function UnifiedLogin({ onAuthenticated }) {
     setNeedsSetup(false);
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/auth/facility/login`, {
+      // Two endpoints, because they answer different questions: one asks "is
+      // this the facility's password", the other "who are you here". Choosing
+      // client-side keeps each server handler single-purpose — a combined route
+      // would have to guess which credential it was given.
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/${personal ? 'login' : 'facility/login'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hospital: facility, password })
+        body: JSON.stringify(
+          personal ? { hospital: facility, email, password } : { hospital: facility, password }
+        )
       });
       const data = await res.json();
       if (!res.ok || !data.token) {
         // A facility whose password was never set is not a typo — it is a thing
         // only the platform owner can fix, and saying "wrong password" would
-        // send whoever is on shift round a loop they cannot get out of.
-        if (res.status === 403) setNeedsSetup(true);
+        // send whoever is on shift round a loop they cannot get out of. Only
+        // meaningful for the shared password; a personal 403 means the facility
+        // stopped running that person's unit, which says so itself.
+        if (res.status === 403 && !personal) setNeedsSetup(true);
         throw new Error(data.message || 'Sign in failed');
       }
 
@@ -174,12 +191,61 @@ export default function UnifiedLogin({ onAuthenticated }) {
               )}
             </div>
 
+            {/* Which key you hold. Two buttons rather than a checkbox because
+                the choice changes which fields are asked for, and a control
+                that silently adds a field above itself is disorienting. */}
+            <div className="grid grid-cols-2 gap-2 p-1 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl">
+              {[
+                { key: false, label: 'Facility password', icon: 'apartment' },
+                { key: true, label: 'My own login', icon: 'person' }
+              ].map((tab) => (
+                <button
+                  key={String(tab.key)}
+                  type="button"
+                  onClick={() => {
+                    setPersonal(tab.key);
+                    setError('');
+                    setNeedsSetup(false);
+                  }}
+                  className={`py-2 rounded-lg text-[13px] font-black flex items-center justify-center gap-1.5 transition-all ${
+                    personal === tab.key
+                      ? 'bg-[var(--card-bg)] text-[var(--text-color)] shadow-sm'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-color)]'
+                  }`}
+                >
+                  <Icon name={tab.icon} className="text-[17px]" />
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {personal && (
+              <div>
+                <label
+                  htmlFor="person-email"
+                  className="block text-[12px] uppercase font-black tracking-wider text-[var(--text-secondary)] mb-1.5"
+                >
+                  Your email
+                </label>
+                <input
+                  id="person-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="username"
+                  placeholder="you@facility.in"
+                  className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-4 py-3 outline-none text-[14px] font-bold text-[var(--text-color)]"
+                  required
+                />
+              </div>
+            )}
+
             <div>
               <label
                 htmlFor="facility-password"
                 className="block text-[12px] uppercase font-black tracking-wider text-[var(--text-secondary)] mb-1.5"
               >
-                Facility password
+                {personal ? 'Your password' : 'Facility password'}
               </label>
               <input
                 id="facility-password"
@@ -191,14 +257,15 @@ export default function UnifiedLogin({ onAuthenticated }) {
                 required
               />
               <p className="text-[12px] font-semibold text-[var(--text-secondary)] mt-1.5">
-                One password for the whole facility. The owner view, reception, cabins, lab and pharmacy all
-                open from it.
+                {personal
+                  ? 'Opens only your own console. Doctors go straight to their cabin. Ask your facility owner if you have not been given one.'
+                  : 'One password for the whole facility. The owner view, reception, cabins, lab and pharmacy all open from it.'}
               </p>
             </div>
 
             <button
               type="submit"
-              disabled={loading || !facility}
+              disabled={loading || !facility || (personal && !email.trim())}
               className="w-full bg-[var(--primary-color)] text-white font-black py-3.5 rounded-xl text-[15px] flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 transition-all shadow-lg shadow-[var(--primary-color)]/20"
             >
               {loading ? (

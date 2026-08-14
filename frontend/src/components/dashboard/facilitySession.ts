@@ -53,12 +53,26 @@ export const OWNER_ROOM = {
   blurb: 'Every desk, today’s numbers, live activity'
 };
 
-/** The rooms this session may open, owner first, then ROOMS order. */
-export function roomsFor(scopes) {
+/**
+ * The rooms this session may open, owner first, then ROOMS order.
+ *
+ * `wholeFacility` is what separates the two kinds of sign-in. The shared
+ * facility password is the building's key and gets the owner view — the person
+ * opening up at the start of the day wants the whole building before any one
+ * desk. A PERSONAL login is deliberately the opposite: one named person, one
+ * room. Handing a receptionist the owner view because they happen to hold a
+ * staff scope would undo the narrowing that is the entire reason personal logins
+ * exist, and it would show them every department's numbers on a screen they were
+ * never meant to open.
+ */
+export function roomsFor(scopes, wholeFacility = true) {
   const allowed = Array.isArray(scopes) ? scopes : [];
   const units = ROOMS.filter((room) => allowed.includes(room.key));
-  // A token carrying no unit scopes at all is a broken token, and the console
-  // says so. Handing it a lone owner room would dress that up as a working
-  // session, so the owner room only appears alongside something to run.
-  return units.length ? [OWNER_ROOM, ...units] : [];
+  if (!units.length) {
+    // A token carrying no unit scopes at all is a broken token, and the console
+    // says so. Handing it a lone owner room would dress that up as a working
+    // session, so the owner room only appears alongside something to run.
+    return [];
+  }
+  return wholeFacility ? [OWNER_ROOM, ...units] : units;
 }

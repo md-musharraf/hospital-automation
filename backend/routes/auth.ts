@@ -13,7 +13,10 @@ const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
 const {
   scopesForFacility,
   rejectWeakPassword,
+  rejectWeakPersonPassword,
   facilityTokenClaims,
+  personTokenClaims,
+  PERSON_ROLES,
   PASSWORD_MIN_LENGTH
 } = require('../utils/facilityAuth');
 const {
@@ -134,6 +137,115 @@ router.post('/facility/login', loginLimiter, async (req, res) => {
   }
 });
 
+/** The four collections a person can sign in from, resolved to models here. */
+const PERSON_MODELS = { Staff, Doctor, LabAssistant, Pharmacist };
+
+/**
+ * Personal sign-in — one person, one console (rate-limited).
+ *
+ * Runs ALONGSIDE the facility password above, not instead of it. A clinic that
+ * keeps one password on the front desk is untouched; a hospital that would
+ * rather each person signed in as themselves can set individual passwords and
+ * both doors work. That matters for facilities already live: adding this took
+ * nobody's existing credential away.
+ *
+ * What a personal session buys over the shared one:
+ *
+ *   - The activity log records a name instead of "the facility".
+ *   - A receptionist's token carries the `staff` scope only, so the doctor and
+ *     pharmacy APIs are closed to it — the shared credential carries every scope
+ *     the facility runs.
+ *   - A doctor's cabin is implied by who signed in, so there is no roster to
+ *     pick from and no way to end up working as the wrong colleague.
+ *
+ * The facility is part of the lookup, not just the password check: emails are
+ * unique per tenant, so the same address can exist at two facilities and the one
+ * being signed into decides which record is meant.
+ */
+router.post('/login', loginLimiter, async (req, res) => {
+  try {
+    const { hospital, email, password } = req.body;
+    if (!hospital || !email || !password) {
+      return res.status(400).json({ message: 'Choose your facility and enter your email and password.' });
+    }
+
+    const facility = await Hospital.findOne({ id: hospital });
+    if (!facility) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+
+    // Compared in the form the schema stores, or a correctly-typed address in
+    // the wrong case would simply not be found.
+    const normalized = normalizeEmail(email);
+    if (!normalized) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+
+    // Walk the four collections in order. A person exists in exactly one of
+    // them, so the first hit is the answer.
+    let found = null;
+    for (const role of PERSON_ROLES) {
+      const Model = PERSON_MODELS[role.model];
+      // `+passwordHash` is required: the field is `select: false` on all four
+      // schemas, so without this the hash is simply absent and every sign-in
+      // fails. Note the in-memory mock ignores `.select()` entirely, which means
+      // dropping this would still pass the test suite and break in production —
+      // tests/facility-auth.test.js asserts this line is here for that reason.
+      const person = await Model.findOne({ email: normalized, hospital }).select('+passwordHash');
+      if (person) {
+        found = { person, scope: role.scope };
+        break;
+      }
+    }
+
+    // Same answer whether the address is unknown or the password is wrong: the
+    // facility roster is not public, and distinguishing the two would confirm
+    // who works where.
+    if (!found || !found.person.passwordHash) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, found.person.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+
+    // A person can only reach a console their facility actually runs. Someone
+    // may hold a lab account at a facility whose lab was later switched off, and
+    // a token for a room that no longer exists is worse than a clear refusal.
+    const facilityScopes = scopesForFacility(facility);
+    if (!facilityScopes.includes(found.scope)) {
+      return res.status(403).json({
+        message: `This facility does not run a ${found.scope} unit. Ask the owner to switch the module on.`
+      });
+    }
+
+    const claims = personTokenClaims(found.person, found.scope, facility.id);
+    const token = jwt.sign(claims, JWT_SECRET, { expiresIn: '12h' });
+
+    logger.info('[AUTH] Personal sign-in', { hospital: facility.id, scope: found.scope });
+
+    res.json({
+      token,
+      user: {
+        ...facilitySession(facility),
+        // The session says who this is and what they may open, overriding the
+        // facility-wide answer the spread above supplies.
+        role: found.scope,
+        scopes: [found.scope],
+        personId: String(found.person._id),
+        personName: found.person.name,
+        personEmail: found.person.email,
+        actingDoctor: claims.actingDoctor || null
+      },
+      doctors: found.scope === 'doctor' ? await doctorRoster(facility.id) : []
+    });
+  } catch (error) {
+    logger.error('[AUTH] Personal login failed', { err: error.message });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 /**
  * The current session, re-read from the database.
  *
@@ -144,16 +256,37 @@ router.post('/facility/login', loginLimiter, async (req, res) => {
  */
 router.get('/me', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role !== 'facility') {
-      return res.status(400).json({ message: 'Not a facility session. Sign in again.' });
+    // Two kinds of session reach here: the shared facility credential, and one
+    // person signed in as themselves. Both are legitimate; what separates them
+    // is how much of the facility they may see, so the answer is narrowed to the
+    // token's own scopes rather than reporting the facility's full set. A
+    // receptionist reloading their tab must not be handed a doctor tab that the
+    // API would then refuse.
+    const isPerson = req.user.role !== 'facility';
+    if (isPerson && !PERSON_ROLES.some((r) => r.scope === req.user.role)) {
+      return res.status(400).json({ message: 'Not a recognised session. Sign in again.' });
     }
 
     const facility = await Hospital.findOne({ id: req.user.hospital });
     if (!facility) return res.status(404).json({ message: 'Facility not found' });
 
+    // `any` because a personal session carries fields a facility session does
+    // not, and the inferred shape of facilitySession() is the facility's.
+    const user: any = facilitySession(facility);
+
+    if (isPerson) {
+      user.role = req.user.role;
+      user.scopes = Array.isArray(req.user.scopes) ? req.user.scopes : [req.user.role];
+      user.personId = req.user.personId || null;
+      user.personName = req.user.name || '';
+      user.actingDoctor = req.user.actingDoctor || null;
+    }
+
     res.json({
-      user: facilitySession(facility),
-      doctors: await doctorRoster(facility.id)
+      user,
+      // The cabin roster is only meaningful to a session that may pick one. A
+      // doctor signed in as themselves already has their cabin in the token.
+      doctors: !isPerson || req.user.role === 'doctor' ? await doctorRoster(facility.id) : []
     });
   } catch (error) {
     logger.error('[AUTH] Session read failed', { err: error.message });
@@ -317,6 +450,19 @@ const DOCTOR_TYPES = [
 ];
 
 /** Everything the admin panel sends for one doctor, normalized and defaulted. */
+/**
+ * Return the password if it is strong enough, or throw a 400-shaped error.
+ *
+ * Throwing rather than returning a message because this is called from inside
+ * the personnel loops, where the alternative is threading a "did this fail" flag
+ * back out through three levels of object construction.
+ */
+function rejectPersonPasswordOrThrow(password, label) {
+  const weak = rejectWeakPersonPassword(password);
+  if (weak) throw Object.assign(new Error(`${label}: ${weak}`), { status: 400 });
+  return password;
+}
+
 function buildDoctorFields(d, hospitalId) {
   return {
     name: d.name || 'Doctor Consultant',
@@ -566,26 +712,68 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       setBy: 'owner'
     }).save();
 
-    // Everyone who works here. Names and rooms — no usernames, no passwords.
+    // Everyone who works here.
+    //
+    // A personal email and password are OPTIONAL on every row. Left blank, the
+    // person is a name on the roster exactly as before and reaches their console
+    // through the facility password. Filled in, they additionally get their own
+    // sign-in. Onboarding is often done before anyone has decided who gets an
+    // account, so requiring credentials here would stall the whole registration
+    // on a detail that can be added later from the admin panel.
     const created = { staff: [], doctors: [], labAssistants: [], pharmacists: [] };
+
+    /** Personal credentials for one row, or `{}` when it is roster-only. */
+    const credentialsFor = async (row, label) => {
+      if (!row.password && !row.loginEmail) return {};
+      if (!row.password) return {};
+
+      const weak = rejectWeakPersonPassword(row.password);
+      if (weak) throw Object.assign(new Error(`${label}: ${weak}`), { status: 400 });
+
+      const address = normalizeEmail(row.loginEmail || row.email);
+      if (!address) {
+        throw Object.assign(new Error(`${label} needs a valid email address to sign in with.`), {
+          status: 400
+        });
+      }
+
+      return { email: address, passwordHash: await bcrypt.hash(row.password, 10) };
+    };
 
     for (const s of staffMembers) {
       const doc = new Staff({
         name: s.name || 'Reception Staff',
         counterNumber: s.counterNumber || 'Counter 1',
-        hospital: id
+        hospital: id,
+        ...(await credentialsFor(s, `Reception '${s.name || 'Reception Staff'}'`))
       });
       await doc.save();
       created.staff.push(doc.name);
     }
     for (const d of doctors) {
-      const doc = new Doctor(buildDoctorFields(d, id));
+      // A doctor's email is already required as their handle within the tenant,
+      // so a password alone is enough to turn them into an account.
+      const doc = new Doctor({
+        ...buildDoctorFields(d, id),
+        ...(d.password
+          ? {
+              passwordHash: await bcrypt.hash(
+                rejectPersonPasswordOrThrow(d.password, `Doctor '${d.email}'`),
+                10
+              )
+            }
+          : {})
+      });
       await doc.save();
       await new Queue({ doctor: doc._id, currentToken: null, activeQueue: [] }).save();
       created.doctors.push(doc.email);
     }
     for (const l of labAssistants) {
-      const doc = new LabAssistant({ name: l.name || 'Lab Assistant', hospital: id });
+      const doc = new LabAssistant({
+        name: l.name || 'Lab Assistant',
+        hospital: id,
+        ...(await credentialsFor(l, `Lab '${l.name || 'Lab Assistant'}'`))
+      });
       await doc.save();
       created.labAssistants.push(doc.name);
     }
@@ -593,7 +781,8 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       const doc = new Pharmacist({
         name: p.name || 'Pharmacist',
         counterNumber: p.counterNumber || 'Pharmacy Counter',
-        hospital: id
+        hospital: id,
+        ...(await credentialsFor(p, `Pharmacy '${p.name || 'Pharmacist'}'`))
       });
       await doc.save();
       created.pharmacists.push(doc.name);
@@ -609,6 +798,12 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       created
     });
   } catch (error) {
+    // A rejected personal password is the caller's mistake, not the server's.
+    // Without this it would surface as "Server error registering hospital" and
+    // the admin would have no idea which of eight people had a weak password.
+    if (error && error.status === 400) {
+      return res.status(400).json({ message: error.message });
+    }
     console.error('Super admin hospital registration error:', error);
     res.status(500).json({ message: 'Server error registering hospital' });
   }
@@ -663,6 +858,123 @@ router.put('/super-admin/hospital/:id/password', verifyAdminSecret, async (req, 
   } catch (error) {
     logger.error('[SUPER-ADMIN] Facility password set failed', { err: error.message });
     res.status(500).json({ message: 'Server error setting the facility password' });
+  }
+});
+
+/**
+ * Give one person their own sign-in, or take it away.
+ *
+ * Separate from the facility password on purpose: this grants access to exactly
+ * one console at one facility, and revoking it does not disturb anybody else.
+ * That is the difference that makes personal logins worth having — when a
+ * receptionist leaves you clear their row instead of rotating a password the
+ * entire building shares.
+ *
+ * `role` names which collection the person is in. It is required rather than
+ * searched for, because the same address may legitimately exist as a doctor at
+ * one facility and a pharmacist at another, and guessing would eventually set
+ * the wrong person's password.
+ *
+ * Sending `password: null` removes the credential: the row keeps its name and
+ * its history, but nobody can sign in as it any more.
+ */
+router.put('/super-admin/facility/:id/person-password', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role, personId, email, password } = req.body;
+
+    const roleEntry = PERSON_ROLES.find((r) => r.scope === role);
+    if (!roleEntry) {
+      return res.status(400).json({
+        message: `Unknown role. Expected one of: ${PERSON_ROLES.map((r) => r.scope).join(', ')}.`
+      });
+    }
+
+    const facility = await Hospital.findOne({ id });
+    if (!facility) return res.status(404).json({ message: 'Facility not found' });
+
+    const Model = PERSON_MODELS[roleEntry.model];
+
+    // Always scoped by hospital, never by id alone — an id from another tenant
+    // would otherwise be a way to set a password on somebody else's staff.
+    const query = personId ? { _id: personId, hospital: id } : { email: normalizeEmail(email), hospital: id };
+    const person = await Model.findOne(query);
+    if (!person) {
+      return res.status(404).json({ message: `No ${roleEntry.label.toLowerCase()} found at this facility.` });
+    }
+
+    if (password === null) {
+      person.passwordHash = undefined;
+      await person.save();
+      logger.warn('[SUPER-ADMIN] Personal sign-in removed', { hospital: id, role, ip: req.ip });
+      return res.json({ message: `${person.name} can no longer sign in personally.`, hasPassword: false });
+    }
+
+    const weak = rejectWeakPersonPassword(password);
+    if (weak) return res.status(400).json({ message: weak });
+
+    // An account with no address cannot be signed into, since the address is
+    // what the login form asks for. Allow setting it here so a person entered
+    // before this feature existed can be given one without a separate edit.
+    if (email) {
+      const normalized = normalizeEmail(email);
+      if (!normalized) return res.status(400).json({ message: `'${email}' is not a valid email address.` });
+
+      const clash = await Model.findOne({ email: normalized, hospital: id });
+      if (clash && String(clash._id) !== String(person._id)) {
+        return res.status(400).json({ message: `'${normalized}' is already used by someone else here.` });
+      }
+      person.email = normalized;
+    }
+
+    if (!person.email) {
+      return res.status(400).json({ message: 'This person needs an email address before they can sign in.' });
+    }
+
+    person.passwordHash = await bcrypt.hash(password, 10);
+    await person.save();
+
+    logger.warn('[SUPER-ADMIN] Personal password set', { hospital: id, role, ip: req.ip });
+    res.json({
+      message: `${person.name} can now sign in at ${facility.name} with ${person.email}.`,
+      hasPassword: true,
+      personId: String(person._id),
+      email: person.email
+    });
+  } catch (error) {
+    logger.error('[SUPER-ADMIN] Personal password set failed', { err: error.message });
+    res.status(500).json({ message: 'Server error setting that password' });
+  }
+});
+
+/**
+ * Who at this facility has a personal sign-in.
+ *
+ * The admin panel needs to show which people are accounts and which are just
+ * names on a roster, so an owner can tell at a glance who still shares the
+ * facility password. Hashes are never included: only whether one exists.
+ */
+router.get('/super-admin/facility/:id/people-credentials', verifyAdminSecret, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const out = {};
+
+    for (const role of PERSON_ROLES) {
+      const Model = PERSON_MODELS[role.model];
+      // `+passwordHash` only to answer "is there one" — the value never leaves.
+      const rows = await Model.find({ hospital: id }).select('+passwordHash');
+      out[role.scope] = rows.map((r) => ({
+        id: String(r._id),
+        name: r.name,
+        email: r.email || '',
+        hasPassword: Boolean(r.passwordHash)
+      }));
+    }
+
+    res.json(out);
+  } catch (error) {
+    logger.error('[SUPER-ADMIN] People credential read failed', { err: error.message });
+    res.status(500).json({ message: 'Server error reading personal sign-ins' });
   }
 });
 
