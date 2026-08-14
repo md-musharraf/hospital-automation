@@ -42,7 +42,7 @@ export default defineConfig({
     // A reception desk on a slow LAN benefits from the dev server not
     // re-resolving these on every cold start.
     warmup: {
-      clientFiles: ['./src/App.jsx', './src/components/HospitalHub.jsx']
+      clientFiles: ['./src/App.tsx', './src/components/HospitalHub.tsx']
     }
   }
 });
