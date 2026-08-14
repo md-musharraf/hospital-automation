@@ -2,7 +2,7 @@
   "name": "hospital-management-system",
   "version": "1.0.0",
   "description": "CareeAi — Smart Hospital Queue & Management System",
-  "//workspaces": "shared/ is consumed by BOTH runtimes. Declaring it a workspace symlinks it into node_modules, so `require('@careeai/shared')` resolves the same way from backend source, from backend/dist, and from the Vite dev server — a relative path would be correct in exactly one of those three.",
+  "license": "ISC",
   "workspaces": [
     "shared"
   ],

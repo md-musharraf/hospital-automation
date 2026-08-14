@@ -2,6 +2,7 @@
   "name": "@careeai/shared",
   "version": "1.0.0",
   "description": "Field types and request parsing shared by the CareeAi backend and frontend",
+  "license": "ISC",
   "private": true,
   "type": "commonjs",
   "main": "./dist/index.js",

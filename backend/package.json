@@ -2,18 +2,14 @@
   "name": "hospital-queue-backend",
   "version": "1.0.0",
   "description": "Smart Hospital Queue Backend",
-  "main": "index.js",
-  "//scripts": "The backend is TypeScript and runs from `dist`. `prestart` is what keeps the production deploy working without touching Render's dashboard: npm runs it automatically before `start`, so whatever build command Render is configured with, `npm start` compiles first and boots the compiled entry.",
+  "license": "ISC",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prestart": "npm run build",
     "start": "node dist/index.js",
-    "predev": "npm run build",
-    "dev": "node dist/index.js",
-    "preseed": "npm run build",
-    "seed": "node dist/seed.js"
+    "dev": "tsc -p tsconfig.json && node dist/index.js",
+    "seed": "tsc -p tsconfig.json && node dist/seed.js"
   },
-  "//@careeai/shared": "Declared as a file: dependency here AND as a root workspace. The workspace link is what makes `npm install` at the repo root work; this entry is what makes `npm install` run INSIDE backend/ work too. Render's build command lives in its dashboard rather than this repo, so which of the two it runs is not knowable from here — and a backend that cannot resolve its field-normalization module fails at require time, on boot, in production.",
   "dependencies": {
     "@careeai/shared": "file:../shared",
     "bcryptjs": "^2.4.3",
