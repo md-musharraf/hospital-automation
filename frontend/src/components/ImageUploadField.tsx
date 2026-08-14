@@ -76,7 +76,11 @@ export function ImageUploadField(props: any) {
   // the administrator has typed one. Registration is the case that matters: the
   // form is filled top-down, and a picker that opens before the id exists spends
   // the user's file on a request the server is bound to refuse.
-  const awaitingFacilityId = Boolean(adminSecret) && !hospitalId;
+  //
+  // Only meaningful when uploads are configured at all: with no ImageKit keys
+  // this field is a plain URL box, and telling someone to fill in a Facility ID
+  // "so we know where to store the image" describes a feature that isn't there.
+  const awaitingFacilityId = Boolean(configured) && Boolean(adminSecret) && !hospitalId;
 
   useEffect(() => {
     let alive = true;

@@ -15,6 +15,8 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState('');
   const [error, setError] = useState('');
+  // Which test's report is mid-upload, so the bench sees the file is still going.
+  const [uploading, setUploading] = useState('');
 
   // Put this bench in its facility's realtime rooms so it receives lab events
   // for THIS hospital only.
@@ -65,18 +67,72 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     }
   };
 
-  const handlePdfUpload = (tokenId, testName, file) => {
-    if (!file) return;
+  /**
+   * File a report PDF against a test.
+   *
+   * Preferred path is object storage: the browser asks this server to sign a
+   * one-object upload, PUTs the file straight to R2, and only the resulting URL
+   * is stored on the test. The fallback inlines the file as a base64 data URI,
+   * which is what this did for every upload before R2 existed — and is why it is
+   * only a fallback. A 5MB report becomes ~6.7MB of base64 inside the token
+   * document, and MongoDB stops at 16MB, so two or three reports on one patient
+   * could make that record unsaveable. It stays for deployments with no R2 keys,
+   * where the alternative is losing the feature outright.
+   */
+  const inlineAsDataUri = (tokenId, testName, file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      const dataUri = e.target.result;
-      setField(tokenId, testName, 'reportPdf', dataUri);
+      setField(tokenId, testName, 'reportPdf', e.target.result);
       setField(tokenId, testName, 'reportFileName', file.name);
       if (!results[keyOf(tokenId, testName)]?.resultValue) {
         setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const handlePdfUpload = async (tokenId, testName, file) => {
+    if (!file) return;
+    setError('');
+
+    if (file.type && file.type !== 'application/pdf') {
+      setError(`A lab report must be a PDF — that file is a ${file.type}.`);
+      return;
+    }
+
+    setUploading(keyOf(tokenId, testName));
+    try {
+      const ticket = await api.post('/uploads/r2/report-auth', {
+        tokenId,
+        fileName: file.name,
+        contentType: 'application/pdf',
+        size: file.size
+      });
+
+      // Only `host` is signed, so the content type is ours to set and cannot
+      // cause a signature mismatch.
+      const put = await fetch(ticket.uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': 'application/pdf' }
+      });
+      if (!put.ok) throw new Error(`Storage rejected the upload (${put.status}).`);
+
+      setField(tokenId, testName, 'reportPdf', ticket.shareUrl);
+      setField(tokenId, testName, 'reportFileName', file.name);
+      if (!results[keyOf(tokenId, testName)]?.resultValue) {
+        setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
+      }
+    } catch (err) {
+      // 501 means this server has no R2 configured — expected, not a failure.
+      if (err.status === 501) {
+        inlineAsDataUri(tokenId, testName, file);
+      } else {
+        setError(err.message || 'Could not upload the report. Please try again.');
+      }
+    } finally {
+      setUploading('');
+    }
   };
 
   const handleCompleteTest = async (tokenId, testName) => {
@@ -385,15 +441,30 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
 
                         {/* PDF Upload Option */}
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 p-2.5 bg-[var(--bg-color)]/60 rounded-xl border border-[var(--border-color)]/40 text-[13px]">
-                          <label className="flex items-center space-x-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg cursor-pointer transition-all shrink-0">
-                            <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+                          <label
+                            className={`flex items-center space-x-1.5 px-3 py-1.5 bg-teal-600 text-white font-bold rounded-lg transition-all shrink-0 ${
+                              uploading === keyOf(selectedToken._id, test.testName)
+                                ? 'opacity-60 cursor-wait'
+                                : 'hover:bg-teal-500 cursor-pointer'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[16px]">
+                              {uploading === keyOf(selectedToken._id, test.testName)
+                                ? 'hourglass_top'
+                                : 'picture_as_pdf'}
+                            </span>
                             <span>
-                              {entry.reportFileName ? 'Change PDF Report' : 'Attach PDF Test Report'}
+                              {uploading === keyOf(selectedToken._id, test.testName)
+                                ? 'Uploading…'
+                                : entry.reportFileName
+                                  ? 'Change PDF Report'
+                                  : 'Attach PDF Test Report'}
                             </span>
                             <input
                               type="file"
                               accept="application/pdf"
                               className="hidden"
+                              disabled={uploading === keyOf(selectedToken._id, test.testName)}
                               onChange={(e) =>
                                 handlePdfUpload(selectedToken._id, test.testName, e.target.files[0])
                               }
