@@ -191,7 +191,8 @@ export default function UnifiedLogin({ onAuthenticated }) {
                 required
               />
               <p className="text-[12px] font-semibold text-[var(--text-secondary)] mt-1.5">
-                One password for the whole facility. Reception, cabins, lab and pharmacy all open from it.
+                One password for the whole facility. The owner view, reception, cabins, lab and pharmacy all
+                open from it.
               </p>
             </div>
 

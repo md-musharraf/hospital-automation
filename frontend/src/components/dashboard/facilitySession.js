@@ -32,8 +32,33 @@ export const ROOMS = [
   { key: 'pharmacy', label: 'Pharmacy', icon: 'local_pharmacy', blurb: 'Counter and stock' }
 ];
 
-/** The rooms this session may open, preserving ROOMS order. */
+/**
+ * The owner's room, which every facility has.
+ *
+ * Deliberately NOT in `ROOMS` and not a scope. The other four rooms map to a
+ * scope because each one drives endpoints the server refuses without it; the
+ * owner view only reads `/ops/overview` and `/ops/activity`, which any facility
+ * token may already call. Inventing an `owner` scope would have meant a new
+ * privilege level to enforce across every route guard in exchange for nothing —
+ * the thing that was missing was a screen, not a permission.
+ *
+ * It leads because it is the only room that shows the whole building, and the
+ * person opening the console at the start of the day wants the whole building
+ * before they want any one desk.
+ */
+export const OWNER_ROOM = {
+  key: 'owner',
+  label: 'Owner',
+  icon: 'insights',
+  blurb: 'Every desk, today’s numbers, live activity'
+};
+
+/** The rooms this session may open, owner first, then ROOMS order. */
 export function roomsFor(scopes) {
   const allowed = Array.isArray(scopes) ? scopes : [];
-  return ROOMS.filter((room) => allowed.includes(room.key));
+  const units = ROOMS.filter((room) => allowed.includes(room.key));
+  // A token carrying no unit scopes at all is a broken token, and the console
+  // says so. Handing it a lone owner room would dress that up as a working
+  // session, so the owner room only appears alongside something to run.
+  return units.length ? [OWNER_ROOM, ...units] : [];
 }

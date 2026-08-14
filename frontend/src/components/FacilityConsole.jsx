@@ -7,12 +7,12 @@ import useFacilityBranding from '../hooks/useFacilityBranding';
 /**
  * One console per facility.
  *
- * A hospital signs in once and lands here. Reception, the consultation cabins,
- * the lab bench and the pharmacy counter are rooms inside this one console —
- * the same four dashboards as before, unchanged, but reached by switching rooms
- * instead of by signing out and back in with a different account.
+ * A hospital signs in once and lands here. The owner view, reception, the
+ * consultation cabins, the lab bench and the pharmacy counter are rooms inside
+ * this one console — reached by switching rooms instead of by signing out and
+ * back in with a different account.
  *
- * Which rooms exist is not a choice made here. It comes from the scopes the API
+ * Which unit rooms exist is not a choice made here. It comes from the scopes the API
  * put in the token, which come from the facility's own module map: a pathology
  * lab sees a lab and a front desk, a district hospital sees all four. The server
  * enforces the identical list, so a room can never appear that its endpoints
@@ -23,6 +23,9 @@ import useFacilityBranding from '../hooks/useFacilityBranding';
  * this facility's own roster, not by a password.
  */
 
+const OwnerDashboard = React.lazy(() =>
+  import('./OwnerDashboard').then((m) => ({ default: m.OwnerDashboard }))
+);
 const StaffDashboard = React.lazy(() => import('./StaffPortal').then((m) => ({ default: m.StaffDashboard })));
 const DoctorDashboard = React.lazy(() =>
   import('./DoctorPortal').then((m) => ({ default: m.DoctorDashboard }))
@@ -212,7 +215,9 @@ export default function FacilityConsole({ token, facility, doctors, onLogout }) 
   };
 
   let room = null;
-  if (activeRoom === 'staff') {
+  if (activeRoom === 'owner') {
+    room = <OwnerDashboard token={token} facility={roomUser} onLogout={onLogout} />;
+  } else if (activeRoom === 'staff') {
     room = <StaffDashboard staffToken={token} staffUser={roomUser} onLogout={onLogout} />;
   } else if (activeRoom === 'lab') {
     room = <LabDashboard labToken={token} labUser={roomUser} onLogout={onLogout} />;

@@ -20,6 +20,15 @@
  * `icon`  — Material Symbols name.
  */
 export const ROLE_NAV = {
+  owner: {
+    title: 'Owner Dashboard',
+    home: 'today',
+    items: [
+      { key: 'today', label: 'Today', icon: 'insights' },
+      { key: 'desks', label: 'Departments', icon: 'account_tree' },
+      { key: 'activity', label: 'Activity', icon: 'history' }
+    ]
+  },
   doctor: {
     title: 'Doctor Console',
     home: 'cabin',
