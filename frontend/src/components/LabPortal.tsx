@@ -72,14 +72,9 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
   /**
    * File a report PDF against a test.
    *
-   * Preferred path is object storage: the browser asks this server to sign a
-   * one-object upload, PUTs the file straight to R2, and only the resulting URL
-   * is stored on the test. The fallback inlines the file as a base64 data URI,
-   * which is what this did for every upload before R2 existed — and is why it is
-   * only a fallback. A 5MB report becomes ~6.7MB of base64 inside the token
-   * document, and MongoDB stops at 16MB, so two or three reports on one patient
-   * could make that record unsaveable. It stays for deployments with no R2 keys,
-   * where the alternative is losing the feature outright.
+   * Preferred path is cloud object storage (ImageKit): the browser asks this server to sign a
+   * one-object upload, uploads the file directly to cloud storage, and stores the resulting URL
+   * on the test. The fallback inlines the file as a base64 data URI if cloud storage is unconfigured.
    */
   const inlineAsDataUri = (tokenId, testName, file) => {
     const reader = new FileReader();
@@ -507,7 +502,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             onClick={() => handleAutoGeneratePdf(selectedToken._id, test.testName)}
                             disabled={uploading === keyOf(selectedToken._id, test.testName)}
                             className="flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-lg shadow-sm transition-all text-[12px]"
-                            title="Auto-build an official PDF laboratory report from the values above and save to R2"
+                            title="Auto-build an official PDF laboratory report from the values above and save to Cloud storage"
                           >
                             <span className="material-symbols-outlined text-[16px]">
                               {uploading === keyOf(selectedToken._id, test.testName)

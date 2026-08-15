@@ -1,7 +1,7 @@
 /**
  * Clinical PDF Generator for Billing Invoices & Lab Reports.
  * Generates standard PDF 1.4 documents byte-identically in the browser,
- * supports direct local download and Cloudflare R2 presigned uploads.
+ * supports direct local download and ImageKit cloud uploads.
  */
 
 // Helper to escape PDF text strings
@@ -447,7 +447,7 @@ export function generateLabReportPdfBlob(
   s += '30 40 535 30 re f\n';
   s += '1 1 1 rg\n';
   s +=
-    'BT /F1 8 Tf 45 52 Td (This is an authenticated digital laboratory report stored securely in Cloudflare R2 object storage.) Tj ET\n';
+    'BT /F1 8 Tf 45 52 Td (This is an authenticated digital laboratory report stored securely in Cloud storage.) Tj ET\n';
   s += 'BT /F1 8 Tf 450 52 Td (CareeAi Health Network) Tj ET\n';
 
   return buildPdfDocument([s]);
@@ -520,21 +520,7 @@ export async function uploadPdfBlobToImageKit(
 }
 
 /**
- * Direct upload of a PDF Blob to Cloudflare R2 using a presigned upload ticket.
- */
-export async function uploadPdfBlobToR2(uploadUrl: string, blob: Blob): Promise<boolean> {
-  const response = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/pdf'
-    },
-    body: blob
-  });
-  return response.ok;
-}
-
-/**
- * Universal PDF upload to ImageKit (Primary, no credit card required) or Cloudflare R2.
+ * Universal PDF upload to ImageKit Cloud Storage.
  */
 export async function uploadPdfBlobToCloud(
   backendUrl: string,
@@ -548,43 +534,5 @@ export async function uploadPdfBlobToCloud(
     invoiceNumber?: string;
   }
 ): Promise<string | null> {
-  // 1. Try ImageKit first (Zero-card setup, instant public CDN URL)
-  const ikUrl = await uploadPdfBlobToImageKit(backendUrl, blob, fileName, purpose, options);
-  if (ikUrl) return ikUrl;
-
-  // 2. Try Cloudflare R2 if configured
-  try {
-    const route =
-      purpose === 'invoice' ? '/api/v1/uploads/r2/invoice-auth' : '/api/v1/uploads/r2/report-auth';
-    const body =
-      purpose === 'invoice'
-        ? {
-            invoiceNumber: options.invoiceNumber || fileName,
-            fileName,
-            contentType: 'application/pdf',
-            size: blob.size
-          }
-        : { tokenId: options.tokenId, fileName, contentType: 'application/pdf', size: blob.size };
-
-    const ticketRes = await fetch(`${backendUrl}${route}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {})
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (ticketRes.ok) {
-      const ticket = await ticketRes.json();
-      const uploaded = await uploadPdfBlobToR2(ticket.uploadUrl, blob);
-      if (uploaded && ticket.shareUrl) {
-        return ticket.shareUrl;
-      }
-    }
-  } catch (r2Err) {
-    console.error('R2 upload fallback error:', r2Err);
-  }
-
-  return null;
+  return uploadPdfBlobToImageKit(backendUrl, blob, fileName, purpose, options);
 }

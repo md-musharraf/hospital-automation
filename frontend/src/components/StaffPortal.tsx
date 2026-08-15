@@ -3206,7 +3206,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   <button
                     onClick={() => handleCopyPdfLink(selectedInvoice.pdfUrl)}
                     className="px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-[12px] font-bold flex items-center space-x-1 transition-all"
-                    title="Copy direct Cloudflare R2 PDF link"
+                    title="Copy direct Cloud PDF link"
                   >
                     <span className="material-symbols-outlined text-[15px]">content_copy</span>
                     <span>Copy Link</span>

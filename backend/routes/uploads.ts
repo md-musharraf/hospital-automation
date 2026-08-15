@@ -31,7 +31,6 @@ const {
   ALLOWED_MIME,
   EXPIRY_SECONDS
 } = require('../utils/imagekit');
-const r2 = require('../utils/r2');
 
 /**
  * Resolve the caller into a facility, or refuse.
@@ -129,123 +128,8 @@ router.get('/config', (req, res) => {
   res.json({
     configured: isConfigured(),
     purposes: Object.keys(PURPOSES),
-    allowedTypes: ALLOWED_MIME,
-    // Reports are a separate integration with its own keys, so the lab bench has
-    // to be able to tell that images are switched on while PDFs are not.
-    reports: { configured: r2.isConfigured(), allowedType: r2.ALLOWED_MIME, maxBytes: r2.MAX_BYTES }
+    allowedTypes: ALLOWED_MIME
   });
-});
-
-/**
- * POST /api/v1/uploads/r2/report-auth
- *
- * Permission to upload ONE lab report PDF, and the URL it will be readable at.
- *
- * Staff-only and always token-authenticated — unlike the branding route there is
- * no super-admin path, because nobody administers a tenant by uploading a
- * clinical document into it. The facility comes from the token's own `hospital`
- * claim, so a client cannot name the tenant whose reports folder it writes into.
- *
- * A 501 is a normal answer here for the same reason it is for images: R2 is
- * optional, and a deployment without it should look unconfigured, not broken.
- */
-router.post('/r2/report-auth', authenticateToken, (req, res) => {
-  if (!r2.isConfigured()) {
-    return res.status(501).json({
-      configured: false,
-      message: 'Report uploads are not configured on this server.'
-    });
-  }
-
-  const hospitalId = req.user && req.user.hospital;
-  if (!hospitalId) {
-    return res.status(403).json({ message: 'This account is not attached to a facility.' });
-  }
-
-  // The lab bench is the only console that files a report. A facility session
-  // carries scopes rather than a single role, so accept either shape.
-  const scopes = Array.isArray(req.user.scopes) ? req.user.scopes : [];
-  const isLab = req.user.role === 'lab' || scopes.includes('lab');
-  if (!isLab) {
-    return res.status(403).json({ message: 'This facility does not run a lab.' });
-  }
-
-  const { tokenId, fileName, contentType, size } = req.body || {};
-  if (!tokenId) {
-    return res.status(400).json({ message: 'Which token is this report for?' });
-  }
-
-  // Checked before signing rather than trusted afterwards: the signature is
-  // permission to write, so anything the storage rules care about has to be
-  // decided on this side of it.
-  if (contentType && contentType !== r2.ALLOWED_MIME) {
-    return res.status(400).json({ message: `A lab report must be a PDF, not ${contentType}.` });
-  }
-  if (size && Number(size) > r2.MAX_BYTES) {
-    return res.status(413).json({
-      message: `That report is over the ${Math.round(r2.MAX_BYTES / (1024 * 1024))}MB limit.`
-    });
-  }
-
-  const ticket = r2.presignUpload(hospitalId, tokenId, fileName);
-  if (!ticket) {
-    return res.status(400).json({ message: 'That facility id cannot be used as a storage folder.' });
-  }
-
-  logger.info('[UPLOAD] Issued report credential', { hospitalId, tokenId, key: ticket.key });
-  return res.json({ configured: true, ...ticket });
-});
-
-/**
- * POST /api/v1/uploads/r2/invoice-auth
- *
- * Permission to upload ONE billing invoice / discharge summary PDF to R2.
- * Staff-only and always token-authenticated.
- */
-router.post('/r2/invoice-auth', authenticateToken, (req, res) => {
-  if (!r2.isConfigured()) {
-    return res.status(501).json({
-      configured: false,
-      message: 'Invoice PDF uploads are not configured on this server.'
-    });
-  }
-
-  const hospitalId = req.user && req.user.hospital;
-  if (!hospitalId) {
-    return res.status(403).json({ message: 'This account is not attached to a facility.' });
-  }
-
-  const scopes = Array.isArray(req.user.scopes) ? req.user.scopes : [];
-  const isStaff =
-    req.user.role === 'staff' ||
-    scopes.includes('staff') ||
-    req.user.role === 'admin' ||
-    req.user.role === 'superadmin';
-  if (!isStaff) {
-    return res.status(403).json({ message: 'Only staff can manage patient billing invoices.' });
-  }
-
-  const { invoiceNumber, fileName, contentType, size } = req.body || {};
-  if (!invoiceNumber) {
-    return res.status(400).json({ message: 'Which invoice is this PDF for?' });
-  }
-
-  if (contentType && contentType !== r2.ALLOWED_MIME) {
-    return res.status(400).json({ message: `An invoice must be a PDF, not ${contentType}.` });
-  }
-  if (size && Number(size) > r2.MAX_BYTES) {
-    return res.status(413).json({
-      message: `That document is over the ${Math.round(r2.MAX_BYTES / (1024 * 1024))}MB limit.`
-    });
-  }
-
-  const ticket = r2.presignInvoiceUpload(hospitalId, invoiceNumber, fileName);
-  if (!ticket) {
-    return res.status(400).json({ message: 'That facility id cannot be used as a storage folder.' });
-  }
-
-  logger.info('[UPLOAD] Issued invoice PDF credential', { hospitalId, invoiceNumber, key: ticket.key });
-  return res.json({ configured: true, ...ticket });
 });
 
 export default router;

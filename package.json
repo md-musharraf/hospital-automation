@@ -21,7 +21,7 @@
     "typecheck": "npm run typecheck --prefix shared && tsc -p backend/tsconfig.json --noEmit && tsc -p frontend/tsconfig.json --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run build:backend && node tests/field-types.test.js && node tests/field-normalization.test.js && node tests/chat-engine.test.js && node tests/billing.test.js && node tests/lab-pdf.test.js && node tests/facility-landing.test.js && node tests/daily-reset.test.js && node tests/token-allocation.test.js && node tests/doctor-shifts.test.js && node tests/tenant-guard.test.js && node tests/env-guard.test.js && node tests/uploads.test.js && node tests/r2.test.js && node tests/facility-auth.test.js && node tests/person-login.test.js",
+    "test": "npm run build:backend && node tests/field-types.test.js && node tests/field-normalization.test.js && node tests/chat-engine.test.js && node tests/billing.test.js && node tests/lab-pdf.test.js && node tests/facility-landing.test.js && node tests/daily-reset.test.js && node tests/token-allocation.test.js && node tests/doctor-shifts.test.js && node tests/tenant-guard.test.js && node tests/env-guard.test.js && node tests/uploads.test.js && node tests/facility-auth.test.js && node tests/person-login.test.js",
     "test:integration": "node tests/cross-role-flow.test.js",
     "verify": "npm run lint && npm run typecheck && npm test",
     "prepare": "husky"
