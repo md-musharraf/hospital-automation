@@ -113,6 +113,29 @@ export function reportKey(
   return `facilities/${safeId}/reports/${safeToken}/${leaf}`;
 }
 
+/**
+ * Where one facility's billing invoices live.
+ */
+export function invoiceKey(
+  hospitalId?: string | null,
+  invoiceNumber?: string | null,
+  fileName?: string
+): string | null {
+  const safeId = String(hospitalId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safeId) return null;
+
+  const safeInvoice = String(invoiceNumber || '').replace(/[^a-zA-Z0-9_-]/g, '') || 'misc';
+  const stamp = new Date().toISOString().slice(0, 10);
+  const unique = crypto.randomUUID();
+  const label = String(fileName || '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .slice(0, 40);
+
+  const leaf = label ? `${stamp}-${label}-${unique}.pdf` : `${stamp}-${unique}.pdf`;
+  return `facilities/${safeId}/invoices/${safeInvoice}/${leaf}`;
+}
+
 const enc = (value: string): string =>
   encodeURIComponent(value).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 
@@ -265,6 +288,30 @@ export function presignUpload(hospitalId: string, tokenId: string, fileName?: st
   if (!config) return null;
 
   const key = reportKey(hospitalId, tokenId, fileName);
+  if (!key) return null;
+
+  return {
+    uploadUrl: presign(config, 'PUT', key, UPLOAD_EXPIRY_SECONDS),
+    key,
+    shareUrl: shareUrlFor(key) || '',
+    expiresInSeconds: UPLOAD_EXPIRY_SECONDS,
+    maxBytes: MAX_BYTES,
+    contentType: ALLOWED_MIME
+  };
+}
+
+/**
+ * Permission to write exactly one billing invoice PDF, and the URL it will be readable at.
+ */
+export function presignInvoiceUpload(
+  hospitalId: string,
+  invoiceNumber: string,
+  fileName?: string
+): UploadTicket | null {
+  const config = r2Config();
+  if (!config) return null;
+
+  const key = invoiceKey(hospitalId, invoiceNumber, fileName);
   if (!key) return null;
 
   return {

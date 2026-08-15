@@ -8,6 +8,7 @@ import HelpPanel from './HelpPanel';
 import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
 import DashboardShell from './dashboard/DashboardShell';
 import { PhoneInput, NumberInput } from './fields/NormalizedInput';
+import { generateInvoicePdfBlob, downloadPdfBlob, uploadPdfBlobToR2 } from '../lib/pdfGenerator';
 
 /** Colour per billing category, so the counter can pick a charge by shape as
  *  well as by reading it — the same categories the Invoice schema allows. */
@@ -442,6 +443,42 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       setDischargeSuccess(`Patient discharged successfully! Receipt generated.`);
       loadInvoices();
       loadData();
+
+      // Trigger automatic background R2 PDF upload for the discharged invoice
+      try {
+        const blob = generateInvoicePdfBlob(data.invoice, billingConfig);
+        const ticketRes = await fetch(`${BACKEND_URL}/api/v1/uploads/r2/invoice-auth`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${staffToken}`
+          },
+          body: JSON.stringify({
+            invoiceNumber: data.invoice.invoiceNumber,
+            fileName: `${data.invoice.invoiceNumber}.pdf`,
+            contentType: 'application/pdf',
+            size: blob.size
+          })
+        });
+        if (ticketRes.ok) {
+          const ticket = await ticketRes.json();
+          const uploaded = await uploadPdfBlobToR2(ticket.uploadUrl, blob);
+          if (uploaded && ticket.shareUrl) {
+            await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${data.invoice._id}/pdf`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${staffToken}`
+              },
+              body: JSON.stringify({ pdfUrl: ticket.shareUrl, pdfKey: ticket.key })
+            });
+            setSelectedInvoice((prev) => (prev ? { ...prev, pdfUrl: ticket.shareUrl } : prev));
+          }
+        }
+      } catch (pdfErr) {
+        console.error('Auto R2 PDF upload error on discharge:', pdfErr);
+      }
+
       setTimeout(() => {
         setShowDischargeModal(false);
         setShowReceiptModal(true);
@@ -450,6 +487,95 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     } catch (err) {
       setDischargeError(err.message);
     }
+  };
+
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [shareToast, setShareToast] = useState('');
+
+  const handleDownloadInvoicePdf = (inv = selectedInvoice) => {
+    if (!inv) return;
+    const blob = generateInvoicePdfBlob(inv, billingConfig);
+    downloadPdfBlob(blob, `${inv.invoiceNumber || 'Invoice'}.pdf`);
+  };
+
+  const handleUploadInvoicePdfToR2 = async (inv = selectedInvoice): Promise<string | null> => {
+    if (!inv?._id) return null;
+    setPdfBusy(true);
+    try {
+      const blob = generateInvoicePdfBlob(inv, billingConfig);
+      const ticketRes = await fetch(`${BACKEND_URL}/api/v1/uploads/r2/invoice-auth`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${staffToken}`
+        },
+        body: JSON.stringify({
+          invoiceNumber: inv.invoiceNumber,
+          fileName: `${inv.invoiceNumber}.pdf`,
+          contentType: 'application/pdf',
+          size: blob.size
+        })
+      });
+
+      if (ticketRes.ok) {
+        const ticket = await ticketRes.json();
+        const uploaded = await uploadPdfBlobToR2(ticket.uploadUrl, blob);
+        if (uploaded && ticket.shareUrl) {
+          await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${inv._id}/pdf`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${staffToken}`
+            },
+            body: JSON.stringify({ pdfUrl: ticket.shareUrl, pdfKey: ticket.key })
+          });
+          setSelectedInvoice((prev) => (prev ? { ...prev, pdfUrl: ticket.shareUrl } : prev));
+          setShareToast('Official PDF Invoice stored securely in Cloudflare R2!');
+          setTimeout(() => setShareToast(''), 4000);
+          return ticket.shareUrl;
+        }
+      }
+      setShareToast('R2 not configured on server; downloaded PDF locally instead.');
+      handleDownloadInvoicePdf(inv);
+      setTimeout(() => setShareToast(''), 4000);
+      return null;
+    } catch (err: any) {
+      console.error('R2 invoice upload error:', err);
+      handleDownloadInvoicePdf(inv);
+      return null;
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
+  const handleShareInvoiceWhatsApp = async (inv = selectedInvoice) => {
+    if (!inv) return;
+    let url = inv.pdfUrl;
+    if (!url) {
+      url = await handleUploadInvoicePdfToR2(inv);
+    }
+    const rawPhone = inv.patient?.phone ? String(inv.patient.phone).replace(/\D/g, '') : '';
+    const phone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
+    const cur = currency || '₹';
+    const facility = (billingConfig?.displayName || inv.hospital || 'Hospital').toUpperCase();
+    const pdfLine = url ? `\n📄 Download Official PDF Bill: ${url}\n` : '';
+    const msg =
+      `🏥 DISCHARGE SUMMARY & INVOICE — ${facility}\n` +
+      `Patient: ${inv.patient?.name || 'Patient'}\n` +
+      `Invoice #: ${inv.invoiceNumber}\n` +
+      `Total Amount: ${cur}${inv.totalAmount}\n` +
+      `Amount Paid: ${cur}${inv.amountPaid} (${inv.paymentMethod || 'Paid'})\n` +
+      (inv.balanceDue > 0 ? `Balance Due: ${cur}${inv.balanceDue}\n` : '') +
+      pdfLine +
+      `\nThank you! We wish you good health. 🙏`;
+
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
+  const handleCopyPdfLink = (url: string) => {
+    navigator.clipboard.writeText(url);
+    setShareToast('PDF Link copied to clipboard!');
+    setTimeout(() => setShareToast(''), 3000);
   };
 
   const loadData = async () => {
@@ -2287,12 +2413,44 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         </button>
 
                         <button
-                          onClick={() => setShowReceiptModal(true)}
+                          onClick={() => handleDownloadInvoicePdf(selectedInvoice)}
                           className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
-                          title="Generate and print vector PDF invoice on-demand"
+                          title="Download Official PDF Invoice directly"
                         >
-                          <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
-                          <span>PDF Invoice</span>
+                          <span className="material-symbols-outlined text-[16px]">download</span>
+                          <span>Download PDF</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleUploadInvoicePdfToR2(selectedInvoice)}
+                          disabled={pdfBusy}
+                          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                          title="Save and sync PDF to Cloudflare R2 Object Storage"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">
+                            {pdfBusy ? 'hourglass_top' : 'cloud_upload'}
+                          </span>
+                          <span>
+                            {pdfBusy ? 'Uploading…' : selectedInvoice.pdfUrl ? 'R2 Stored ✓' : 'Save to R2'}
+                          </span>
+                        </button>
+
+                        <button
+                          onClick={() => handleShareInvoiceWhatsApp(selectedInvoice)}
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                          title="Share Official Bill via WhatsApp with direct PDF download link"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">share</span>
+                          <span>Share (WhatsApp)</span>
+                        </button>
+
+                        <button
+                          onClick={() => setShowReceiptModal(true)}
+                          className="px-3 py-2 bg-[var(--bg-color)] hover:bg-[var(--border-color)]/20 border border-[var(--border-color)]/60 text-[var(--text-color)] font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1"
+                          title="View printable digital receipt modal"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">visibility</span>
+                          <span>View Receipt</span>
                         </button>
 
                         <button
@@ -2301,13 +2459,20 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                             setShowDischargeModal(true);
                           }}
                           disabled={selectedInvoice.status === 'Discharged'}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                          className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
                         >
                           <span className="material-symbols-outlined text-[16px]">task_alt</span>
                           <span>Discharge & Pay</span>
                         </button>
                       </div>
                     </div>
+
+                    {shareToast && (
+                      <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 rounded-xl px-4 py-2 text-[12px] font-bold flex items-center gap-2 animate-fade-in">
+                        <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                        <span>{shareToast}</span>
+                      </div>
+                    )}
 
                     {/* Line Items Table */}
                     <div className="space-y-3">
@@ -3017,18 +3182,59 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
               </p>
             </div>
 
-            {/* Footer Buttons */}
-            <div className="flex justify-between items-center pt-6 border-t mt-4">
-              <button
-                onClick={() => window.print()}
-                className="px-4 py-2 bg-zinc-800 text-white rounded-xl text-[13px] font-bold hover:bg-zinc-700 flex items-center space-x-1"
-              >
-                <span className="material-symbols-outlined text-[16px]">print</span>
-                <span>Print Receipt</span>
-              </button>
+            {/* Footer Action Buttons */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-6 border-t mt-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => handleDownloadInvoicePdf(selectedInvoice)}
+                  className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[12px] font-bold flex items-center space-x-1.5 shadow-sm transition-all active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-[16px]">download</span>
+                  <span>Download PDF</span>
+                </button>
+
+                <button
+                  onClick={() => handleUploadInvoicePdfToR2(selectedInvoice)}
+                  disabled={pdfBusy}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-[12px] font-bold flex items-center space-x-1.5 shadow-sm transition-all active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {pdfBusy ? 'hourglass_top' : 'cloud_upload'}
+                  </span>
+                  <span>{pdfBusy ? 'Storing…' : selectedInvoice.pdfUrl ? 'R2 Stored ✓' : 'Save to R2'}</span>
+                </button>
+
+                <button
+                  onClick={() => handleShareInvoiceWhatsApp(selectedInvoice)}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[12px] font-bold flex items-center space-x-1.5 shadow-sm transition-all active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-[16px]">share</span>
+                  <span>WhatsApp</span>
+                </button>
+
+                {selectedInvoice.pdfUrl && (
+                  <button
+                    onClick={() => handleCopyPdfLink(selectedInvoice.pdfUrl)}
+                    className="px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-[12px] font-bold flex items-center space-x-1 transition-all"
+                    title="Copy direct Cloudflare R2 PDF link"
+                  >
+                    <span className="material-symbols-outlined text-[15px]">content_copy</span>
+                    <span>Copy Link</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => window.print()}
+                  className="px-3 py-2 bg-zinc-800 text-white rounded-xl text-[12px] font-bold hover:bg-zinc-700 flex items-center space-x-1"
+                >
+                  <span className="material-symbols-outlined text-[15px]">print</span>
+                  <span>Print</span>
+                </button>
+              </div>
+
               <button
                 onClick={() => setShowReceiptModal(false)}
-                className="px-5 py-2 bg-teal-600 text-white rounded-xl text-[13px] font-bold hover:bg-teal-500"
+                className="px-5 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-800 rounded-xl text-[12px] font-extrabold transition-all"
               >
                 Close
               </button>

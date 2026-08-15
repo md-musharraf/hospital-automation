@@ -311,10 +311,12 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
         const backToDoctor = everythingDone
           ? `\n\n➡️ All your reports are ready — please go back to ${doctorName}${tokenDoctor && tokenDoctor.currentRoom ? ` (${tokenDoctor.currentRoom})` : ''}. No need to take a new token.\n➡️ आपकी सभी रिपोर्ट तैयार हैं — कृपया सीधे डॉक्टर के पास जाएँ। नया टोकन लेने की ज़रूरत नहीं।`
           : '';
+        const pdfLine = test.reportPdf ? `\n📄 Download Official PDF Report: ${test.reportPdf}` : '';
         const alertMsg =
           `Hello ${tokenPatient.name}, your lab report for "${testName}" is ready.\n` +
-          `🧪 Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range — please show it to your doctor.' : ''}\n` +
-          `View online: https://hospital-automation-wine.vercel.app/prescription/${token._id}` +
+          `🧪 Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range — please show it to your doctor.' : ''}` +
+          pdfLine +
+          `\nView online: https://hospital-automation-wine.vercel.app/prescription/${token._id}` +
           backToDoctor;
         await sendWhatsAppNotification(tokenPatient.phone, alertMsg);
       } catch (waErr) {

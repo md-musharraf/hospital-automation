@@ -590,11 +590,47 @@ router.post('/invoices/:id/sync-prescriptions', authenticateToken, ensureStaff, 
   }
 });
 
+// POST attach or update generated PDF URL for an invoice
+router.post('/invoices/:id/pdf', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { pdfUrl, pdfKey } = req.body;
+    const hospital = req.user.hospital || 'general-hospital';
+
+    if (!pdfUrl || typeof pdfUrl !== 'string') {
+      return res.status(400).json({ message: 'A valid pdfUrl string is required' });
+    }
+
+    const invoice = await Invoice.findById(id);
+    if (!invoice || invoice.hospital !== hospital) {
+      return res.status(404).json({ message: 'Invoice not found' });
+    }
+
+    invoice.pdfUrl = pdfUrl.trim();
+    if (pdfKey) invoice.pdfKey = String(pdfKey).trim();
+    await invoice.save();
+
+    const updated = await Invoice.findById(id).populate('patient').populate('token');
+
+    if (req.io) {
+      req.io.to(`hospital:${hospital}`).emit('billing-updated', { invoiceId: id });
+      if (invoice.token) {
+        req.io.to(`patient:${invoice.token}`).emit('billing-updated', { invoiceId: id });
+      }
+    }
+
+    res.json({ message: 'Invoice PDF attached successfully', invoice: updated });
+  } catch (error) {
+    logger.error('Error attaching invoice PDF', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // POST Discharge Patient & Finalize Bill (Collect Payment)
 router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (req, res) => {
   try {
     const { id } = req.params;
-    const { amountPaid, paymentMethod, discount, notes } = req.body;
+    const { amountPaid, paymentMethod, discount, notes, pdfUrl, pdfKey } = req.body;
     const hospital = req.user.hospital || 'general-hospital';
 
     const invoice = await Invoice.findById(id).populate('patient').populate('token');
@@ -611,6 +647,12 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
     }
     if (notes) {
       invoice.notes = notes;
+    }
+    if (pdfUrl && typeof pdfUrl === 'string') {
+      invoice.pdfUrl = pdfUrl.trim();
+    }
+    if (pdfKey && typeof pdfKey === 'string') {
+      invoice.pdfKey = pdfKey.trim();
     }
 
     const config = await getBillingConfig(hospital);
@@ -658,6 +700,8 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
         .map((item) => `• ${item.itemName} x${item.quantity} — ${cur}${item.totalPrice}`)
         .join('\n');
 
+      const pdfLine = invoice.pdfUrl ? `\n📄 Download Official PDF Bill: ${invoice.pdfUrl}\n` : '';
+
       const receiptMsg =
         `🏥 DISCHARGE INVOICE SUMMARY — ${facilityName}\n` +
         `Patient: ${invoice.patient.name}\n` +
@@ -668,8 +712,9 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
         (invoice.tax > 0 ? `Tax (${config.taxPercent}%): ${cur}${invoice.tax}\n` : '') +
         `Total Amount: ${cur}${invoice.totalAmount}\n` +
         `Amount Paid: ${cur}${invoice.amountPaid} (${invoice.paymentMethod})\n` +
-        `Balance Due: ${cur}${invoice.balanceDue}\n\n` +
-        `${config.footerNote || 'Thank you. Get well soon!'} 🙏`;
+        `Balance Due: ${cur}${invoice.balanceDue}\n` +
+        pdfLine +
+        `\n${config.footerNote || 'Thank you. Get well soon!'} 🙏`;
       try {
         await sendWhatsAppNotification(invoice.patient.phone, receiptMsg);
       } catch (waErr) {

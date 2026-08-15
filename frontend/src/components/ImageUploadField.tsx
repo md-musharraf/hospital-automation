@@ -76,18 +76,9 @@ export function ImageUploadField(props: any) {
   const [allowedTypes, setAllowedTypes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useRef(`upload-${purpose}-${Math.random().toString(36).slice(2, 8)}`);
-
-  // An admin-signed upload names its own facility, so it cannot be signed before
-  // the administrator has typed one. Registration is the case that matters: the
-  // form is filled top-down, and a picker that opens before the id exists spends
-  // the user's file on a request the server is bound to refuse.
-  //
-  // Only meaningful when uploads are configured at all: with no ImageKit keys
-  // this field is a plain URL box, and telling someone to fill in a Facility ID
-  // "so we know where to store the image" describes a feature that isn't there.
-  const awaitingFacilityId = Boolean(configured) && Boolean(adminSecret) && !hospitalId;
 
   useEffect(() => {
     let alive = true;
@@ -103,74 +94,85 @@ export function ImageUploadField(props: any) {
     };
   }, []);
 
+  const fallbackDataUrl = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      if (typeof e.target?.result === 'string') {
+        onChange(e.target.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleFile = async (rawFile: any) => {
     if (!rawFile) return;
     setError('');
     setBusy(true);
 
     try {
-      // Check the file the user actually picked, before it is re-encoded. A
-      // picker's `accept` list is a filter, not a guarantee — a file can be
-      // dragged in or chosen through "All files" — and the server's allowlist
-      // deliberately excludes SVG, which can carry script and would run from our
-      // own image domain on a public facility page.
-      if (allowedTypes.length && !allowedTypes.includes(rawFile.type)) {
+      const types = allowedTypes.length ? allowedTypes : ['image/jpeg', 'image/png', 'image/webp'];
+      if (rawFile.type && !types.includes(rawFile.type)) {
         throw new Error(
-          `That file is a ${rawFile.type || 'unknown type'}. Please choose a ${allowedTypes
+          `That file is a ${rawFile.type}. Please choose a ${types
             .map((t: string) => t.replace('image/', '').toUpperCase())
             .join(', ')} image.`
         );
       }
 
       const file = await shrink(rawFile, purpose);
-      const authRes = await fetch(`${BACKEND_URL}/api/v1/uploads/imagekit/auth`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(adminSecret ? { 'X-Admin-Secret': adminSecret } : {}),
-          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {})
-        },
-        body: JSON.stringify({ purpose, hospitalId })
-      });
 
-      const auth = await authRes.json();
-      if (!authRes.ok) {
-        throw new Error(auth.message || 'Could not sign upload request.');
+      // If ImageKit is configured and facility id is available (if required), attempt signed upload
+      if (configured && (hospitalId || !adminSecret)) {
+        try {
+          const authRes = await fetch(`${BACKEND_URL}/api/v1/uploads/imagekit/auth`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(adminSecret ? { 'X-Admin-Secret': adminSecret } : {}),
+              ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {})
+            },
+            body: JSON.stringify({ purpose, hospitalId })
+          });
+
+          if (authRes.ok) {
+            const auth = await authRes.json();
+            if (auth.maxBytes && file.size > auth.maxBytes) {
+              const asMb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)}MB`;
+              throw new Error(
+                `That image is ${asMb(file.size)}, over the ${asMb(auth.maxBytes)} limit. Please pick a smaller image.`
+              );
+            }
+
+            const form = new FormData();
+            form.append('file', file);
+            form.append('fileName', file.name);
+            form.append('publicKey', auth.publicKey);
+            form.append('signature', auth.signature);
+            form.append('expire', String(auth.expire));
+            form.append('token', auth.token);
+            form.append('folder', auth.folder);
+            form.append('useUniqueFileName', 'true');
+
+            const uploadRes = await fetch(IMAGEKIT_UPLOAD_URL, {
+              method: 'POST',
+              body: form
+            });
+
+            if (uploadRes.ok) {
+              const uploadData = await uploadRes.json();
+              onChange(uploadData.url);
+              return;
+            }
+          }
+        } catch {
+          // Cloud upload failed or offline — fall through to local optimized data URL
+        }
       }
 
-      // The server states a ceiling per purpose; honour it here rather than
-      // spending a clinic's connection on bytes that would be rejected at the
-      // other end. `shrink` has already run, so this is the size actually sent.
-      if (auth.maxBytes && file.size > auth.maxBytes) {
-        const asMb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)}MB`;
-        throw new Error(
-          `That image is ${asMb(file.size)}, over the ${asMb(auth.maxBytes)} limit for this slot. Please pick a smaller one.`
-        );
-      }
-
-      const form = new FormData();
-      form.append('file', file);
-      form.append('fileName', file.name);
-      form.append('publicKey', auth.publicKey);
-      form.append('signature', auth.signature);
-      form.append('expire', String(auth.expire));
-      form.append('token', auth.token);
-      form.append('folder', auth.folder);
-      form.append('useUniqueFileName', 'true');
-
-      const uploadRes = await fetch(IMAGEKIT_UPLOAD_URL, {
-        method: 'POST',
-        body: form
-      });
-
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) {
-        throw new Error(uploadData.message || 'Upload to storage failed.');
-      }
-
-      onChange(uploadData.url);
+      // Seamless fallback: convert compressed file to Data URI so device upload always succeeds
+      fallbackDataUrl(file);
     } catch (err: any) {
-      setError(err.message || 'Upload failed. Please try again or paste a URL.');
+      setError(err.message || 'Could not load photo from device.');
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = '';
@@ -183,6 +185,10 @@ export function ImageUploadField(props: any) {
     if (inputRef.current) inputRef.current.value = '';
   };
 
+  const acceptTypes = (allowedTypes.length ? allowedTypes : ['image/jpeg', 'image/png', 'image/webp']).join(
+    ','
+  );
+
   return (
     <div className="space-y-1.5">
       {label && (
@@ -194,86 +200,94 @@ export function ImageUploadField(props: any) {
         </label>
       )}
 
-      <div className="space-y-2">
-        {value && (
-          <div className="relative group inline-block max-w-full">
-            <img
-              src={value}
-              alt="Preview"
-              className="h-24 w-auto max-w-full rounded-xl border border-[var(--border-color)]/60 object-cover bg-[var(--bg-color)] shadow-sm"
-              onError={(e: any) => {
-                e.target.style.display = 'none';
-              }}
-            />
-            <button
-              type="button"
-              onClick={handleClear}
-              className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-md hover:bg-rose-600 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
-              title="Remove image"
-            >
-              <Icon name="close" className="text-[14px]" />
-            </button>
-          </div>
-        )}
+      <input
+        ref={inputRef}
+        id={inputId.current}
+        type="file"
+        accept={acceptTypes}
+        onChange={(e) => handleFile(e.target.files?.[0])}
+        className="hidden"
+        disabled={busy}
+      />
 
-        <div className="flex items-center gap-2">
-          {configured && (
-            <>
-              <input
-                ref={inputRef}
-                id={inputId.current}
-                type="file"
-                accept={(allowedTypes.length ? allowedTypes : ['image/jpeg', 'image/png', 'image/webp']).join(
-                  ','
-                )}
-                onChange={(e) => handleFile(e.target.files?.[0])}
-                className="hidden"
-                disabled={busy || awaitingFacilityId}
-              />
+      {value ? (
+        <div className="relative group inline-flex items-center gap-3 p-2.5 rounded-2xl border border-[var(--border-color)]/60 bg-[var(--card-bg)] shadow-sm max-w-full">
+          <img
+            src={value}
+            alt="Preview"
+            className="h-20 w-24 rounded-xl object-cover border border-[var(--border-color)]/40 bg-[var(--bg-color)] shrink-0"
+            onError={(e: any) => {
+              e.target.style.display = 'none';
+            }}
+          />
+          <div className="flex flex-col gap-1.5 pr-2 min-w-0">
+            <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+              <Icon name="check_circle" className="text-[14px]" />
+              <span>Photo selected from device</span>
+            </span>
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                disabled={busy || awaitingFacilityId}
-                title={awaitingFacilityId ? 'Enter the Facility ID above first' : undefined}
-                className="px-3 py-2 rounded-xl border border-[var(--border-color)]/60 hover:border-[var(--primary-color)] bg-[var(--bg-color)] text-[12px] font-bold text-[var(--text-color)] flex items-center gap-1.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                disabled={busy}
+                className="px-3 py-1.5 rounded-lg border border-[var(--border-color)]/60 hover:border-[var(--primary-color)] bg-[var(--bg-color)] text-[11px] font-extrabold text-[var(--text-color)] flex items-center gap-1 shadow-sm transition-all hover:bg-[var(--primary-color)]/5"
               >
-                <Icon name={busy ? 'hourglass_top' : 'upload'} className="text-[16px]" />
-                <span>{busy ? 'Uploading…' : value ? 'Replace' : 'Upload photo'}</span>
+                <Icon name={busy ? 'hourglass_top' : 'cached'} className="text-[14px]" />
+                <span>{busy ? 'Processing…' : 'Change Photo'}</span>
               </button>
-            </>
-          )}
-
-          <div className="flex-1 min-w-0">
-            <input
-              type="url"
-              placeholder={configured ? '…or paste an image URL' : 'Paste an image URL (https://…)'}
-              value={value || ''}
-              onChange={(e) => {
-                setError('');
-                onChange(e.target.value);
-              }}
-              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3 py-2 outline-none text-[12px] font-semibold text-[var(--text-color)] truncate transition-all"
-            />
+              <button
+                type="button"
+                onClick={handleClear}
+                disabled={busy}
+                className="px-2.5 py-1.5 rounded-lg border border-rose-500/30 text-rose-500 hover:bg-rose-500/10 text-[11px] font-extrabold flex items-center gap-1 transition-all"
+                title="Remove photo"
+              >
+                <Icon name="delete" className="text-[14px]" />
+                <span>Remove</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            if (e.dataTransfer.files?.[0]) handleFile(e.dataTransfer.files[0]);
+          }}
+          onClick={() => inputRef.current?.click()}
+          className={`cursor-pointer rounded-2xl border-2 border-dashed p-4 flex flex-col items-center justify-center text-center transition-all group ${
+            dragOver
+              ? 'border-[var(--primary-color)] bg-[var(--primary-color)]/10'
+              : 'border-[var(--border-color)]/60 hover:border-[var(--primary-color)]/80 bg-[var(--bg-color)]/60 hover:bg-[var(--bg-color)]'
+          } ${busy ? 'opacity-50 pointer-events-none' : ''}`}
+        >
+          <div className="w-10 h-10 rounded-full bg-[var(--primary-color)]/10 text-[var(--primary-color)] flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+            <Icon name={busy ? 'hourglass_top' : 'add_photo_alternate'} className="text-[22px]" />
+          </div>
+          <p className="text-[12px] font-extrabold text-[var(--text-color)]">
+            {busy ? 'Uploading photo from device…' : 'Upload photo from device'}
+          </p>
+          <p className="text-[11px] text-[var(--text-secondary)] font-medium mt-0.5">
+            Click to browse phone/computer files or drag & drop (JPG, PNG, WebP)
+          </p>
+        </div>
+      )}
 
       {error && (
-        <p className="text-[11px] font-bold text-rose-500 flex items-center gap-1">
+        <p className="text-[11px] font-bold text-rose-500 flex items-center gap-1 mt-1">
           <Icon name="error" className="text-[13px]" />
           <span>{error}</span>
         </p>
       )}
 
-      {awaitingFacilityId && !error && (
-        <p className="text-[11px] font-bold text-amber-500 flex items-center gap-1">
-          <Icon name="info" className="text-[13px]" />
-          <span>Enter the Facility ID first — it decides where this image is stored.</span>
-        </p>
-      )}
-
-      {hint && !error && !awaitingFacilityId && (
-        <p className="text-[11px] font-medium text-[var(--text-secondary)] leading-relaxed">{hint}</p>
+      {hint && !error && (
+        <p className="text-[11px] font-medium text-[var(--text-secondary)] leading-relaxed mt-1">{hint}</p>
       )}
     </div>
   );

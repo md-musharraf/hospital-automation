@@ -408,6 +408,20 @@ export default function PatientLiveTracker() {
                   Balance Due: ₹{invoice.balanceDue}
                 </span>
               </div>
+
+              {invoice.pdfUrl && (
+                <div className="pt-2 border-t border-[var(--border-color)]/30 flex justify-end">
+                  <a
+                    href={invoice.pdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl text-[12px] flex items-center gap-1.5 shadow-sm transition-all"
+                  >
+                    <span className="material-symbols-outlined text-[15px]">download</span>
+                    <span>Download Official PDF Bill</span>
+                  </a>
+                </div>
+              )}
             </div>
           )}
 

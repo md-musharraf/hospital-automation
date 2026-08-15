@@ -49,7 +49,9 @@ const InvoiceSchema = new mongoose.Schema(
     },
     dischargedAt: { type: Date },
     dischargedBy: { type: String },
-    notes: { type: String }
+    notes: { type: String },
+    pdfUrl: { type: String },
+    pdfKey: { type: String }
   },
   { timestamps: true }
 );

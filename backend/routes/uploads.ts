@@ -196,5 +196,57 @@ router.post('/r2/report-auth', authenticateToken, (req, res) => {
   return res.json({ configured: true, ...ticket });
 });
 
+/**
+ * POST /api/v1/uploads/r2/invoice-auth
+ *
+ * Permission to upload ONE billing invoice / discharge summary PDF to R2.
+ * Staff-only and always token-authenticated.
+ */
+router.post('/r2/invoice-auth', authenticateToken, (req, res) => {
+  if (!r2.isConfigured()) {
+    return res.status(501).json({
+      configured: false,
+      message: 'Invoice PDF uploads are not configured on this server.'
+    });
+  }
+
+  const hospitalId = req.user && req.user.hospital;
+  if (!hospitalId) {
+    return res.status(403).json({ message: 'This account is not attached to a facility.' });
+  }
+
+  const scopes = Array.isArray(req.user.scopes) ? req.user.scopes : [];
+  const isStaff =
+    req.user.role === 'staff' ||
+    scopes.includes('staff') ||
+    req.user.role === 'admin' ||
+    req.user.role === 'superadmin';
+  if (!isStaff) {
+    return res.status(403).json({ message: 'Only staff can manage patient billing invoices.' });
+  }
+
+  const { invoiceNumber, fileName, contentType, size } = req.body || {};
+  if (!invoiceNumber) {
+    return res.status(400).json({ message: 'Which invoice is this PDF for?' });
+  }
+
+  if (contentType && contentType !== r2.ALLOWED_MIME) {
+    return res.status(400).json({ message: `An invoice must be a PDF, not ${contentType}.` });
+  }
+  if (size && Number(size) > r2.MAX_BYTES) {
+    return res.status(413).json({
+      message: `That document is over the ${Math.round(r2.MAX_BYTES / (1024 * 1024))}MB limit.`
+    });
+  }
+
+  const ticket = r2.presignInvoiceUpload(hospitalId, invoiceNumber, fileName);
+  if (!ticket) {
+    return res.status(400).json({ message: 'That facility id cannot be used as a storage folder.' });
+  }
+
+  logger.info('[UPLOAD] Issued invoice PDF credential', { hospitalId, invoiceNumber, key: ticket.key });
+  return res.json({ configured: true, ...ticket });
+});
+
 export default router;
 module.exports = router;

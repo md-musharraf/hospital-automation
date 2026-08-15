@@ -6,6 +6,7 @@ import LiveActivityFeed from './LiveActivityFeed';
 import HelpPanel from './HelpPanel';
 import EmptyState from './EmptyState';
 import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
+import { generateLabReportPdfBlob, downloadPdfBlob, uploadPdfBlobToR2 } from '../lib/pdfGenerator';
 
 export function LabDashboard({ labToken, labUser, onLogout }) {
   const [tokens, setTokens] = useState([]);
@@ -123,7 +124,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       if (!results[keyOf(tokenId, testName)]?.resultValue) {
         setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
       }
-    } catch (err) {
+    } catch (err: any) {
       // 501 means this server has no R2 configured — expected, not a failure.
       if (err.status === 501) {
         inlineAsDataUri(tokenId, testName, file);
@@ -133,6 +134,77 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     } finally {
       setUploading('');
     }
+  };
+
+  /**
+   * Auto-generate an official signed clinical lab report PDF from entered values,
+   * upload it directly to Cloudflare R2, and attach it to the test worksheet.
+   */
+  const handleAutoGeneratePdf = async (tokenId: string, testName: string) => {
+    const entry = results[keyOf(tokenId, testName)] || {};
+    const testData = {
+      testName,
+      resultValue: entry.resultValue || 'Normal',
+      unit: entry.unit || '',
+      normalRange: entry.normalRange || '',
+      abnormal: Boolean(entry.abnormal),
+      remarks: entry.remarks || 'Test completed and verified.',
+      completedBy: labUser?.name || 'Lab Assistant'
+    };
+
+    setUploading(keyOf(tokenId, testName));
+    setError('');
+
+    try {
+      const blob = generateLabReportPdfBlob(testData, selectedToken, labUser?.hospital);
+      const fileName = `${testName.replace(/[^a-zA-Z0-9_-]/g, '_')}-Report.pdf`;
+
+      try {
+        const ticket = await api.post('/uploads/r2/report-auth', {
+          tokenId,
+          fileName,
+          contentType: 'application/pdf',
+          size: blob.size
+        });
+
+        const uploaded = await uploadPdfBlobToR2(ticket.uploadUrl, blob);
+        if (uploaded && ticket.shareUrl) {
+          setField(tokenId, testName, 'reportPdf', ticket.shareUrl);
+          setField(tokenId, testName, 'reportFileName', fileName);
+          if (!entry.resultValue) {
+            setField(tokenId, testName, 'resultValue', 'Official PDF Generated');
+          }
+          setFlash(`Official PDF report for ${testName} generated & saved to R2!`);
+          return;
+        }
+      } catch (ticketErr: any) {
+        // Fallback: download locally if R2 not configured
+        downloadPdfBlob(blob, fileName);
+        setFlash(`Generated & downloaded ${fileName} locally.`);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Could not generate report PDF.');
+    } finally {
+      setUploading('');
+    }
+  };
+
+  const handleShareReportWhatsApp = (test: any, tok = selectedToken) => {
+    const phone = tok?.patient?.phone ? String(tok.patient.phone).replace(/\D/g, '') : '';
+    const formattedPhone = phone.length === 10 ? `91${phone}` : phone;
+    const labName = (labUser?.hospital || 'Hospital').toUpperCase();
+    const resultLine = `${test.resultValue || 'Completed'}${test.unit ? ` ${test.unit}` : ''}${test.normalRange ? ` (Normal: ${test.normalRange})` : ''}`;
+    const pdfLine = test.reportPdf ? `\n📄 Download Official PDF Report: ${test.reportPdf}\n` : '';
+    const msg =
+      `🧪 LAB REPORT SUMMARY — ${labName}\n` +
+      `Patient: ${tok?.patient?.name || 'Patient'}\n` +
+      `Test: ${test.testName}\n` +
+      `Result: ${resultLine}${test.abnormal ? ' ⚠️ (ABNORMAL)' : ''}\n` +
+      pdfLine +
+      `\nView Online: https://hospital-automation-wine.vercel.app/prescription/${tok?._id}\n` +
+      `Please consult your doctor with this report. 🙏`;
+
+    window.open(`https://wa.me/${formattedPhone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   const handleCompleteTest = async (tokenId, testName) => {
@@ -439,26 +511,37 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                           </label>
                         </div>
 
-                        {/* PDF Upload Option */}
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 p-2.5 bg-[var(--bg-color)]/60 rounded-xl border border-[var(--border-color)]/40 text-[13px]">
+                        {/* PDF Generation & Attachment Options */}
+                        <div className="flex flex-wrap items-center gap-2 p-2.5 bg-[var(--bg-color)]/60 rounded-xl border border-[var(--border-color)]/40 text-[13px]">
+                          <button
+                            type="button"
+                            onClick={() => handleAutoGeneratePdf(selectedToken._id, test.testName)}
+                            disabled={uploading === keyOf(selectedToken._id, test.testName)}
+                            className="flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-lg shadow-sm transition-all text-[12px]"
+                            title="Auto-build an official PDF laboratory report from the values above and save to R2"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">
+                              {uploading === keyOf(selectedToken._id, test.testName)
+                                ? 'hourglass_top'
+                                : 'auto_fix_high'}
+                            </span>
+                            <span>
+                              {uploading === keyOf(selectedToken._id, test.testName)
+                                ? 'Generating & Uploading…'
+                                : 'Auto-Generate PDF Report'}
+                            </span>
+                          </button>
+
                           <label
-                            className={`flex items-center space-x-1.5 px-3 py-1.5 bg-teal-600 text-white font-bold rounded-lg transition-all shrink-0 ${
+                            className={`flex items-center space-x-1.5 px-3 py-1.5 bg-teal-600 text-white font-bold rounded-lg transition-all text-[12px] shrink-0 ${
                               uploading === keyOf(selectedToken._id, test.testName)
                                 ? 'opacity-60 cursor-wait'
                                 : 'hover:bg-teal-500 cursor-pointer'
                             }`}
                           >
-                            <span className="material-symbols-outlined text-[16px]">
-                              {uploading === keyOf(selectedToken._id, test.testName)
-                                ? 'hourglass_top'
-                                : 'picture_as_pdf'}
-                            </span>
+                            <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
                             <span>
-                              {uploading === keyOf(selectedToken._id, test.testName)
-                                ? 'Uploading…'
-                                : entry.reportFileName
-                                  ? 'Change PDF Report'
-                                  : 'Attach PDF Test Report'}
+                              {entry.reportFileName ? 'Change PDF Report' : 'Attach PDF from Device'}
                             </span>
                             <input
                               type="file"
@@ -470,19 +553,22 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                               }
                             />
                           </label>
+
                           {entry.reportFileName && (
-                            <span className="text-[13px] font-extrabold text-teal-600 bg-teal-500/10 px-2.5 py-1 rounded-lg border border-teal-500/20 truncate max-w-xs">
-                              📄 {entry.reportFileName}
+                            <span className="text-[12px] font-extrabold text-teal-600 bg-teal-500/10 px-2.5 py-1 rounded-lg border border-teal-500/20 truncate max-w-xs flex items-center gap-1">
+                              <span>📄</span>
+                              <span>{entry.reportFileName}</span>
                             </span>
                           )}
+
                           {test.reportPdf && !entry.reportPdf && (
                             <a
                               href={test.reportPdf}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-[13px] font-extrabold text-sky-600 bg-sky-500/10 px-2.5 py-1 rounded-lg border border-sky-500/20 underline"
+                              className="text-[12px] font-extrabold text-sky-600 bg-sky-500/10 px-2.5 py-1 rounded-lg border border-sky-500/20 underline"
                             >
-                              📄 View Existing PDF Report
+                              📄 View Cloud Report
                             </a>
                           )}
                         </div>
@@ -520,21 +606,57 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                     .map((t) => (
                       <div
                         key={t.testName}
-                        className={`flex items-center justify-between px-3 py-2 rounded-lg border text-[13px] ${
+                        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border text-[13px] ${
                           t.abnormal
                             ? 'border-rose-500/40 bg-rose-500/5'
                             : 'border-[var(--border-color)]/40 bg-[var(--bg-color)]'
                         }`}
                       >
-                        <span className="font-bold">{t.testName}</span>
-                        <span
-                          className={`font-semibold ${t.abnormal ? 'text-rose-500' : 'text-[var(--text-secondary)]'}`}
-                        >
-                          {t.resultValue || t.remarks}
-                          {t.unit ? ` ${t.unit}` : ''}
-                          {t.normalRange ? ` (ref ${t.normalRange})` : ''}
-                          {t.abnormal ? ' ⚠️' : ''}
-                        </span>
+                        <div className="flex flex-col">
+                          <span className="font-extrabold">{t.testName}</span>
+                          <span
+                            className={`font-semibold text-[12px] ${t.abnormal ? 'text-rose-500' : 'text-[var(--text-secondary)]'}`}
+                          >
+                            {t.resultValue || t.remarks}
+                            {t.unit ? ` ${t.unit}` : ''}
+                            {t.normalRange ? ` (ref ${t.normalRange})` : ''}
+                            {t.abnormal ? ' ⚠️ (ABNORMAL)' : ''}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {t.reportPdf ? (
+                            <a
+                              href={t.reportPdf}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg text-[12px] flex items-center gap-1 shadow-sm transition-all"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">download</span>
+                              <span>PDF</span>
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleAutoGeneratePdf(selectedToken._id, t.testName)}
+                              className="px-2.5 py-1 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 font-bold rounded-lg text-[12px] flex items-center gap-1 transition-all"
+                              title="Generate PDF report for this result"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">picture_as_pdf</span>
+                              <span>Generate PDF</span>
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleShareReportWhatsApp(t, selectedToken)}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-[12px] flex items-center gap-1 shadow-sm transition-all"
+                            title="Share lab report on patient's WhatsApp"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">share</span>
+                            <span>WhatsApp</span>
+                          </button>
+                        </div>
                       </div>
                     ))}
                 </div>

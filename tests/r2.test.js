@@ -178,6 +178,18 @@ const param = (url, name) => new URL(url).searchParams.get(name);
     keyed.mod.reportKey('h', 't', 'r.pdf') !== keyed.mod.reportKey('h', 't', 'r.pdf')
   );
 
+  // Invoices tenant boundary
+  check(
+    'An invoice lands under its own facility invoices folder',
+    keyed.mod
+      .invoiceKey('city-hospital', 'INV-101', 'bill.pdf')
+      .startsWith('facilities/city-hospital/invoices/INV-101/')
+  );
+  check(
+    'An invoice traversal in the invoice number cannot climb',
+    !keyed.mod.invoiceKey('city-hospital', '../../../etc', 'bill.pdf').includes('..')
+  );
+
   section('R2 — the upload ticket');
 
   const ticket = keyed.mod.presignUpload('city-hospital', 'tok-12', 'result.pdf');
@@ -194,6 +206,10 @@ const param = (url, name) => new URL(url).searchParams.get(name);
   );
   check('The secret never appears in the URL', !ticket.uploadUrl.includes(KEYS.R2_SECRET_ACCESS_KEY));
   check('Only PDFs are accepted', keyed.mod.ALLOWED_MIME === 'application/pdf');
+
+  const invoiceTicket = keyed.mod.presignInvoiceUpload('city-hospital', 'INV-1001', 'inv.pdf');
+  check('An invoice ticket is issued with a valid signed PUT URL', Boolean(invoiceTicket.uploadUrl));
+  check('The invoice ticket key is namespaced to invoices', invoiceTicket.key.includes('/invoices/'));
 
   section('R2 — sharing the result with a patient');
 

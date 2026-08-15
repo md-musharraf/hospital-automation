@@ -166,31 +166,51 @@ export default function DigitalPrescriptionViewer() {
               {labTests.map((test, idx) => (
                 <div
                   key={idx}
-                  className="bg-[var(--bg-color)]/30 p-3.5 rounded-xl border border-[var(--border-color)]/30 flex items-start justify-between text-[13px] gap-3"
+                  className="bg-[var(--bg-color)]/30 p-3.5 rounded-xl border border-[var(--border-color)]/30 flex flex-col sm:flex-row sm:items-center justify-between text-[13px] gap-3"
                 >
-                  <div className="flex items-center space-x-2">
-                    <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)]">
+                  <div className="flex items-start space-x-2">
+                    <span className="material-symbols-outlined text-[20px] text-[var(--primary-color)] mt-0.5">
                       science
                     </span>
                     <div>
-                      <span className="font-bold text-[var(--text-color)]">{test.testName}</span>
+                      <span className="font-extrabold text-[var(--text-color)]">{test.testName}</span>
                       {test.status === 'Completed' && (
-                        <p className="text-[12px] text-[var(--text-secondary)] mt-0.5">
-                          Results:{' '}
-                          <span className="font-semibold text-[var(--text-color)]">{test.remarks}</span>
+                        <p className="text-[12px] text-[var(--text-secondary)] mt-0.5 font-medium">
+                          Result:{' '}
+                          <span className="font-bold text-[var(--text-color)]">
+                            {test.resultValue || test.remarks}
+                          </span>
+                          {test.unit ? ` ${test.unit}` : ''}
+                          {test.normalRange ? ` (Ref: ${test.normalRange})` : ''}
+                          {test.abnormal ? ' ⚠️ (ABNORMAL)' : ''}
                         </p>
                       )}
                     </div>
                   </div>
-                  <span
-                    className={`px-2 py-0.5 rounded text-[11px] font-extrabold uppercase tracking-wide shrink-0 ${
-                      test.status === 'Completed'
-                        ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
-                        : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                    }`}
-                  >
-                    {test.status}
-                  </span>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[11px] font-extrabold uppercase tracking-wide shrink-0 ${
+                        test.status === 'Completed'
+                          ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+                          : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                      }`}
+                    >
+                      {test.status}
+                    </span>
+
+                    {test.reportPdf && (
+                      <a
+                        href={test.reportPdf}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 shadow-sm transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[13px]">download</span>
+                        <span>Download PDF</span>
+                      </a>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
