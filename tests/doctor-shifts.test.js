@@ -23,7 +23,11 @@ const {
   formatHhMm,
   parseHhMm
 } = require('../backend/dist/utils/shiftHelper');
-const { estimateWaitMinutes, broadcastDelay } = require('../backend/dist/utils/queueHelper');
+const {
+  estimateWaitMinutes,
+  broadcastDelay,
+  trackWaitingPatients
+} = require('../backend/dist/utils/queueHelper');
 
 /** A fixed Wednesday, so a weekday-scoped shift is not at the mercy of the calendar. */
 const on = (hours, minutes = 0) => new Date(2026, 7, 12, hours, minutes, 0, 0); // Wed 12 Aug 2026
@@ -207,6 +211,54 @@ const TWO_SITTINGS = [
   // What they were told is recorded, so the tracker does not immediately repeat it.
   const after1 = models.Token._rows.find((t) => t.tokenNumber === 'T-1');
   check('What the patient was told is recorded', after1.lastNotifiedWait === 30, after1.lastNotifiedWait);
+
+  section('The tracker keeps estimates honest without becoming spam');
+
+  const row = (n) => models.Token._rows.find((t) => t.tokenNumber === n);
+
+  // T-1 was told 30 and the queue has since slipped to 95; T-2 was told 40 and
+  // has crept to 46, which is inside the noise threshold.
+  row('T-1').estimatedWaitTime = 95;
+  row('T-2').estimatedWaitTime = 46;
+
+  outbound.length = 0;
+  const drifted = await trackWaitingPatients();
+
+  check('Only the patient whose wait really moved is messaged', drifted === 1, `notified ${drifted}`);
+  check(
+    'A few minutes of slippage is not worth a message',
+    !outbound.some((m) => m.phone === '+919000000002'),
+    outbound.map((m) => m.phone)
+  );
+  check(
+    'The message carries the revised wait',
+    outbound[0] && outbound[0].message.includes('95'),
+    outbound[0] && outbound[0].message
+  );
+  check('The new figure is recorded against the token', row('T-1').lastNotifiedWait === 95, row('T-1'));
+
+  // The decisive property: sweeping again changes nothing, because the patient
+  // is now holding the current number. Without the bookkeeping this is where a
+  // ten-minute job turns into a message every ten minutes, forever.
+  outbound.length = 0;
+  const repeat = await trackWaitingPatients();
+  check('A second sweep does not repeat itself', repeat === 0, `notified ${repeat}`);
+  check(
+    '…and sends nothing at all',
+    outbound.length === 0,
+    outbound.map((m) => m.phone)
+  );
+
+  // A patient nobody has quoted yet adopts the current figure silently — their
+  // booking confirmation already carried it.
+  const fresh = await mkToken('T-9', waiting1, 'Waiting', 60);
+  const q = models.Queue._rows.find((x) => String(x.doctor) === String(doctor._id));
+  q.activeQueue.push(fresh._id);
+
+  outbound.length = 0;
+  await trackWaitingPatients();
+  check('A never-notified patient is seeded, not messaged', outbound.length === 0, outbound.length);
+  check('…and is seeded from the current estimate', row('T-9').lastNotifiedWait === 60, row('T-9'));
 
   report();
 })();

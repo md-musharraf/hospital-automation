@@ -2646,12 +2646,19 @@ router.get('/hospital/:hospitalId/landing', async (req, res) => {
     let withQueues = doctors;
     try {
       const queues = await Queue.find({ doctor: { $in: doctors.map((d) => d._id) } });
-      const waitingBy = new Map(
-        queues.map((q) => [String(q.doctor), Array.isArray(q.activeQueue) ? q.activeQueue.length : 0])
-      );
+      const queueBy = new Map<string, any>(queues.map((q) => [String(q.doctor), q]));
       withQueues = doctors.map((d) => {
         const obj = typeof d.toObject === 'function' ? d.toObject() : { ...d };
-        obj.waiting = waitingBy.has(String(d._id)) ? waitingBy.get(String(d._id)) : null;
+        const q = queueBy.get(String(d._id));
+        obj.waiting = q ? (Array.isArray(q.activeQueue) ? q.activeQueue.length : 0) : null;
+        // The wait is computed HERE, not on the page. The landing page used to
+        // multiply `waiting × averageCheckupTime` itself, which is the one
+        // estimate in the product that never learned about sittings: four people
+        // queued for a doctor whose OPD starts at five read as "~40 min" at 2pm.
+        // Only the server knows the schedule, so only the server should answer.
+        obj.estimatedWait = q
+          ? estimateWaitMinutes(d, obj.waiting || 0, q.bufferDelay || 0)
+          : estimateWaitMinutes(d, 0, 0);
         return obj;
       });
     } catch (queueErr) {

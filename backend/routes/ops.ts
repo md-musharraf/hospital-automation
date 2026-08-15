@@ -22,6 +22,8 @@ const { stageMessage } = require('../utils/journeyHelper');
 const { onlyToday, minutesSince } = require('../utils/dates');
 const { toId, sameId } = require('../utils/ids');
 const { facilityOf, facilityDoctors } = require('../utils/tenancy');
+const { estimateWaitMinutes } = require('../utils/queueHelper');
+const { sittingStatus } = require('../utils/shiftHelper');
 
 /** This facility's tokens, created today. */
 async function todaysTokens(hospital) {
@@ -83,7 +85,13 @@ router.get(
           availabilityStatus: doctor.availabilityStatus,
           waiting,
           inCabin: Boolean(queue && queue.currentToken),
-          estimatedWait: waiting * (doctor.averageCheckupTime || 10) + ((queue && queue.bufferDelay) || 0),
+          // Shift-aware, like the chatbot's estimate and the triage router.
+          // Left as raw queue-length maths, this board contradicted them: at 2pm
+          // the doctor whose next sitting is at five showed "0 min, free", so
+          // the one surface a human steers walk-ins from recommended the one
+          // cabin guaranteed not to open.
+          estimatedWait: estimateWaitMinutes(doctor, waiting, (queue && queue.bufferDelay) || 0),
+          sitting: sittingStatus(doctor),
           seenToday: countWhere(tokens, (t) => sameId(t.doctor, doctor) && t.status === 'Completed'),
           dailyTokenLimit: doctor.dailyTokenLimit || 0
         };

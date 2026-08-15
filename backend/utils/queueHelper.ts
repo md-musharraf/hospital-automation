@@ -18,6 +18,9 @@ export const ARRIVAL_ALERT_THRESHOLD = 2;
 // have left the house on the old estimate and been wrong.
 export const WAIT_DRIFT_THRESHOLD = 15;
 
+/** Guards against two tracker sweeps overlapping. See trackWaitingPatients. */
+let trackerRunning = false;
+
 /**
  * How long until this patient is seen, counting from when the doctor will
  * actually be in the room.
@@ -143,13 +146,21 @@ export async function notifyUpcomingPatients(doctorId: string, io?: any): Promis
  * owed a queue update, and messaging it is how a patient who has already gone
  * home ends up being told to hurry in.
  */
-async function waitingWithPhones(doctorId: string): Promise<any[]> {
-  const queue = await (Queue as any).findOne({ doctor: doctorId }).populate({
+function waitingOf(queue: any): any[] {
+  if (!queue || !Array.isArray(queue.activeQueue)) return [];
+  return queue.activeQueue.filter((t: any) => t && t.status === 'Waiting' && t.patient && t.patient.phone);
+}
+
+/** Load one doctor's queue with its tokens and patients resolved. */
+async function populatedQueue(doctorId: string): Promise<any> {
+  return (Queue as any).findOne({ doctor: doctorId }).populate({
     path: 'activeQueue',
     populate: { path: 'patient' }
   });
-  if (!queue || !Array.isArray(queue.activeQueue)) return [];
-  return queue.activeQueue.filter((t: any) => t && t.status === 'Waiting' && t.patient && t.patient.phone);
+}
+
+async function waitingWithPhones(doctorId: string): Promise<any[]> {
+  return waitingOf(await populatedQueue(doctorId));
 }
 
 /** Bilingual, because the same queue serves both — matching the arrival alerts. */
@@ -248,9 +259,28 @@ export async function broadcastDelay(
  * seeded from its current estimate instead of being messaged immediately.
  */
 export async function trackWaitingPatients(io?: any): Promise<number> {
+  // One sweep at a time, platform-wide.
+  //
+  // The caller is a setInterval, which does NOT wait for the previous run: this
+  // walks every facility and awaits a WhatsApp per patient, so on a slow gateway
+  // a sweep can outlast its own interval. Two overlapping sweeps read the same
+  // not-yet-updated `lastNotifiedWait` and both decide to message — the patient
+  // gets the identical update twice, from the feature whose entire purpose is to
+  // stay under the noise threshold.
+  if (trackerRunning) {
+    logger.warn('[QUEUE-TRACKER] Previous sweep still running — skipping this tick');
+    return 0;
+  }
+  trackerRunning = true;
+
   let notified = 0;
   try {
-    const queues = await (Queue as any).find({});
+    // Queue is not tenant-owned (it hangs off a doctor), so this sweep is
+    // deliberately platform-wide, like the close-of-day job.
+    const queues = await (Queue as any).find({}).populate({
+      path: 'activeQueue',
+      populate: { path: 'patient' }
+    });
     const { sendWhatsAppNotification } = require('./whatsappHelper');
 
     for (const queue of queues || []) {
@@ -263,7 +293,9 @@ export async function trackWaitingPatients(io?: any): Promise<number> {
       const doctorName = doctor.name || 'Your doctor';
       const room = doctor.currentRoom || 'the cabin';
 
-      const waiting = await waitingWithPhones(String(queue.doctor));
+      // Already resolved by the find above — re-fetching per doctor turned one
+      // query into one-per-cabin for no extra information.
+      const waiting = waitingOf(queue);
 
       for (const token of waiting) {
         const current = Number(token.estimatedWaitTime) || 0;
@@ -323,6 +355,9 @@ export async function trackWaitingPatients(io?: any): Promise<number> {
     }
   } catch (err) {
     logger.error('Error in trackWaitingPatients', { err });
+  } finally {
+    // In `finally` so a thrown sweep cannot wedge the tracker off permanently.
+    trackerRunning = false;
   }
   return notified;
 }

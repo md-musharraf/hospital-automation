@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BACKEND_URL } from '../App';
 import { Icon } from './dashboard/DashboardKit';
 
@@ -111,16 +111,23 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
   const [lateReason, setLateReason] = useState('');
   const [announcing, setAnnouncing] = useState(false);
 
-  // Re-seed from the server whenever the queue payload refreshes, but only when
-  // nothing is in flight — otherwise a background poll would wipe out half-typed
-  // times while the doctor is still filling them in.
+  // Re-seed from the server only when the stored timings genuinely CHANGE.
+  //
+  // Keyed on the value, not the prop identity. The portal reloads its queue on
+  // every `queue-updated` socket event — any patient booking, any token called,
+  // anywhere in the facility — and each reload hands down a brand-new
+  // `schedule` object. Depending on identity meant a doctor who added a sitting
+  // and started typing lost the row the moment someone else booked a token.
+  const seededFrom = useRef(null);
   useEffect(() => {
-    if (saving) return;
     const next = (schedule && schedule.shifts) || [];
+    const key = JSON.stringify(next);
+    if (seededFrom.current === key) return;
+    seededFrom.current = key;
     setShifts(
       next.map((s) => ({ label: s.label || '', start: s.start || '', end: s.end || '', days: s.days || [] }))
     );
-  }, [schedule, saving]);
+  }, [schedule]);
 
   const patchShift = (index, patch) =>
     setShifts((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));

@@ -909,7 +909,10 @@ export function buildLandingPage(hospital: any, doctors: any[] = []): any {
     // Attached by the route when it can read the queues — how many people are
     // waiting right now. "3 waiting, ~30 min" is the single most useful thing a
     // patient choosing between four doctors can be told.
-    waiting: typeof d.waiting === 'number' ? d.waiting : null
+    waiting: typeof d.waiting === 'number' ? d.waiting : null,
+    // Server-computed and shift-aware. The page renders this rather than doing
+    // the arithmetic itself, so the public estimate agrees with the chatbot's.
+    estimatedWait: typeof d.estimatedWait === 'number' ? d.estimatedWait : null
   }));
 
   const departments = landing.departments.length

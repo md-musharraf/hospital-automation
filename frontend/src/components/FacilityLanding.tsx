@@ -809,8 +809,17 @@ function DoctorCard({ doctor: d, theme }) {
 
   // Waiting count is only meaningful alongside how long each patient takes —
   // "4 waiting" means something different at 5 minutes a head than at 20.
+  //
+  // The number comes from the server, which is the only side that knows the
+  // doctor's sittings. Multiplying it here instead ignored them, so a queue of
+  // four for a doctor whose OPD opens at five showed "~40 min" in the afternoon.
+  // Falls back to the old arithmetic for a facility on an older API response.
   const waitMinutes =
-    typeof d.waiting === 'number' && d.waiting > 0 ? d.waiting * (d.averageCheckupTime || 10) : 0;
+    typeof d.estimatedWait === 'number'
+      ? d.estimatedWait
+      : typeof d.waiting === 'number' && d.waiting > 0
+        ? d.waiting * (d.averageCheckupTime || 10)
+        : 0;
 
   // Facts worth a line each. Anything the facility left blank simply is not here,
   // rather than showing as an empty row — a half-filled profile should look
