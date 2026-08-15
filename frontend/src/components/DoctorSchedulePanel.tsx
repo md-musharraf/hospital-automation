@@ -1,0 +1,360 @@
+import React, { useEffect, useState } from 'react';
+import { BACKEND_URL } from '../App';
+import { Icon } from './dashboard/DashboardKit';
+
+/**
+ * The doctor's own timings, and the "I'm running late" announcement.
+ *
+ * Two things that used to live nowhere. A doctor here typically sits twice —
+ * morning OPD and evening OPD — and the only record of that was a sentence on
+ * the public page that nothing could compute with, so the queue treated every
+ * cabin as open all day. And when a doctor was delayed, the patients waiting on
+ * them were told nothing at all; they found out by standing in the corridor.
+ *
+ * Both controls belong to the person who knows the answer, which is why they are
+ * in the doctor's own portal rather than the admin console. Announcing a delay
+ * is the one action here that reaches patients, so it says how many will be
+ * messaged before it is pressed, and reports how many actually were.
+ */
+
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const BLANK_SHIFT = { label: '', start: '', end: '', days: [] };
+
+const inputCls =
+  'w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3 py-2 outline-none text-[13px] font-semibold text-[var(--text-color)] transition-all';
+
+/** "13:05" → "1:05 PM", matching what the server prints on the public page. */
+function pretty(value) {
+  const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return '';
+  let hours = parseInt(match[1], 10);
+  const meridiem = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${hours}:${match[2]} ${meridiem}`;
+}
+
+function ShiftRow({ index, shift, onPatch, onRemove }) {
+  const toggleDay = (day) => {
+    const days = shift.days || [];
+    onPatch({ days: days.includes(day) ? days.filter((d) => d !== day) : [...days, day] });
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--border-color)]/40 bg-[var(--bg-color)] p-3 space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <input
+          className="bg-transparent text-[13px] font-black text-[var(--text-color)] outline-none min-w-0 flex-1"
+          placeholder={index === 0 ? 'Morning OPD' : 'Evening OPD'}
+          value={shift.label}
+          onChange={(e) => onPatch({ label: e.target.value })}
+        />
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remove this sitting"
+          className="w-6 h-6 rounded-lg text-rose-500 hover:bg-rose-500/10 flex items-center justify-center shrink-0 transition-all"
+        >
+          <Icon name="close" className="text-[15px]" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <label className="space-y-1">
+          <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
+            From
+          </span>
+          <input
+            type="time"
+            className={inputCls}
+            value={shift.start}
+            onChange={(e) => onPatch({ start: e.target.value })}
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
+            To
+          </span>
+          <input
+            type="time"
+            className={inputCls}
+            value={shift.end}
+            onChange={(e) => onPatch({ end: e.target.value })}
+          />
+        </label>
+      </div>
+
+      <div className="flex flex-wrap gap-1">
+        {DAYS.map((day) => {
+          const on = (shift.days || []).includes(day);
+          return (
+            <button
+              key={day}
+              type="button"
+              onClick={() => toggleDay(day)}
+              className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                on
+                  ? 'bg-[var(--primary-color)] text-[var(--primary-text)] border-[var(--primary-color)]'
+                  : 'bg-[var(--card-bg)] text-[var(--text-secondary)] border-[var(--border-color)]/50 hover:border-[var(--primary-color)]/40'
+              }`}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-[11px] text-[var(--text-secondary)]">
+        {(shift.days || []).length === 0
+          ? 'No days picked — this sitting follows your usual OPD days.'
+          : `Runs on ${(shift.days || []).join(', ')}.`}
+      </p>
+    </div>
+  );
+}
+
+export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, onSaved }) {
+  const [shifts, setShifts] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+
+  const [lateMins, setLateMins] = useState('');
+  const [lateReason, setLateReason] = useState('');
+  const [announcing, setAnnouncing] = useState(false);
+
+  // Re-seed from the server whenever the queue payload refreshes, but only when
+  // nothing is in flight — otherwise a background poll would wipe out half-typed
+  // times while the doctor is still filling them in.
+  useEffect(() => {
+    if (saving) return;
+    const next = (schedule && schedule.shifts) || [];
+    setShifts(
+      next.map((s) => ({ label: s.label || '', start: s.start || '', end: s.end || '', days: s.days || [] }))
+    );
+  }, [schedule, saving]);
+
+  const patchShift = (index, patch) =>
+    setShifts((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+
+  const removeShift = (index) => setShifts((prev) => prev.filter((_, i) => i !== index));
+
+  const addShift = () => setShifts((prev) => [...prev, { ...BLANK_SHIFT, days: [] }]);
+
+  const saveSchedule = async () => {
+    setError('');
+    setNote('');
+
+    const incomplete = shifts.some((s) => !s.start || !s.end);
+    if (incomplete) {
+      setError('Every sitting needs both a start and an end time.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/schedule`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${doctorToken}` },
+        body: JSON.stringify({ shifts })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || 'Could not save your timings.');
+        return;
+      }
+      setNote(data.opdHours ? `Saved — your OPD shows as ${data.opdHours}.` : 'Timings cleared.');
+      if (onSaved) onSaved();
+    } catch (err) {
+      setError('Network error — your timings were not saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const announceLate = async () => {
+    setError('');
+    setNote('');
+
+    const mins = parseInt(lateMins, 10);
+    if (isNaN(mins) || mins < 1) {
+      setError('How many minutes late are you?');
+      return;
+    }
+
+    setAnnouncing(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/running-late`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${doctorToken}` },
+        body: JSON.stringify({ minutes: mins, reason: lateReason })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || 'Could not announce the delay.');
+        return;
+      }
+      setNote(data.message || 'Patients notified.');
+      setLateMins('');
+      setLateReason('');
+      if (onSaved) onSaved();
+    } catch (err) {
+      setError('Network error — nobody was notified.');
+    } finally {
+      setAnnouncing(false);
+    }
+  };
+
+  const status = schedule && schedule.status;
+  const printed = (schedule && schedule.opdHours) || '';
+
+  return (
+    <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 space-y-5 shadow-[var(--card-shadow)]">
+      {/* ---- Sitting hours ---- */}
+      <div>
+        <h4 className="font-bold text-[var(--text-color)] text-[15px] flex items-center gap-1.5">
+          <Icon name="schedule" className="text-[18px] text-[var(--primary-color)]" />
+          My OPD timings
+        </h4>
+        <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">
+          Add a sitting for each time you see patients — morning and evening are separate.
+        </p>
+      </div>
+
+      {status && !status.unscheduled && (
+        <div
+          className={`rounded-xl px-3 py-2 text-[12px] font-bold border ${
+            status.sitting
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-600'
+          }`}
+        >
+          {status.sitting
+            ? 'You are inside a sitting right now — patients see a live wait.'
+            : status.nextStart
+              ? `Not sitting now. Next OPD starts in about ${status.minutesUntilStart} min — new bookings are quoted from then.`
+              : 'Not sitting now, and no upcoming OPD is scheduled this week.'}
+        </div>
+      )}
+
+      <div className="space-y-2.5">
+        {shifts.map((shift, i) => (
+          <ShiftRow
+            key={i}
+            index={i}
+            shift={shift}
+            onPatch={(patch) => patchShift(i, patch)}
+            onRemove={() => removeShift(i)}
+          />
+        ))}
+
+        {shifts.length === 0 && (
+          <p className="text-[12px] text-[var(--text-secondary)] bg-[var(--bg-color)] border border-dashed border-[var(--border-color)]/50 rounded-xl px-3 py-3">
+            No sittings set. Your cabin is treated as open all day, so waiting times are estimated from the
+            queue alone.
+          </p>
+        )}
+
+        {shifts.length < 3 && (
+          <button
+            type="button"
+            onClick={addShift}
+            className="w-full border border-dashed border-[var(--border-color)] hover:border-[var(--primary-color)]/50 rounded-xl py-2.5 text-[12px] font-bold text-[var(--text-secondary)] hover:text-[var(--primary-color)] flex items-center justify-center gap-1.5 transition-all"
+          >
+            <Icon name="add" className="text-[16px]" />
+            Add {shifts.length === 0 ? 'a sitting' : 'another sitting'}
+          </button>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={saveSchedule}
+        disabled={saving}
+        className="w-full bg-[var(--primary-color)] hover:bg-[var(--primary-container)] text-[var(--primary-text)] font-black py-2.5 rounded-xl text-[13px] transition-all active:scale-95 disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Save timings'}
+      </button>
+
+      {printed && (
+        <p className="text-[11px] text-[var(--text-secondary)] text-center">
+          Patients see: <span className="font-bold text-[var(--text-color)]">{printed}</span>
+        </p>
+      )}
+
+      {/* ---- Running late ---- */}
+      <div className="pt-4 border-t border-[var(--border-color)]/30 space-y-3">
+        <div>
+          <h4 className="font-bold text-[var(--text-color)] text-[15px] flex items-center gap-1.5">
+            <Icon name="notifications_active" className="text-[18px] text-amber-500" />
+            Running late today
+          </h4>
+          <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">
+            {waitingCount > 0
+              ? `Every one of the ${waitingCount} waiting patient(s) gets a WhatsApp with their new time.`
+              : 'Nobody is waiting yet — the delay is recorded for anyone who books next.'}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {[15, 30, 45, 60].map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setLateMins(String(m))}
+              className={`p-2 rounded-xl text-[12px] font-bold border transition-all ${
+                String(m) === lateMins
+                  ? 'bg-amber-500 text-white border-amber-500'
+                  : 'bg-[var(--bg-color)] border-[var(--border-color)] text-[var(--text-color)] hover:border-amber-500/40'
+              }`}
+            >
+              {m} min late
+            </button>
+          ))}
+        </div>
+
+        <input
+          type="number"
+          min="1"
+          max="480"
+          className={inputCls}
+          placeholder="…or type the minutes"
+          value={lateMins}
+          onChange={(e) => setLateMins(e.target.value)}
+        />
+
+        <input
+          type="text"
+          maxLength={140}
+          className={inputCls}
+          placeholder="Reason (optional) — e.g. emergency case, traffic"
+          value={lateReason}
+          onChange={(e) => setLateReason(e.target.value)}
+        />
+
+        <button
+          type="button"
+          onClick={announceLate}
+          disabled={announcing || !lateMins}
+          className="w-full bg-amber-500 hover:bg-amber-600 text-white font-black py-2.5 rounded-xl text-[13px] flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Icon name="send" className="text-[16px]" />
+          {announcing ? 'Notifying patients…' : 'Tell my waiting patients'}
+        </button>
+      </div>
+
+      {error && (
+        <p className="text-[12px] font-bold text-rose-500 flex items-center gap-1">
+          <Icon name="error" className="text-[14px]" />
+          <span>{error}</span>
+        </p>
+      )}
+      {note && !error && (
+        <p className="text-[12px] font-bold text-emerald-600 flex items-center gap-1">
+          <Icon name="check_circle" className="text-[14px]" />
+          <span>{note}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+export default DoctorSchedulePanel;

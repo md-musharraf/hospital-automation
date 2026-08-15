@@ -116,6 +116,13 @@ const TokenSchema = new mongoose.Schema(
     // been sent, so a patient is pinged exactly once as they approach the front of
     // the queue (lets them wait at home instead of crowding the OPD hall).
     arrivalAlerted: { type: Boolean, default: false },
+    // The wait this patient was last TOLD on WhatsApp, and when. The queue
+    // tracker compares against these instead of against the previous estimate,
+    // so a patient is messaged when the answer they are holding has gone stale —
+    // not every time the number is recomputed. Nothing else reads them; they
+    // exist purely to stop the tracker becoming a source of spam.
+    lastNotifiedWait: { type: Number, default: null },
+    lastTrackedAt: { type: Date, default: null },
     // How many times a no-show has been auto-recalled (given a second chance in the
     // queue instead of being sent back to reception). Capped so it can't loop forever.
     recallCount: { type: Number, default: 0 },

@@ -1,15 +1,23 @@
 import Token from '../models/Token';
 import logger from './logger';
+import { startOfToday } from './dates';
+
+// Retries before booking gives up. Each one now proposes a genuinely different
+// number, so this is a bound on concurrent bookings racing for the same slot,
+// not (as before) five identical attempts at a number the index had refused.
+const MAX_TOKEN_SAVE_ATTEMPTS = 10;
 
 /**
  * Generates a daily resetting token number (T-1, T-2, T-3...) for current date.
  * Filtered by today's date (createdAt >= startOfDay), ensuring every new day tokens
  * start at 1 while keeping ALL historical patient data, visits, and tokens 100% safe in DB.
  */
-export async function generateUniqueTokenNumber(hospitalId?: string | null): Promise<string> {
+export async function generateUniqueTokenNumber(
+  hospitalId?: string | null,
+  avoid?: Iterable<string> | null
+): Promise<string> {
   try {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = startOfToday();
 
     const query: Record<string, any> = {};
     if (hospitalId) {
@@ -26,27 +34,40 @@ export async function generateUniqueTokenNumber(hospitalId?: string | null): Pro
     const todayTokens = (allTokens || []).filter(
       (t: any) => t && t.createdAt && new Date(t.createdAt).getTime() >= startOfDay.getTime()
     );
-    let maxNum = 0;
 
+    // WHERE the counter starts: today's highest number, so each morning opens at
+    // T-1 for the patients and the boards.
+    let maxNum = 0;
     for (const t of todayTokens) {
-      if (t && t.tokenNumber) {
-        const match = t.tokenNumber.match(/T-(\d+)/i) || t.tokenNumber.match(/\d+/);
-        if (match) {
-          const num = parseInt(match[1] || match[0], 10);
-          if (!isNaN(num) && num > maxNum) {
-            maxNum = num;
-          }
-        }
-      }
+      const num = parseTokenNumber(t && t.tokenNumber);
+      if (num > maxNum) maxNum = num;
     }
+
+    // WHAT is actually forbidden: every number this facility still holds in the
+    // collection, of ANY date — because that is precisely what the unique index
+    // `{tokenNumber, hospital}` enforces.
+    //
+    // This used to be today's numbers only, and the mismatch deadlocked booking.
+    // The close-of-day (jobs/dailyReset) deliberately CARRIES FORWARD any token
+    // still mid-treatment — In Consultation, Lab Pending, Lab Complete, Pharmacy
+    // Pending — so yesterday's T-1 can still be sitting in the collection this
+    // morning. Today's view saw no tokens, proposed T-1, the index rejected it,
+    // and saveTokenWithRetry asked for another number — getting the identical
+    // T-1 every time, because nothing about the calculation had changed. Five
+    // attempts later the patient was told "Could not allocate a free token
+    // number", which is the failure in the bug report. The same deadlock hit any
+    // facility whose close-of-day had not run (a restarted or sleeping host):
+    // then EVERY one of yesterday's tokens blocked its number.
+    const taken = new Set<string>((allTokens || []).map((t: any) => t && t.tokenNumber).filter(Boolean));
+    // Numbers already tried and rejected inside the current save loop. The write
+    // that beat us to a number may not be visible to this read yet (a concurrent
+    // booking, or a replica lag), so a collision we have already SEEN counts as
+    // taken even when the query says otherwise.
+    for (const n of avoid || []) taken.add(n);
 
     let nextNum = maxNum + 1;
     let tokenNumber = `T-${nextNum}`;
-
-    // Collision check against the numbers already handed out today (same in-JS
-    // date filter, for the same reason).
-    const takenToday = new Set(todayTokens.map((t: any) => t.tokenNumber));
-    while (takenToday.has(tokenNumber)) {
+    while (taken.has(tokenNumber)) {
       nextNum++;
       tokenNumber = `T-${nextNum}`;
     }
@@ -58,6 +79,15 @@ export async function generateUniqueTokenNumber(hospitalId?: string | null): Pro
   }
 }
 
+/** The numeric part of "T-42" (or a bare "42"); 0 when there isn't one. */
+function parseTokenNumber(value?: string | null): number {
+  if (!value) return 0;
+  const match = value.match(/T-(\d+)/i) || value.match(/\d+/);
+  if (!match) return 0;
+  const num = parseInt(match[1] || match[0], 10);
+  return isNaN(num) ? 0 : num;
+}
+
 /**
  * Saves a Token document with automatic retry for duplicate key handling.
  */
@@ -65,18 +95,26 @@ export async function saveTokenWithRetry(tokenDoc: any): Promise<any> {
   let saved = false;
   let retryCount = 0;
 
-  while (!saved && retryCount < 5) {
+  // Every number the index has already rejected for this document. Feeding it
+  // back into the generator is what makes a retry actually try something NEW —
+  // without it the loop re-proposed the same number five times and gave up.
+  const rejected = new Set<string>();
+
+  while (!saved && retryCount < MAX_TOKEN_SAVE_ATTEMPTS) {
     try {
       await tokenDoc.save();
       saved = true;
     } catch (err: any) {
       if (err.code === 11000 || (err.message && err.message.includes('E11000'))) {
         retryCount++;
-        const newNum = await generateUniqueTokenNumber(tokenDoc.hospital);
+        if (tokenDoc.tokenNumber) rejected.add(tokenDoc.tokenNumber);
+        const newNum = await generateUniqueTokenNumber(tokenDoc.hospital, rejected);
         tokenDoc.tokenNumber = newNum;
-        console.warn(
-          `[E11000 DUP KEY RESOLVED] Automatically regenerated token number to ${tokenDoc.tokenNumber} (Attempt ${retryCount})`
-        );
+        logger.warn('[TOKEN] Duplicate token number resolved, retrying', {
+          hospital: tokenDoc.hospital,
+          tokenNumber: newNum,
+          attempt: retryCount
+        });
       } else {
         throw err;
       }

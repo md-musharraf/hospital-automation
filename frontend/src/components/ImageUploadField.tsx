@@ -2,7 +2,13 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { BACKEND_URL } from '../App';
 import { Icon } from './dashboard/DashboardKit';
 
-export const UploadContext = createContext({ adminSecret: '', hospitalId: '' });
+// `token` is the facility/staff session JWT. The server signs an upload for
+// EITHER the platform admin secret or a staff token, and picks the storage
+// folder from whichever one it got — so a console that mounts these fields
+// without being the super-admin has to pass its session, or every upload comes
+// back 401. Today only SuperAdminPortal mounts them, but the branding editor is
+// the obvious thing for a facility to be given next.
+export const UploadContext = createContext({ adminSecret: '', hospitalId: '', token: '' });
 export const UploadCredentialsProvider = UploadContext.Provider;
 
 const IMAGEKIT_UPLOAD_URL = 'https://upload.imagekit.io/api/v1/files/upload';
@@ -64,6 +70,7 @@ export function ImageUploadField(props: any) {
   const ctx = useContext(UploadContext);
   const hospitalId = props.hospitalId || ctx.hospitalId;
   const adminSecret = props.adminSecret || ctx.adminSecret;
+  const sessionToken = props.token || ctx.token;
 
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [allowedTypes, setAllowedTypes] = useState<string[]>([]);
@@ -120,7 +127,8 @@ export function ImageUploadField(props: any) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(adminSecret ? { 'X-Admin-Secret': adminSecret } : {})
+          ...(adminSecret ? { 'X-Admin-Secret': adminSecret } : {}),
+          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {})
         },
         body: JSON.stringify({ purpose, hospitalId })
       });

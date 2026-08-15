@@ -6,7 +6,7 @@
 //   3. picks the least-busy doctor in that department (load balancing)
 
 import Queue from '../models/Queue';
-import { isDoctorFull } from './queueHelper';
+import { isDoctorFull, estimateWaitMinutes } from './queueHelper';
 
 // Pregnancy cues (English + Hindi + Hinglish) used to auto-flag a Pregnant token.
 export const PREGNANCY_KEYWORDS: string[] = [
@@ -517,12 +517,15 @@ export async function pickLeastBusyDoctor(
     loadByDoctor.set(String(q.doctor), { len, buffer: q.bufferDelay || 0 });
   });
 
+  // "Least busy" has to mean "will see this patient soonest", not "has the
+  // shortest list". A doctor whose evening sitting starts in three hours has an
+  // empty queue all afternoon, so by queue length alone they won every walk-in
+  // at 2pm — routing patients to the one cabin guaranteed not to open.
   let best = candidates[0];
   let bestWait = Infinity;
   for (const d of candidates) {
     const load = loadByDoctor.get(String(d._id)) || { len: 0, buffer: 0 };
-    const avg = d.averageCheckupTime || 10;
-    const wait = load.len * avg + load.buffer;
+    const wait = estimateWaitMinutes(d, load.len, load.buffer);
     if (wait < bestWait) {
       bestWait = wait;
       best = d;

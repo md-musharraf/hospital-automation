@@ -10,7 +10,8 @@ const {
   recalculateQueueTimes,
   formatApptTime,
   insertTokenByPriority,
-  isDoctorFull
+  isDoctorFull,
+  estimateWaitMinutes
 } = require('../utils/queueHelper');
 const {
   sendWhatsAppNotification,
@@ -954,7 +955,10 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
     // load balancing before confirming.
     const sQueue = await Queue.findOne({ doctor: suggested._id });
     const sLen = (sQueue && sQueue.activeQueue && sQueue.activeQueue.length) || 0;
-    const sWait = sLen * (suggested.averageCheckupTime || 10) + ((sQueue && sQueue.bufferDelay) || 0);
+    // Shift-aware: an empty queue is not "no wait" if the doctor's next sitting
+    // is at five. That mismatch is what told a patient "Approx. wait: 0 min"
+    // for a cabin that would be empty for hours.
+    const sWait = estimateWaitMinutes(suggested, sLen, (sQueue && sQueue.bufferDelay) || 0);
     const shownDept = matchedDepartment ? triage.department : suggested.department || triage.department;
 
     session.tempData.suggestedDoctorId = String(suggested._id);
@@ -2411,9 +2415,7 @@ router.get('/queues/public-status', async (req, res) => {
       if (!q.doctor) return;
       const dept = q.doctor.department;
       const count = q.activeQueue ? q.activeQueue.length : 0;
-      const avgCheckup = q.doctor.averageCheckupTime || 10;
-      const buffer = q.bufferDelay || 0;
-      const wait = count * avgCheckup + buffer;
+      const wait = estimateWaitMinutes(q.doctor, count, q.bufferDelay || 0);
 
       let frontendDept = dept;
       if (dept === 'General Medicine' || dept === 'Cardiology') {

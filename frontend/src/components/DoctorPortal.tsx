@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BACKEND_URL, socket } from '../App';
 import InternalChatBox from './InternalChatBox';
+import DoctorSchedulePanel from './DoctorSchedulePanel';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
 import HelpPanel from './HelpPanel';
@@ -1106,6 +1107,14 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                   </button>
                 </div>
               </div>
+
+              {/* Sitting hours + the running-late announcement */}
+              <DoctorSchedulePanel
+                doctorToken={doctorToken}
+                schedule={queue?.schedule}
+                waitingCount={queue?.activeQueue?.length || 0}
+                onSaved={loadQueue}
+              />
 
               {/* Internal Intercom Chatbox */}
               <InternalChatBox token={doctorToken} user={doctorUser} role="Doctor" />

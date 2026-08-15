@@ -1129,7 +1129,7 @@ export default function SuperAdminPortal() {
     // `editHospId` when a facility is open for editing, otherwise the id being
     // typed into the onboarding form — only one of the two is ever in use, and
     // the id is known before the facility is saved because the admin types it.
-    <UploadCredentialsProvider value={{ adminSecret, hospitalId: editHospId || hospId }}>
+    <UploadCredentialsProvider value={{ adminSecret, hospitalId: editHospId || hospId, token: '' }}>
       <div className="flex-grow bg-[var(--bg-color)] py-8 px-4 sm:px-6 lg:px-8 overflow-y-auto max-h-[calc(100vh-62px)] text-left no-scrollbar">
         <div className="max-w-4xl mx-auto space-y-6">
           {/* Navigation back and header */}

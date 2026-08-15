@@ -280,6 +280,32 @@ cron.schedule(
   { timezone: FACILITY_TIMEZONE }
 );
 
+// Keep waiting patients' estimates honest.
+//
+// The arrival alert fires once, when someone reaches the front. Everything
+// before that was silent: a patient told "about 40 minutes" at booking held
+// that number for the rest of the morning, however far the queue actually
+// drifted — so the safe move was to come in and wait, which is precisely the
+// crowding this is meant to remove.
+//
+// Ten minutes is the cadence, but it is NOT how often a patient hears from us:
+// trackWaitingPatients only messages someone whose wait has moved past
+// WAIT_DRIFT_THRESHOLD since the last thing they were told.
+setInterval(
+  async () => {
+    try {
+      const { trackWaitingPatients } = require('./utils/queueHelper');
+      const notified = await trackWaitingPatients(io);
+      if (notified > 0) {
+        logger.info('[QUEUE-TRACKER] Waiting patients updated', { notified });
+      }
+    } catch (error) {
+      logger.error('[QUEUE-TRACKER] Update sweep failed', { err: error.message });
+    }
+  },
+  10 * 60 * 1000
+);
+
 // Periodic auto follow-up notifications checker (runs every 5 minutes)
 setInterval(
   async () => {

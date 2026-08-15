@@ -74,7 +74,30 @@ const DoctorSchema = new mongoose.Schema(
     registrationNumber: { type: String, default: '' },
     languages: [{ type: String }],
     opdDays: [{ type: String }], // e.g. ['Mon', 'Tue', 'Thu']
+    // The PRINTED sitting hours. Derived from `shifts` whenever those are set,
+    // so the public page cannot claim one thing while the queue computes
+    // another — which it could when both were typed in by hand.
     opdHours: { type: String, default: '' }, // e.g. "10:00 AM – 1:00 PM"
+
+    // The COMPUTABLE sitting hours.
+    //
+    // Most doctors here sit twice — morning OPD and evening OPD — with a gap in
+    // between. `opdHours` was a sentence, so the queue could not see that gap:
+    // an empty queue at 2pm looked like "no wait", and a patient booking then
+    // was told to expect a 0-minute wait for a cabin nobody would enter for
+    // three hours. Structured start/end times let the estimate begin from when
+    // consultation actually resumes. See utils/shiftHelper.js.
+    //
+    // Empty means unscheduled, which is read as "sits whenever" — so every
+    // facility that predates this behaves exactly as it did before.
+    shifts: [
+      {
+        label: { type: String, default: '' }, // "Morning" / "Evening"
+        start: { type: String, default: '' }, // "10:00", 24-hour local
+        end: { type: String, default: '' }, // "13:00"
+        days: [{ type: String }] // [] = follow opdDays
+      }
+    ],
     consultationFee: { type: Number, default: 0 }, // 0 = "ask at reception"
     about: { type: String, default: '' }
   },

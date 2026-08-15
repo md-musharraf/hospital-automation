@@ -7,7 +7,8 @@ const Reminder = require('../models/Reminder');
 const Patient = require('../models/Patient');
 const RefillRequest = require('../models/RefillRequest');
 const { authenticateToken, ensureRole } = require('../middleware/auth');
-const { recalculateQueueTimes, notifyUpcomingPatients } = require('../utils/queueHelper');
+const { recalculateQueueTimes, notifyUpcomingPatients, broadcastDelay } = require('../utils/queueHelper');
+const { normalizeShifts, shiftsToOpdHours, sittingStatus, MAX_SHIFTS } = require('../utils/shiftHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { toRole, toFacility, logActivity, announceJourney } = require('../utils/realtime');
@@ -104,7 +105,22 @@ router.get('/my-queue', authenticateToken, ensureDoctor, async (req, res) => {
       queue = await Queue.findOne({ doctor: doctorId }).populate('currentToken').populate('activeQueue');
     }
 
-    res.json(queue);
+    // The cabin's own timings ride along with the queue rather than needing a
+    // second round trip — the portal draws the board and the timings card from
+    // one payload, and they can never disagree about which doctor they describe.
+    const me = await Doctor.findById(doctorId);
+    const base = queue && typeof queue.toObject === 'function' ? queue.toObject() : { ...queue };
+
+    res.json({
+      ...base,
+      schedule: {
+        shifts: (me && me.shifts) || [],
+        opdDays: (me && me.opdDays) || [],
+        opdHours: (me && me.opdHours) || '',
+        averageCheckupTime: (me && me.averageCheckupTime) || 10,
+        status: me ? sittingStatus(me) : null
+      }
+    });
   } catch (error: any) {
     logger.error('Error fetching doctor queue', { err: error });
     res.status(500).json({ message: 'Server error' });
@@ -152,6 +168,13 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
 
     // Set queue currentToken
     queue.currentToken = token._id;
+    // The doctor is demonstrably here now, so a "running late, arriving by
+    // 11:30" announcement has served its purpose. Left set, it would keep
+    // telling the board a doctor who is actively calling patients has not yet
+    // turned up. The buffer itself stays — being late by 30 minutes is still
+    // 30 minutes of accumulated delay for everyone in the line.
+    queue.delayedUntil = null;
+    queue.delayReason = '';
     await queue.save();
 
     // Recalculate wait times for remaining queue
@@ -534,6 +557,225 @@ router.post('/queue/add-buffer', authenticateToken, ensureDoctor, async (req, re
     });
   } catch (error: any) {
     logger.error('Error adding buffer delay', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * PUT /api/v1/doctor/schedule — the doctor's own sitting hours.
+ *
+ * Most doctors here sit twice a day, and until now the only record of that was
+ * a free-text `opdHours` label nothing could compute with. Posting structured
+ * shifts is what lets the queue tell "there is no wait" apart from "the doctor
+ * is not in the building yet".
+ *
+ * `opdHours` is rewritten from the shifts rather than accepted alongside them,
+ * so the sentence on the public page and the times the queue reasons about can
+ * never drift apart. A doctor who clears their shifts keeps whatever label was
+ * typed before — removing structure should not blank the public page.
+ */
+router.put('/schedule', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const { shifts, opdDays } = req.body || {};
+
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).json({ message: 'Doctor details not found' });
+    }
+
+    if (shifts !== undefined) {
+      if (!Array.isArray(shifts)) {
+        return res.status(400).json({ message: 'shifts must be an array of { label, start, end, days }.' });
+      }
+      if (shifts.length > MAX_SHIFTS) {
+        return res.status(400).json({ message: `A doctor can keep at most ${MAX_SHIFTS} sittings a day.` });
+      }
+
+      const cleaned = normalizeShifts(shifts);
+      // Say so rather than silently storing fewer rows than were sent: a
+      // mistyped "10.00" is exactly the kind of thing that would otherwise
+      // vanish and leave the doctor believing their evening OPD was saved.
+      if (cleaned.length !== shifts.length) {
+        return res.status(400).json({
+          message: 'Each sitting needs a start and end time in 24-hour HH:MM form, e.g. 10:00 and 13:30.'
+        });
+      }
+
+      doctor.shifts = cleaned;
+      if (cleaned.length > 0) doctor.opdHours = shiftsToOpdHours(cleaned);
+    }
+
+    if (opdDays !== undefined) {
+      const { OPD_DAYS } = require('../utils/facilityProfile');
+      if (!Array.isArray(opdDays)) {
+        return res.status(400).json({ message: 'opdDays must be an array of day names.' });
+      }
+      const asked = opdDays.map((d) =>
+        String(d || '')
+          .slice(0, 3)
+          .toLowerCase()
+      );
+      doctor.opdDays = OPD_DAYS.filter((day) => asked.includes(day.toLowerCase()));
+    }
+
+    await doctor.save();
+
+    // The estimates every waiting patient is holding were computed against the
+    // OLD schedule, so they are wrong the moment this is saved.
+    await recalculateQueueTimes(doctorId);
+
+    const hospital = req.user.hospital || 'general-hospital';
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId });
+      req.io.to(`doctor:${doctorId}`).emit('queue-updated');
+      toFacility(req.io, hospital, 'doctor-schedule-update', {
+        doctorId,
+        name: doctor.name,
+        shifts: doctor.shifts,
+        opdHours: doctor.opdHours
+      });
+    }
+
+    await logActivity(req.io, {
+      hospital,
+      type: 'doctor-schedule',
+      role: 'doctor',
+      actor: doctor.name,
+      message: `${doctor.name} updated their OPD timings${doctor.opdHours ? ` (${doctor.opdHours})` : ''}.`,
+      severity: 'info'
+    });
+
+    res.json({
+      message: 'OPD timings updated',
+      shifts: doctor.shifts,
+      opdDays: doctor.opdDays,
+      opdHours: doctor.opdHours,
+      status: sittingStatus(doctor)
+    });
+  } catch (error) {
+    logger.error('Error updating doctor schedule', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/v1/doctor/queue/running-late — "I am delayed, tell my patients."
+ *
+ * The delay itself was already expressible as a buffer. What was missing is the
+ * half that matters to a patient: nobody told them. A cabin running forty
+ * minutes behind with no message is what fills a waiting hall — everyone comes
+ * at their original time and then stays, because leaving risks missing the call.
+ *
+ * Accepts either a number of minutes or a clock time the doctor now expects to
+ * arrive, because those are the two ways a person actually says it ("I'll be
+ * half an hour" / "I'll be there by 11").
+ */
+router.post('/queue/running-late', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const { minutes, arrivingAt, reason = '', notify = true } = req.body || {};
+
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).json({ message: 'Doctor details not found' });
+    }
+
+    let lateBy = null;
+
+    if (arrivingAt !== undefined && arrivingAt !== null && String(arrivingAt).trim()) {
+      const { parseHhMm } = require('../utils/shiftHelper');
+      const target = parseHhMm(String(arrivingAt));
+      if (target === null) {
+        return res.status(400).json({ message: 'arrivingAt must be a 24-hour time like 11:30.' });
+      }
+      const when = new Date();
+      when.setHours(0, 0, 0, 0);
+      when.setMinutes(target);
+      // A time already past today means tomorrow's sitting is being announced,
+      // not a delay of negative minutes.
+      if (when <= new Date()) {
+        return res.status(400).json({ message: 'That time has already passed today.' });
+      }
+      lateBy = Math.round((when.getTime() - Date.now()) / 60000);
+    } else {
+      const parsed = parseInt(minutes);
+      if (isNaN(parsed) || parsed < 1 || parsed > 480) {
+        return res
+          .status(400)
+          .json({ message: 'Tell us how late you are: minutes (1–480) or an arrivingAt time.' });
+      }
+      lateBy = parsed;
+    }
+
+    let queue = await Queue.findOne({ doctor: doctorId });
+    if (!queue) {
+      queue = new Queue({ doctor: doctorId, activeQueue: [], bufferDelay: 0 });
+    }
+
+    // The delay REPLACES the running buffer rather than adding to it. A doctor
+    // saying "I am 30 minutes late" is stating where they now stand, not adding
+    // thirty minutes to a figure they cannot see — and the +10/+15 buttons are
+    // still there for the incremental case.
+    queue.bufferDelay = lateBy;
+    queue.delayReason = String(reason || '')
+      .trim()
+      .slice(0, 140);
+    queue.delayedUntil = new Date(Date.now() + lateBy * 60000);
+    await queue.save();
+
+    // Recompute BEFORE notifying: the broadcast quotes each patient's own
+    // revised time, and it reads it off the token.
+    await recalculateQueueTimes(doctorId);
+
+    let notified = 0;
+    if (notify !== false) {
+      notified = await broadcastDelay(doctorId, {
+        minutes: lateBy,
+        reason: queue.delayReason,
+        io: req.io
+      });
+      queue.lastNotifiedDelay = lateBy;
+      queue.lastDelayNotifiedAt = new Date();
+      await queue.save();
+    }
+
+    const hospital = req.user.hospital || 'general-hospital';
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId });
+      req.io.to(`doctor:${doctorId}`).emit('queue-updated');
+      toFacility(req.io, hospital, 'doctor-delayed', {
+        doctorId,
+        name: doctor.name,
+        minutes: lateBy,
+        reason: queue.delayReason,
+        notified
+      });
+    }
+
+    await logActivity(req.io, {
+      hospital,
+      type: 'doctor-delayed',
+      role: 'doctor',
+      actor: doctor.name,
+      message:
+        `${doctor.name} is running ${lateBy} min late` +
+        `${queue.delayReason ? ` — ${queue.delayReason}` : ''}. ${notified} waiting patient(s) messaged.`,
+      severity: lateBy >= 30 ? 'warning' : 'info'
+    });
+
+    res.json({
+      message: notified
+        ? `${notified} waiting patient(s) have been told you are ${lateBy} min late.`
+        : `Delay recorded (${lateBy} min). No waiting patients to notify yet.`,
+      minutes: lateBy,
+      reason: queue.delayReason,
+      delayedUntil: queue.delayedUntil,
+      bufferDelay: queue.bufferDelay,
+      notified
+    });
+  } catch (error) {
+    logger.error('Error announcing doctor delay', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });
