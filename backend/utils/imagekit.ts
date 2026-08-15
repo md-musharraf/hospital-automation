@@ -56,11 +56,13 @@ export const EXPIRY_SECONDS = 10 * 60;
  * user's data, and ImageKit enforces its own account limits — but the shape
  * of the tree is not negotiable from the client side.
  */
-export const PURPOSES: Record<string, { folder: string; maxBytes: number }> = {
+export const PURPOSES: Record<string, { folder: string; maxBytes: number; allowedMime?: string[] }> = {
   logo: { folder: 'branding', maxBytes: 2 * 1024 * 1024 },
   hero: { folder: 'branding', maxBytes: 5 * 1024 * 1024 },
   gallery: { folder: 'gallery', maxBytes: 5 * 1024 * 1024 },
-  doctor: { folder: 'doctors', maxBytes: 3 * 1024 * 1024 }
+  doctor: { folder: 'doctors', maxBytes: 3 * 1024 * 1024 },
+  invoice: { folder: 'invoices', maxBytes: 15 * 1024 * 1024, allowedMime: ['application/pdf'] },
+  report: { folder: 'reports', maxBytes: 15 * 1024 * 1024, allowedMime: ['application/pdf'] }
 };
 
 export const ALLOWED_MIME: string[] = ['image/jpeg', 'image/png', 'image/webp'];

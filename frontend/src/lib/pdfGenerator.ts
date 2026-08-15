@@ -467,6 +467,58 @@ export function downloadPdfBlob(blob: Blob, fileName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+const IMAGEKIT_UPLOAD_URL = 'https://upload.imagekit.io/api/v1/files/upload';
+
+/**
+ * Uploads a PDF Blob to ImageKit storage using short-lived signed credentials.
+ */
+export async function uploadPdfBlobToImageKit(
+  backendUrl: string,
+  blob: Blob,
+  fileName: string,
+  purpose: 'invoice' | 'report',
+  options?: { hospitalId?: string; sessionToken?: string; adminSecret?: string }
+): Promise<string | null> {
+  try {
+    const authRes = await fetch(`${backendUrl}/api/v1/uploads/imagekit/auth`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options?.adminSecret ? { 'X-Admin-Secret': options.adminSecret } : {}),
+        ...(options?.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {})
+      },
+      body: JSON.stringify({ purpose, hospitalId: options?.hospitalId })
+    });
+
+    if (!authRes.ok) return null;
+    const auth = await authRes.json();
+
+    const form = new FormData();
+    form.append('file', blob, fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`);
+    form.append('fileName', fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`);
+    form.append('publicKey', auth.publicKey);
+    form.append('signature', auth.signature);
+    form.append('expire', String(auth.expire));
+    form.append('token', auth.token);
+    form.append('folder', auth.folder);
+    form.append('useUniqueFileName', 'true');
+
+    const uploadRes = await fetch(IMAGEKIT_UPLOAD_URL, {
+      method: 'POST',
+      body: form
+    });
+
+    if (uploadRes.ok) {
+      const data = await uploadRes.json();
+      return data.url || null;
+    }
+    return null;
+  } catch (err) {
+    console.error('ImageKit PDF upload error:', err);
+    return null;
+  }
+}
+
 /**
  * Direct upload of a PDF Blob to Cloudflare R2 using a presigned upload ticket.
  */
@@ -479,4 +531,60 @@ export async function uploadPdfBlobToR2(uploadUrl: string, blob: Blob): Promise<
     body: blob
   });
   return response.ok;
+}
+
+/**
+ * Universal PDF upload to ImageKit (Primary, no credit card required) or Cloudflare R2.
+ */
+export async function uploadPdfBlobToCloud(
+  backendUrl: string,
+  blob: Blob,
+  fileName: string,
+  purpose: 'invoice' | 'report',
+  options: {
+    hospitalId?: string;
+    sessionToken?: string;
+    tokenId?: string;
+    invoiceNumber?: string;
+  }
+): Promise<string | null> {
+  // 1. Try ImageKit first (Zero-card setup, instant public CDN URL)
+  const ikUrl = await uploadPdfBlobToImageKit(backendUrl, blob, fileName, purpose, options);
+  if (ikUrl) return ikUrl;
+
+  // 2. Try Cloudflare R2 if configured
+  try {
+    const route =
+      purpose === 'invoice' ? '/api/v1/uploads/r2/invoice-auth' : '/api/v1/uploads/r2/report-auth';
+    const body =
+      purpose === 'invoice'
+        ? {
+            invoiceNumber: options.invoiceNumber || fileName,
+            fileName,
+            contentType: 'application/pdf',
+            size: blob.size
+          }
+        : { tokenId: options.tokenId, fileName, contentType: 'application/pdf', size: blob.size };
+
+    const ticketRes = await fetch(`${backendUrl}${route}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {})
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (ticketRes.ok) {
+      const ticket = await ticketRes.json();
+      const uploaded = await uploadPdfBlobToR2(ticket.uploadUrl, blob);
+      if (uploaded && ticket.shareUrl) {
+        return ticket.shareUrl;
+      }
+    }
+  } catch (r2Err) {
+    console.error('R2 upload fallback error:', r2Err);
+  }
+
+  return null;
 }

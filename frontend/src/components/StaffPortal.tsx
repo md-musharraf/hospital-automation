@@ -8,7 +8,7 @@ import HelpPanel from './HelpPanel';
 import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
 import DashboardShell from './dashboard/DashboardShell';
 import { PhoneInput, NumberInput } from './fields/NormalizedInput';
-import { generateInvoicePdfBlob, downloadPdfBlob, uploadPdfBlobToR2 } from '../lib/pdfGenerator';
+import { generateInvoicePdfBlob, downloadPdfBlob, uploadPdfBlobToCloud } from '../lib/pdfGenerator';
 
 /** Colour per billing category, so the counter can pick a charge by shape as
  *  well as by reading it — the same categories the Invoice schema allows. */
@@ -444,39 +444,34 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       loadInvoices();
       loadData();
 
-      // Trigger automatic background R2 PDF upload for the discharged invoice
+      // Trigger automatic background cloud PDF upload for the discharged invoice
       try {
         const blob = generateInvoicePdfBlob(data.invoice, billingConfig);
-        const ticketRes = await fetch(`${BACKEND_URL}/api/v1/uploads/r2/invoice-auth`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${staffToken}`
-          },
-          body: JSON.stringify({
-            invoiceNumber: data.invoice.invoiceNumber,
-            fileName: `${data.invoice.invoiceNumber}.pdf`,
-            contentType: 'application/pdf',
-            size: blob.size
-          })
-        });
-        if (ticketRes.ok) {
-          const ticket = await ticketRes.json();
-          const uploaded = await uploadPdfBlobToR2(ticket.uploadUrl, blob);
-          if (uploaded && ticket.shareUrl) {
-            await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${data.invoice._id}/pdf`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${staffToken}`
-              },
-              body: JSON.stringify({ pdfUrl: ticket.shareUrl, pdfKey: ticket.key })
-            });
-            setSelectedInvoice((prev) => (prev ? { ...prev, pdfUrl: ticket.shareUrl } : prev));
+        const shareUrl = await uploadPdfBlobToCloud(
+          BACKEND_URL,
+          blob,
+          `${data.invoice.invoiceNumber}.pdf`,
+          'invoice',
+          {
+            hospitalId: data.invoice.hospital,
+            sessionToken: staffToken,
+            invoiceNumber: data.invoice.invoiceNumber
           }
+        );
+
+        if (shareUrl) {
+          await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${data.invoice._id}/pdf`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${staffToken}`
+            },
+            body: JSON.stringify({ pdfUrl: shareUrl })
+          });
+          setSelectedInvoice((prev) => (prev ? { ...prev, pdfUrl: shareUrl } : prev));
         }
       } catch (pdfErr) {
-        console.error('Auto R2 PDF upload error on discharge:', pdfErr);
+        console.error('Auto cloud PDF upload error on discharge:', pdfErr);
       }
 
       setTimeout(() => {
@@ -498,49 +493,38 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     downloadPdfBlob(blob, `${inv.invoiceNumber || 'Invoice'}.pdf`);
   };
 
-  const handleUploadInvoicePdfToR2 = async (inv = selectedInvoice): Promise<string | null> => {
+  const handleUploadInvoicePdfToCloud = async (inv = selectedInvoice): Promise<string | null> => {
     if (!inv?._id) return null;
     setPdfBusy(true);
     try {
       const blob = generateInvoicePdfBlob(inv, billingConfig);
-      const ticketRes = await fetch(`${BACKEND_URL}/api/v1/uploads/r2/invoice-auth`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${staffToken}`
-        },
-        body: JSON.stringify({
-          invoiceNumber: inv.invoiceNumber,
-          fileName: `${inv.invoiceNumber}.pdf`,
-          contentType: 'application/pdf',
-          size: blob.size
-        })
+      const shareUrl = await uploadPdfBlobToCloud(BACKEND_URL, blob, `${inv.invoiceNumber}.pdf`, 'invoice', {
+        hospitalId: inv.hospital,
+        sessionToken: staffToken,
+        invoiceNumber: inv.invoiceNumber
       });
 
-      if (ticketRes.ok) {
-        const ticket = await ticketRes.json();
-        const uploaded = await uploadPdfBlobToR2(ticket.uploadUrl, blob);
-        if (uploaded && ticket.shareUrl) {
-          await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${inv._id}/pdf`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${staffToken}`
-            },
-            body: JSON.stringify({ pdfUrl: ticket.shareUrl, pdfKey: ticket.key })
-          });
-          setSelectedInvoice((prev) => (prev ? { ...prev, pdfUrl: ticket.shareUrl } : prev));
-          setShareToast('Official PDF Invoice stored securely in Cloudflare R2!');
-          setTimeout(() => setShareToast(''), 4000);
-          return ticket.shareUrl;
-        }
+      if (shareUrl) {
+        await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${inv._id}/pdf`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${staffToken}`
+          },
+          body: JSON.stringify({ pdfUrl: shareUrl })
+        });
+        setSelectedInvoice((prev) => (prev ? { ...prev, pdfUrl: shareUrl } : prev));
+        setShareToast('Official PDF Invoice stored securely in Cloud storage!');
+        setTimeout(() => setShareToast(''), 4000);
+        return shareUrl;
       }
-      setShareToast('R2 not configured on server; downloaded PDF locally instead.');
+
+      setShareToast('Cloud storage not configured; downloaded PDF locally.');
       handleDownloadInvoicePdf(inv);
       setTimeout(() => setShareToast(''), 4000);
       return null;
     } catch (err: any) {
-      console.error('R2 invoice upload error:', err);
+      console.error('Cloud invoice upload error:', err);
       handleDownloadInvoicePdf(inv);
       return null;
     } finally {
@@ -552,7 +536,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     if (!inv) return;
     let url = inv.pdfUrl;
     if (!url) {
-      url = await handleUploadInvoicePdfToR2(inv);
+      url = await handleUploadInvoicePdfToCloud(inv);
     }
     const rawPhone = inv.patient?.phone ? String(inv.patient.phone).replace(/\D/g, '') : '';
     const phone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
@@ -2422,16 +2406,20 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         </button>
 
                         <button
-                          onClick={() => handleUploadInvoicePdfToR2(selectedInvoice)}
+                          onClick={() => handleUploadInvoicePdfToCloud(selectedInvoice)}
                           disabled={pdfBusy}
                           className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
-                          title="Save and sync PDF to Cloudflare R2 Object Storage"
+                          title="Save and sync PDF to Cloud Storage (ImageKit / R2)"
                         >
                           <span className="material-symbols-outlined text-[16px]">
                             {pdfBusy ? 'hourglass_top' : 'cloud_upload'}
                           </span>
                           <span>
-                            {pdfBusy ? 'Uploading…' : selectedInvoice.pdfUrl ? 'R2 Stored ✓' : 'Save to R2'}
+                            {pdfBusy
+                              ? 'Uploading…'
+                              : selectedInvoice.pdfUrl
+                                ? 'Cloud Stored ✓'
+                                : 'Save to Cloud'}
                           </span>
                         </button>
 
@@ -3194,14 +3182,16 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                 </button>
 
                 <button
-                  onClick={() => handleUploadInvoicePdfToR2(selectedInvoice)}
+                  onClick={() => handleUploadInvoicePdfToCloud(selectedInvoice)}
                   disabled={pdfBusy}
                   className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-[12px] font-bold flex items-center space-x-1.5 shadow-sm transition-all active:scale-95"
                 >
                   <span className="material-symbols-outlined text-[16px]">
                     {pdfBusy ? 'hourglass_top' : 'cloud_upload'}
                   </span>
-                  <span>{pdfBusy ? 'Storing…' : selectedInvoice.pdfUrl ? 'R2 Stored ✓' : 'Save to R2'}</span>
+                  <span>
+                    {pdfBusy ? 'Storing…' : selectedInvoice.pdfUrl ? 'Cloud Stored ✓' : 'Save to Cloud'}
+                  </span>
                 </button>
 
                 <button

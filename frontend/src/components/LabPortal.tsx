@@ -6,7 +6,8 @@ import LiveActivityFeed from './LiveActivityFeed';
 import HelpPanel from './HelpPanel';
 import EmptyState from './EmptyState';
 import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
-import { generateLabReportPdfBlob, downloadPdfBlob, uploadPdfBlobToR2 } from '../lib/pdfGenerator';
+import { generateLabReportPdfBlob, downloadPdfBlob, uploadPdfBlobToCloud } from '../lib/pdfGenerator';
+import { BACKEND_URL } from '../App';
 
 export function LabDashboard({ labToken, labUser, onLogout }) {
   const [tokens, setTokens] = useState([]);
@@ -92,7 +93,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     reader.readAsDataURL(file);
   };
 
-  const handlePdfUpload = async (tokenId, testName, file) => {
+  const handlePdfUpload = async (tokenId: string, testName: string, file: File) => {
     if (!file) return;
     setError('');
 
@@ -103,34 +104,26 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
 
     setUploading(keyOf(tokenId, testName));
     try {
-      const ticket = await api.post('/uploads/r2/report-auth', {
-        tokenId,
-        fileName: file.name,
-        contentType: 'application/pdf',
-        size: file.size
+      const shareUrl = await uploadPdfBlobToCloud(BACKEND_URL, file, file.name, 'report', {
+        hospitalId: labUser?.hospital,
+        sessionToken: labToken,
+        tokenId
       });
 
-      // Only `host` is signed, so the content type is ours to set and cannot
-      // cause a signature mismatch.
-      const put = await fetch(ticket.uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: { 'Content-Type': 'application/pdf' }
-      });
-      if (!put.ok) throw new Error(`Storage rejected the upload (${put.status}).`);
-
-      setField(tokenId, testName, 'reportPdf', ticket.shareUrl);
-      setField(tokenId, testName, 'reportFileName', file.name);
-      if (!results[keyOf(tokenId, testName)]?.resultValue) {
-        setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
+      if (shareUrl) {
+        setField(tokenId, testName, 'reportPdf', shareUrl);
+        setField(tokenId, testName, 'reportFileName', file.name);
+        if (!results[keyOf(tokenId, testName)]?.resultValue) {
+          setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
+        }
+        setFlash(`Report for ${testName} uploaded successfully!`);
+        return;
       }
+
+      // Fallback: save inline as data URI if cloud keys unconfigured
+      inlineAsDataUri(tokenId, testName, file);
     } catch (err: any) {
-      // 501 means this server has no R2 configured — expected, not a failure.
-      if (err.status === 501) {
-        inlineAsDataUri(tokenId, testName, file);
-      } else {
-        setError(err.message || 'Could not upload the report. Please try again.');
-      }
+      inlineAsDataUri(tokenId, testName, file);
     } finally {
       setUploading('');
     }
@@ -138,7 +131,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
 
   /**
    * Auto-generate an official signed clinical lab report PDF from entered values,
-   * upload it directly to Cloudflare R2, and attach it to the test worksheet.
+   * upload it directly to ImageKit or Cloudflare R2, and attach it to the test worksheet.
    */
   const handleAutoGeneratePdf = async (tokenId: string, testName: string) => {
     const entry = results[keyOf(tokenId, testName)] || {};
@@ -159,29 +152,25 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       const blob = generateLabReportPdfBlob(testData, selectedToken, labUser?.hospital);
       const fileName = `${testName.replace(/[^a-zA-Z0-9_-]/g, '_')}-Report.pdf`;
 
-      try {
-        const ticket = await api.post('/uploads/r2/report-auth', {
-          tokenId,
-          fileName,
-          contentType: 'application/pdf',
-          size: blob.size
-        });
+      const shareUrl = await uploadPdfBlobToCloud(BACKEND_URL, blob, fileName, 'report', {
+        hospitalId: labUser?.hospital,
+        sessionToken: labToken,
+        tokenId
+      });
 
-        const uploaded = await uploadPdfBlobToR2(ticket.uploadUrl, blob);
-        if (uploaded && ticket.shareUrl) {
-          setField(tokenId, testName, 'reportPdf', ticket.shareUrl);
-          setField(tokenId, testName, 'reportFileName', fileName);
-          if (!entry.resultValue) {
-            setField(tokenId, testName, 'resultValue', 'Official PDF Generated');
-          }
-          setFlash(`Official PDF report for ${testName} generated & saved to R2!`);
-          return;
+      if (shareUrl) {
+        setField(tokenId, testName, 'reportPdf', shareUrl);
+        setField(tokenId, testName, 'reportFileName', fileName);
+        if (!entry.resultValue) {
+          setField(tokenId, testName, 'resultValue', 'Official PDF Generated');
         }
-      } catch (ticketErr: any) {
-        // Fallback: download locally if R2 not configured
-        downloadPdfBlob(blob, fileName);
-        setFlash(`Generated & downloaded ${fileName} locally.`);
+        setFlash(`Official PDF report for ${testName} generated & saved to Cloud storage!`);
+        return;
       }
+
+      // Fallback: download locally if cloud storage unconfigured
+      downloadPdfBlob(blob, fileName);
+      setFlash(`Generated & downloaded ${fileName} locally.`);
     } catch (err: any) {
       setError(err.message || 'Could not generate report PDF.');
     } finally {

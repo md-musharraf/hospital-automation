@@ -99,7 +99,7 @@ router.post('/imagekit/auth', (req, res, next) => {
       ...auth,
       folder,
       maxBytes: PURPOSES[purpose].maxBytes,
-      allowedTypes: ALLOWED_MIME,
+      allowedTypes: PURPOSES[purpose].allowedMime || ALLOWED_MIME,
       expiresInSeconds: EXPIRY_SECONDS
     });
   };
