@@ -23,16 +23,6 @@ const BLANK_SHIFT = { label: '', start: '', end: '', days: [] };
 const inputCls =
   'w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3 py-2 outline-none text-[13px] font-semibold text-[var(--text-color)] transition-all';
 
-/** "13:05" → "1:05 PM", matching what the server prints on the public page. */
-function pretty(value) {
-  const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return '';
-  let hours = parseInt(match[1], 10);
-  const meridiem = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12 || 12;
-  return `${hours}:${match[2]} ${meridiem}`;
-}
-
 function ShiftRow({ index, shift, onPatch, onRemove }) {
   const toggleDay = (day) => {
     const days = shift.days || [];
