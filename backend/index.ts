@@ -27,6 +27,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const cron = require('node-cron');
 const path = require('path');
+const fs = require('fs');
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss-clean');
@@ -324,15 +325,35 @@ setInterval(
   5 * 60 * 1000
 ); // 5 minutes
 
-// Serve frontend build in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../frontend/dist')));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+// Serve frontend build if present
+const frontendCandidatePaths = [
+  path.resolve(__dirname, '../../frontend/dist'),
+  path.resolve(__dirname, '../frontend/dist'),
+  path.resolve(process.cwd(), 'frontend/dist'),
+  path.resolve(process.cwd(), '../frontend/dist')
+];
+
+let frontendDistDir: string | null = null;
+for (const cand of frontendCandidatePaths) {
+  if (fs.existsSync(cand) && fs.existsSync(path.join(cand, 'index.html'))) {
+    frontendDistDir = cand;
+    break;
+  }
+}
+
+if (frontendDistDir) {
+  app.use(express.static(frontendDistDir));
+  app.get('*', (req: any, res: any, next: any) => {
+    if (req.path.startsWith('/api/')) return next();
+    res.sendFile(path.join(frontendDistDir!, 'index.html'));
   });
 } else {
-  app.get('/', (req, res) => {
-    res.json({ message: 'Hospital Queue Backend is running. Launch Frontend using Vite!' });
+  app.get('/', (req: any, res: any) => {
+    res.json({
+      status: 'healthy',
+      service: 'CareeAi Hospital Management Backend API',
+      environment: process.env.NODE_ENV || 'development'
+    });
   });
 }
 
