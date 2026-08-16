@@ -175,13 +175,20 @@ export default function PatientLiveTracker() {
   const inCabin = position === 0;
   // The visit as the patient experiences it. Before this they only saw a queue
   // position and had no idea they were meant to go to the lab or the pharmacy.
+  // 'Completed' is the last step, and it has to be here.
+  //
+  // Without it, a finished visit landed on a stage the rail did not contain,
+  // `indexOf` returned -1, and every step rendered as not-yet-reached — so the
+  // patient who had just been discharged saw a progress bar showing they had
+  // not started. The end of the journey is exactly when a patient looks.
   const JOURNEY_STEPS = [
     'Waiting',
     'In Consultation',
     'Lab Pending',
     'Lab Complete',
     'Pharmacy Pending',
-    'Dispensed'
+    'Dispensed',
+    'Completed'
   ];
   const stepLabels = {
     Waiting: 'In queue',
@@ -189,7 +196,8 @@ export default function PatientLiveTracker() {
     'Lab Pending': 'Lab tests',
     'Lab Complete': 'Reports ready',
     'Pharmacy Pending': 'Pharmacy',
-    Dispensed: 'Done'
+    Dispensed: 'Medicines',
+    Completed: 'Done'
   };
   const currentStage = journey?.stage || 'Waiting';
   // Steps that don't apply to this visit (no tests / no medicines) are skipped.
@@ -199,7 +207,13 @@ export default function PatientLiveTracker() {
     if (s === 'Pharmacy Pending' || s === 'Dispensed') return journey?.medicinesReady;
     return true;
   });
-  const currentIdx = relevantSteps.indexOf(currentStage);
+  // 'Absent' is not on the rail either, and neither is any stage a future
+  // release adds. Falling back to the last step for a finished visit beats
+  // showing a patient a bar with nothing on it.
+  const rawIdx = relevantSteps.indexOf(currentStage);
+  const currentIdx = rawIdx >= 0 ? rawIdx : currentStage === 'Completed' ? relevantSteps.length - 1 : rawIdx;
+  /** Nothing left to wait for — the queue card is replaced with a closing one. */
+  const visitOver = currentStage === 'Completed';
   const positionText = inCabin
     ? 'Please proceed inside'
     : position > 0
@@ -368,36 +382,61 @@ export default function PatientLiveTracker() {
           </div>
         )}
 
-        {/* Live Wait Status Card */}
+        {/* Live Wait Status Card.
+         *
+         * A finished visit gets a closing card instead of a queue position. The
+         * queue block was rendered unconditionally, so a patient who had been
+         * discharged and had already left read "Please proceed inside" and
+         * "Please wait in the reception lounge until called" underneath a
+         * progress rail that said their visit was complete — three statements on
+         * one screen, two of them wrong. */}
         <div className="space-y-4">
-          <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-4 flex items-center justify-between shadow-inner">
-            <div className="flex items-center space-x-3 text-left">
-              <span
-                className={`material-symbols-outlined text-[26px] ${inCabin ? 'text-[var(--tertiary-color)] animate-pulse' : 'text-[var(--primary-color)]'}`}
-              >
-                {inCabin ? 'check_circle' : 'hourglass_empty'}
-              </span>
+          {visitOver ? (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 flex items-center space-x-3 text-left">
+              <span className="material-symbols-outlined text-[26px] text-emerald-600">task_alt</span>
               <div>
-                <p className="text-[12px] text-[var(--text-secondary)] uppercase font-extrabold">
-                  Queue Position
+                <p className="text-[12px] text-emerald-700 dark:text-emerald-400 uppercase font-extrabold">
+                  Visit complete
                 </p>
-                <p className="text-sm font-extrabold text-[var(--text-color)] mt-0.5">{positionText}</p>
+                <p className="text-sm font-extrabold text-[var(--text-color)] mt-0.5">
+                  Nothing further to wait for — you can head home.
+                </p>
               </div>
             </div>
-            {!inCabin && position > 0 && (
-              <span className="text-lg font-black text-[var(--primary-color)] shrink-0">
-                {token.estimatedWaitTime}{' '}
-                <span className="text-[11px] font-medium text-[var(--text-secondary)]">mins</span>
-              </span>
-            )}
-          </div>
+          ) : (
+            <div className="bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-4 flex items-center justify-between shadow-inner">
+              <div className="flex items-center space-x-3 text-left">
+                <span
+                  className={`material-symbols-outlined text-[26px] ${inCabin ? 'text-[var(--tertiary-color)] animate-pulse' : 'text-[var(--primary-color)]'}`}
+                >
+                  {inCabin ? 'check_circle' : 'hourglass_empty'}
+                </span>
+                <div>
+                  <p className="text-[12px] text-[var(--text-secondary)] uppercase font-extrabold">
+                    Queue Position
+                  </p>
+                  <p className="text-sm font-extrabold text-[var(--text-color)] mt-0.5">{positionText}</p>
+                </div>
+              </div>
+              {!inCabin && position > 0 && (
+                <span className="text-lg font-black text-[var(--primary-color)] shrink-0">
+                  {token.estimatedWaitTime}{' '}
+                  <span className="text-[11px] font-medium text-[var(--text-secondary)]">mins</span>
+                </span>
+              )}
+            </div>
+          )}
 
           <div className="text-center">
-            <p className="text-[12px] text-[var(--text-secondary)] font-bold">
-              Please wait in the reception lounge until called.
-            </p>
+            {!visitOver && (
+              <p className="text-[12px] text-[var(--text-secondary)] font-bold">
+                Please wait in the reception lounge until called.
+              </p>
+            )}
             <p className="text-[11px] text-[var(--text-secondary)]/50 mt-1">
-              Refreshes automatically when the queue updates.
+              {visitOver
+                ? 'Your reports and bill stay available on this page.'
+                : 'Refreshes automatically when the queue updates.'}
             </p>
           </div>
 

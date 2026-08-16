@@ -503,11 +503,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       if (!res.ok) throw new Error(data.message || 'Discharge failed');
 
       setSelectedInvoice(data.invoice);
-      setDischargeSuccess(`Patient discharged successfully! Receipt generated.`);
+      setDischargeSuccess('Patient discharged. Preparing their bill…');
       loadInvoices();
       loadData();
 
-      // Trigger automatic background cloud PDF upload for the discharged invoice
+      // Generate the bill PDF and attach it — which is what sends the patient
+      // their receipt. The discharge deliberately held the WhatsApp back so the
+      // one message the patient gets carries a link to the actual bill instead
+      // of a summary with nothing attached.
+      //
+      // If any of this fails the patient must still hear from us, so the catch
+      // and the no-URL path both fall through to the receipt endpoint.
+      let receiptSent = false;
       try {
         const blob = generateInvoicePdfBlob(data.invoice, billingConfig);
         const shareUrl = await uploadPdfBlobToCloud(
@@ -523,7 +530,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         );
 
         if (shareUrl) {
-          await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${data.invoice._id}/pdf`, {
+          const pdfRes = await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${data.invoice._id}/pdf`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -531,17 +538,39 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             },
             body: JSON.stringify({ pdfUrl: shareUrl })
           });
+          const pdfData = await pdfRes.json().catch(() => ({}));
+          receiptSent = Boolean(pdfData.receiptSent);
           setSelectedInvoice((prev) => (prev ? { ...prev, pdfUrl: shareUrl } : prev));
         }
       } catch (pdfErr) {
         console.error('Auto cloud PDF upload error on discharge:', pdfErr);
       }
 
+      // Cloud storage unconfigured, upload failed, or the attach did not send —
+      // send the receipt without a PDF link rather than sending nothing.
+      if (!receiptSent) {
+        try {
+          const res2 = await fetch(`${BACKEND_URL}/api/v1/billing/invoices/${data.invoice._id}/receipt`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${staffToken}` }
+          });
+          receiptSent = res2.ok;
+        } catch (receiptErr) {
+          console.error('Discharge receipt fallback failed:', receiptErr);
+        }
+      }
+
+      setDischargeSuccess(
+        receiptSent
+          ? 'Patient discharged. Bill sent to them on WhatsApp.'
+          : 'Patient discharged. WhatsApp did not go through — share the bill from the receipt screen.'
+      );
+
       setTimeout(() => {
         setShowDischargeModal(false);
         setShowReceiptModal(true);
         setDischargeSuccess('');
-      }, 1000);
+      }, 1800);
     } catch (err) {
       setDischargeError(err.message);
     }
@@ -603,28 +632,50 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     }
   };
 
+  /**
+   * Send the patient their bill on WhatsApp.
+   *
+   * Goes through the server rather than opening wa.me. A wa.me link only drafts
+   * a message in whatever WhatsApp account the receptionist happens to be signed
+   * into on that machine — it needs a human to press send, it goes out from a
+   * personal number rather than the facility's, and nothing records whether it
+   * was ever sent. The server path sends from the facility, logs it, and says so
+   * when Meta refuses.
+   *
+   * Makes sure a PDF exists first, so the message carries the actual bill.
+   */
   const handleShareInvoiceWhatsApp = async (inv = selectedInvoice) => {
-    if (!inv) return;
-    let url = inv.pdfUrl;
-    if (!url) {
-      url = await handleUploadInvoicePdfToCloud(inv);
-    }
-    const rawPhone = inv.patient?.phone ? String(inv.patient.phone).replace(/\D/g, '') : '';
-    const phone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
-    const cur = currency || '₹';
-    const facility = (billingConfig?.displayName || inv.hospital || 'Hospital').toUpperCase();
-    const pdfLine = url ? `\n📄 Download Official PDF Bill: ${url}\n` : '';
-    const msg =
-      `🏥 DISCHARGE SUMMARY & INVOICE — ${facility}\n` +
-      `Patient: ${inv.patient?.name || 'Patient'}\n` +
-      `Invoice #: ${inv.invoiceNumber}\n` +
-      `Total Amount: ${cur}${inv.totalAmount}\n` +
-      `Amount Paid: ${cur}${inv.amountPaid} (${inv.paymentMethod || 'Paid'})\n` +
-      (inv.balanceDue > 0 ? `Balance Due: ${cur}${inv.balanceDue}\n` : '') +
-      pdfLine +
-      `\nThank you! We wish you good health. 🙏`;
+    if (!inv?._id) return;
+    setShareToast('Sending…');
 
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    if (!inv.pdfUrl) {
+      await handleUploadInvoicePdfToCloud(inv);
+    }
+
+    // Discharged bills go out as the official receipt (idempotent server-side,
+    // so this doubles as the resend a patient asks for). Anything still open is
+    // a balance enquiry, which is what the billing follow-up is for.
+    const discharged = inv.status === 'Discharged';
+    const url = discharged
+      ? `${BACKEND_URL}/api/v1/billing/invoices/${inv._id}/receipt`
+      : `${BACKEND_URL}/api/v1/staff/follow-up/${inv.token?._id || inv.token}`;
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+        body: JSON.stringify(discharged ? { resend: true } : { kind: 'bill' })
+      });
+      const data = await res.json().catch(() => ({}));
+      setShareToast(
+        res.ok && data.sent !== false
+          ? `Bill sent to ${inv.patient?.name || 'the patient'} on WhatsApp.`
+          : data.message || 'WhatsApp did not accept the message.'
+      );
+    } catch (err) {
+      setShareToast('Network error — nothing was sent.');
+    }
+    setTimeout(() => setShareToast(''), 6000);
   };
 
   const handleCopyPdfLink = (url: string) => {

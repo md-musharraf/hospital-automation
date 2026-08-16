@@ -219,22 +219,29 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     }
   };
 
-  const handleShareReportWhatsApp = (test: any, tok = selectedToken) => {
-    const phone = tok?.patient?.phone ? String(tok.patient.phone).replace(/\D/g, '') : '';
-    const formattedPhone = phone.length === 10 ? `91${phone}` : phone;
-    const labName = (labConfig?.displayName || labUser?.hospital || 'Hospital').toUpperCase();
-    const resultLine = `${test.resultValue || 'Completed'}${test.unit ? ` ${test.unit}` : ''}${test.normalRange ? ` (Normal: ${test.normalRange})` : ''}`;
-    const pdfLine = test.reportPdf ? `\n📄 Download Official PDF Report: ${test.reportPdf}\n` : '';
-    const msg =
-      `🧪 LAB REPORT SUMMARY — ${labName}\n` +
-      `Patient: ${tok?.patient?.name || 'Patient'}\n` +
-      `Test: ${test.testName}\n` +
-      `Result: ${resultLine}${test.abnormal ? ' ⚠️ (ABNORMAL)' : ''}\n` +
-      pdfLine +
-      `\nView Online: https://hospital-automation-wine.vercel.app/prescription/${tok?._id}\n` +
-      `Please consult your doctor with this report. 🙏`;
-
-    window.open(`https://wa.me/${formattedPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+  /**
+   * Send a stored report to the patient again, from the lab's own number.
+   *
+   * Was a wa.me link, which only drafted the message in whatever WhatsApp
+   * account the bench machine was signed into and left no record of whether it
+   * went. It also pasted `reportPdf` in verbatim — and that field holds the
+   * WHOLE PDF as base64 whenever cloud storage is unconfigured, which produced a
+   * URL far past any browser's length limit and simply did nothing.
+   */
+  const handleShareReportWhatsApp = async (test: any, tok = selectedToken) => {
+    if (!tok?._id) return;
+    setError('');
+    setUploading(keyOf(tok._id, test.testName));
+    try {
+      const data = await api.post(`/lab/tests/${tok._id}/report/resend`, { testName: test.testName });
+      setFlash(
+        data.hasPdfLink ? data.message : `${data.message} No PDF was attached — the result was sent as text.`
+      );
+    } catch (err: any) {
+      setError(err.message || 'The report could not be sent.');
+    } finally {
+      setUploading('');
+    }
   };
 
   const handleCompleteTest = async (tokenId, testName) => {

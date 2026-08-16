@@ -51,7 +51,17 @@ const InvoiceSchema = new mongoose.Schema(
     dischargedBy: { type: String },
     notes: { type: String },
     pdfUrl: { type: String },
-    pdfKey: { type: String }
+    pdfKey: { type: String },
+
+    // When the patient was sent their discharge receipt on WhatsApp.
+    //
+    // The receipt used to go out from the discharge route itself, which runs
+    // BEFORE the browser has generated and uploaded the invoice PDF — so
+    // `pdfUrl` was empty every time and the patient's bill message never once
+    // carried a link to the bill. Deferring the send until the PDF is attached
+    // fixes that, and this field is what keeps it to exactly one message no
+    // matter which path gets there first.
+    receiptSentAt: { type: Date }
   },
   { timestamps: true }
 );

@@ -1591,7 +1591,10 @@ router.post('/queue/reschedule', authenticateToken, ensureDoctor, async (req, re
     }
 
     token.status = 'Waiting';
-    setStage(token, 'Rescheduled', req.user.username || 'Doctor');
+    // Derived, not the literal 'Rescheduled' — see the matching note in
+    // routes/staff.js. That string is not a member of STAGES, so this call used
+    // to do nothing and the token kept the stage it already had.
+    setStage(token, deriveStage(token), req.user.username || 'Doctor');
     await token.save();
 
     // Broadcast updates to all rooms

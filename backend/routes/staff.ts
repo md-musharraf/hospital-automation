@@ -774,7 +774,15 @@ router.put('/tokens/:tokenId/reschedule', authenticateToken, ensureStaff, async 
     }
 
     token.status = 'Waiting';
-    setStage(token, 'Rescheduled', req.user.username || 'Reception');
+    // Derived, not the literal 'Rescheduled'.
+    //
+    // A reschedule is an EVENT, not a place in the journey — the patient is back
+    // in the queue, which is what the rail on their tracker has to show. Passing
+    // 'Rescheduled' here did nothing at all (it is not a member of STAGES), so
+    // the token kept the stage it had before, and a patient moved back to the
+    // queue went on being shown "With doctor". The event itself is recorded by
+    // `announceJourney` and the activity log below.
+    setStage(token, deriveStage(token), req.user.username || 'Reception');
     await token.save();
 
     // Broadcast updates

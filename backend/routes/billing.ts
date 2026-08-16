@@ -12,6 +12,7 @@ const { logActivity, announceJourney } = require('../utils/realtime');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { getBillingConfig, priceOf, recalculateInvoice } = require('../utils/billingConfig');
 const { findPatientByPhone } = require('../utils/patientLookup');
+const { setStage, deriveStage } = require('../utils/journeyHelper');
 const logger = require('../utils/logger');
 
 // Helper: Generate Unique Invoice Number, prefixed per facility so two hospitals
@@ -20,6 +21,105 @@ async function generateInvoiceNumber(hospital, config) {
   const count = await Invoice.countDocuments({ hospital });
   const prefix = (config && config.invoicePrefix) || 'INV';
   return `${prefix}-${1000 + count + 1}`;
+}
+
+/**
+ * WhatsApp a discharged patient their itemised bill, exactly once.
+ *
+ * Idempotent by design. Three different paths want to send this — the discharge
+ * itself, the PDF being attached a second later, and reception's fallback — and
+ * which one gets there first depends on whether cloud storage is configured. The
+ * `receiptSentAt` stamp is what turns "whoever is ready" into one message.
+ *
+ * The stamp is only written on a delivery that succeeded. `sendWhatsAppNotification`
+ * RESOLVES on a Meta rejection rather than throwing, so recording an optimistic
+ * success would mark the patient as told and permanently block the retry.
+ *
+ * @param options.onlyWithPdf  Skip unless a bill PDF is attached. Used by the
+ *   discharge route, which runs before the browser has uploaded one.
+ * @param options.force        Send even if already sent (reception's "resend").
+ */
+interface ReceiptOptions {
+  /** Skip unless a bill PDF is attached. */
+  onlyWithPdf?: boolean;
+  /** Send even if the patient was already sent this receipt. */
+  force?: boolean;
+}
+
+interface ReceiptResult {
+  sent: boolean;
+  reason?: string;
+  error?: string;
+  withPdf?: boolean;
+}
+
+async function sendDischargeReceipt(
+  invoice: any,
+  config: any,
+  options: ReceiptOptions = {}
+): Promise<ReceiptResult> {
+  const { onlyWithPdf = false, force = false } = options;
+
+  if (!invoice || !invoice.patient || !invoice.patient.phone) {
+    return { sent: false, reason: 'no_phone' };
+  }
+  if (invoice.receiptSentAt && !force) {
+    return { sent: false, reason: 'already_sent' };
+  }
+
+  // Only a real link. `pdfUrl` is written by the client after a cloud upload, so
+  // it is either an https URL or absent — but a stored data URI would be the
+  // whole PDF, and putting that in a message body sends hundreds of kilobytes
+  // of base64 to a patient's phone.
+  const pdfLink = /^https?:\/\/\S+$/i.test(String(invoice.pdfUrl || '').trim())
+    ? String(invoice.pdfUrl).trim()
+    : '';
+
+  if (onlyWithPdf && !pdfLink) {
+    return { sent: false, reason: 'awaiting_pdf' };
+  }
+
+  // The receipt carries the facility's own letterhead, currency and closing
+  // note — a patient of Sunrise Clinic should never receive a message branded
+  // as some other hospital on the platform.
+  const cur = (config && config.currencySymbol) || '₹';
+  const facilityName = String((config && config.displayName) || invoice.hospital).toUpperCase();
+  const itemLines = (invoice.items || [])
+    .map((item) => `• ${item.itemName} x${item.quantity} — ${cur}${item.totalPrice}`)
+    .join('\n');
+
+  const message =
+    `🏥 DISCHARGE INVOICE SUMMARY — ${facilityName}\n` +
+    `Patient: ${invoice.patient.name}\n` +
+    `Invoice #: ${invoice.invoiceNumber}\n\n` +
+    `${itemLines}\n\n` +
+    `Subtotal: ${cur}${invoice.subtotal}\n` +
+    (invoice.discount > 0 ? `Discount: -${cur}${invoice.discount}\n` : '') +
+    (invoice.tax > 0 ? `Tax (${(config && config.taxPercent) || 0}%): ${cur}${invoice.tax}\n` : '') +
+    `Total Amount: ${cur}${invoice.totalAmount}\n` +
+    `Amount Paid: ${cur}${invoice.amountPaid} (${invoice.paymentMethod})\n` +
+    `Balance Due: ${cur}${invoice.balanceDue}\n` +
+    (pdfLink ? `\n📄 Download Official PDF Bill:\n${pdfLink}\n` : '') +
+    `\n${(config && config.footerNote) || 'Thank you. Get well soon!'} 🙏`;
+
+  try {
+    const result = await sendWhatsAppNotification(invoice.patient.phone, message);
+    if (!result || result.status !== 'sent') {
+      logger.error('Discharge receipt was not accepted for delivery', {
+        invoice: invoice.invoiceNumber,
+        status: result && result.status,
+        error: result && result.error
+      });
+      return { sent: false, reason: 'delivery_failed', error: result && result.error };
+    }
+
+    invoice.receiptSentAt = new Date();
+    await invoice.save();
+    return { sent: true, withPdf: Boolean(pdfLink) };
+  } catch (err) {
+    logger.error('Discharge receipt WhatsApp error', { err, invoice: invoice.invoiceNumber });
+    return { sent: false, reason: 'delivery_failed', error: err.message };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -612,6 +712,19 @@ router.post('/invoices/:id/pdf', authenticateToken, ensureStaff, async (req, res
 
     const updated = await Invoice.findById(id).populate('patient').populate('token');
 
+    // This is where a discharged patient actually gets their bill.
+    //
+    // The discharge itself deliberately held the message back, because at that
+    // moment there was no PDF to link to — the browser generates it from the
+    // discharge response and uploads it, arriving here a second later. Sending
+    // from this point is what puts the bill in the patient's hands instead of a
+    // summary with nothing attached.
+    let receipt: ReceiptResult = { sent: false, reason: 'not_discharged' };
+    if (updated && updated.status === 'Discharged') {
+      const config = await getBillingConfig(hospital);
+      receipt = await sendDischargeReceipt(updated, config);
+    }
+
     if (req.io) {
       req.io.to(`hospital:${hospital}`).emit('billing-updated', { invoiceId: id });
       if (invoice.token) {
@@ -619,7 +732,13 @@ router.post('/invoices/:id/pdf', authenticateToken, ensureStaff, async (req, res
       }
     }
 
-    res.json({ message: 'Invoice PDF attached successfully', invoice: updated });
+    res.json({
+      message: receipt.sent
+        ? 'Bill PDF stored and sent to the patient on WhatsApp.'
+        : 'Invoice PDF attached successfully',
+      invoice: updated,
+      receiptSent: receipt.sent
+    });
   } catch (error) {
     logger.error('Error attaching invoice PDF', { err: error });
     res.status(500).json({ message: 'Server error' });
@@ -673,6 +792,13 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
       if (token) {
         token.status = 'Completed';
         token.completedAt = new Date();
+        // The journey stage has to move too, not just the status.
+        //
+        // These are two different fields and only the second one is what the
+        // patient's tracker renders. Setting the status alone left a discharged
+        // patient looking at "Reports ready" — the stage their visit happened to
+        // reach before billing — with no indication the visit had ended.
+        setStage(token, deriveStage(token), req.user.username || 'Reception');
         await token.save();
       }
     }
@@ -689,38 +815,16 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
       }
     }
 
-    // Send WhatsApp Discharge Invoice Receipt to Patient
-    if (invoice.patient && invoice.patient.phone) {
-      // The receipt carries the facility's own letterhead, currency and closing
-      // note — a patient of Sunrise Clinic should never receive a message
-      // branded as some other hospital on the platform.
-      const cur = config.currencySymbol || '₹';
-      const facilityName = (config.displayName || invoice.hospital).toUpperCase();
-      const itemLines = (invoice.items || [])
-        .map((item) => `• ${item.itemName} x${item.quantity} — ${cur}${item.totalPrice}`)
-        .join('\n');
-
-      const pdfLine = invoice.pdfUrl ? `\n📄 Download Official PDF Bill: ${invoice.pdfUrl}\n` : '';
-
-      const receiptMsg =
-        `🏥 DISCHARGE INVOICE SUMMARY — ${facilityName}\n` +
-        `Patient: ${invoice.patient.name}\n` +
-        `Invoice #: ${invoice.invoiceNumber}\n\n` +
-        `${itemLines}\n\n` +
-        `Subtotal: ${cur}${invoice.subtotal}\n` +
-        (invoice.discount > 0 ? `Discount: -${cur}${invoice.discount}\n` : '') +
-        (invoice.tax > 0 ? `Tax (${config.taxPercent}%): ${cur}${invoice.tax}\n` : '') +
-        `Total Amount: ${cur}${invoice.totalAmount}\n` +
-        `Amount Paid: ${cur}${invoice.amountPaid} (${invoice.paymentMethod})\n` +
-        `Balance Due: ${cur}${invoice.balanceDue}\n` +
-        pdfLine +
-        `\n${config.footerNote || 'Thank you. Get well soon!'} 🙏`;
-      try {
-        await sendWhatsAppNotification(invoice.patient.phone, receiptMsg);
-      } catch (waErr) {
-        logger.error('Discharge WhatsApp alert error', { err: waErr });
-      }
-    }
+    // The receipt is NOT sent here unless the bill PDF already exists.
+    //
+    // Sending from this point was the bug: the browser generates the PDF from
+    // the discharged invoice this response returns, uploads it, and only then
+    // attaches the URL — so `pdfUrl` was always empty at this moment and the
+    // patient's one billing message never carried the bill. `sendDischargeReceipt`
+    // is idempotent via `receiptSentAt`, so whichever path arrives first (the
+    // PDF attach below, the client's fallback, or this call when a URL was
+    // supplied in the request body) sends exactly one message.
+    const receipt = await sendDischargeReceipt(invoice, config, { onlyWithPdf: true });
 
     await logActivity(req.io, {
       hospital,
@@ -733,10 +837,56 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
 
     res.json({
       message: `Patient ${invoice.patient ? invoice.patient.name : ''} successfully discharged!`,
-      invoice
+      invoice,
+      // The client attaches the PDF next; if that fails it must call
+      // POST /invoices/:id/receipt so the patient still hears from us.
+      receiptSent: receipt.sent,
+      receiptPending: !receipt.sent
     });
   } catch (error) {
     logger.error('Error discharging patient and finalizing bill', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/v1/billing/invoices/:id/receipt — send the discharge receipt now.
+ *
+ * Two callers. The reception UI uses it as the fallback when the PDF upload
+ * fails, so a patient is never left unmessaged just because cloud storage was
+ * misconfigured. A human uses it with `{ resend: true }` when a patient says the
+ * message never arrived.
+ */
+router.post('/invoices/:id/receipt', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const invoice = await Invoice.findById(req.params.id).populate('patient').populate('token');
+    if (!invoice || invoice.hospital !== hospital) {
+      return res.status(404).json({ message: 'Invoice not found' });
+    }
+    if (invoice.status !== 'Discharged') {
+      return res.status(400).json({ message: 'This patient has not been discharged yet.' });
+    }
+
+    const config = await getBillingConfig(hospital);
+    const receipt = await sendDischargeReceipt(invoice, config, {
+      force: req.body && req.body.resend === true
+    });
+
+    if (!receipt.sent) {
+      return res.status(receipt.reason === 'already_sent' ? 200 : 502).json({
+        message:
+          receipt.reason === 'already_sent'
+            ? 'The patient has already been sent this receipt. Use "resend" to send it again.'
+            : `WhatsApp did not accept the receipt${receipt.error ? ` — ${receipt.error}` : ''}.`,
+        sent: false,
+        reason: receipt.reason
+      });
+    }
+
+    res.json({ message: `Receipt sent to ${invoice.patient?.name || 'the patient'}.`, sent: true });
+  } catch (error) {
+    logger.error('Error sending discharge receipt', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });

@@ -8,6 +8,8 @@
 // Plain functions rather than Mongoose schema methods on purpose — the in-memory
 // mock DB (utils/mongooseMock.js) has no `schema.methods` support.
 
+import logger from './logger';
+
 export const STAGES: string[] = [
   'Waiting',
   'In Consultation',
@@ -25,7 +27,23 @@ export const STAGES: string[] = [
  * Returns true if the stage actually changed.
  */
 export function setStage(token: any, stage: string, by?: string): boolean {
-  if (!token || !STAGES.includes(stage)) return false;
+  if (!token) return false;
+
+  // A stage that is not in STAGES is a programming mistake, and it used to be an
+  // INVISIBLE one: `setStage(token, 'Rescheduled')` returned false and the token
+  // silently kept whatever stage it had, so a rescheduled patient's tracker went
+  // on showing "With doctor". Refusing is still right — an unknown stage would
+  // break every consumer that indexes STAGES — but it has to say so, because the
+  // symptom otherwise appears far from the cause.
+  if (!STAGES.includes(stage)) {
+    logger.error('Refusing to set an unknown journey stage', {
+      stage,
+      known: STAGES,
+      token: token.tokenNumber
+    });
+    return false;
+  }
+
   if (token.journeyStage === stage) return false;
 
   token.journeyStage = stage;

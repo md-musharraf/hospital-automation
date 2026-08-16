@@ -30,6 +30,18 @@ function isShareableLink(value?: string | null): boolean {
 /** Ceiling for a report inlined as a data URI, in characters (~600 KB of base64). */
 const MAX_INLINE_REPORT_CHARS = 800_000;
 
+/** The facility's letterhead name, so a report message is not branded with a slug. */
+async function facilityDisplayName(hospital: string): Promise<string> {
+  try {
+    const { getBillingConfig } = require('../utils/billingConfig');
+    const config = await getBillingConfig(hospital);
+    return (config && config.displayName) || hospital;
+  } catch (err) {
+    logger.error('Could not read facility letterhead for a lab message', { err, hospital });
+    return hospital;
+  }
+}
+
 // GET the lab worklist: every token with tests that are not finished yet.
 // Urgent tests first, then oldest request first — the order a bench actually works in.
 router.get('/queues/pending-tests', authenticateToken, ensureLab, async (req, res) => {
@@ -328,6 +340,89 @@ router.post('/tests/:tokenId/report', authenticateToken, ensureLab, async (req, 
     });
   } catch (err: any) {
     logger.error('Error attaching lab report', { err: err });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/v1/lab/tests/:tokenId/report/resend — send a stored report again.
+ *
+ * For the patient who says the message never arrived, or who deleted it. The
+ * bench used to do this by opening a wa.me link, which drafts the message in
+ * whatever WhatsApp account the counter machine is signed into: it needs a human
+ * to press send, it leaves from a personal number rather than the lab's, and it
+ * silently produced a broken link whenever the report was stored inline as a
+ * data URI rather than uploaded to cloud storage.
+ */
+router.post('/tests/:tokenId/report/resend', authenticateToken, ensureLab, async (req, res) => {
+  try {
+    const { testName } = req.body || {};
+    if (!testName || typeof testName !== 'string' || testName.length > 100) {
+      return res.status(400).json({ message: 'testName is required.' });
+    }
+
+    const hospital = facilityOf(req);
+    const token = await Token.findById(req.params.tokenId);
+    if (!token) return res.status(404).json({ message: 'Token not found' });
+    if (token.hospital !== hospital) {
+      return res.status(403).json({ message: 'This token belongs to another facility' });
+    }
+
+    const test = (token.labTests || []).find((t) => t.testName.toLowerCase() === testName.toLowerCase());
+    if (!test) return res.status(404).json({ message: `Test "${testName}" not found on this token` });
+
+    const [tokenPatient, tokenDoctor] = await Promise.all([
+      token.patient ? Patient.findById(toId(token.patient)) : null,
+      token.doctor ? Doctor.findById(toId(token.doctor)) : null
+    ]);
+    if (!tokenPatient || !tokenPatient.phone) {
+      return res.status(400).json({ message: 'This patient has no phone number on file.' });
+    }
+
+    const link = isShareableLink(test.reportPdf) ? test.reportPdf : '';
+    const resultLine = test.resultValue
+      ? `${test.resultValue}${test.unit ? ' ' + test.unit : ''}${test.normalRange ? ` (normal ${test.normalRange})` : ''}`
+      : test.remarks || 'Completed';
+
+    const message =
+      `🧪 ${String((await facilityDisplayName(hospital)) || hospital).toUpperCase()}\n` +
+      `Hello ${tokenPatient.name}, here is your lab report again.\n\n` +
+      `Test: ${test.testName}\n` +
+      `Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range.' : ''}\n` +
+      (link ? `\n📄 Download your official PDF report:\n${link}\n` : '') +
+      `\nView online: ${prescriptionUrl(token._id)}\n` +
+      `Please show this to ${tokenDoctor ? tokenDoctor.name : 'your doctor'}. 🙏`;
+
+    const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+    const result = await sendWhatsAppNotification(tokenPatient.phone, message);
+    const sent = result && result.status === 'sent';
+
+    await logActivity(req.io, {
+      hospital,
+      type: 'lab-report-resent',
+      role: 'lab',
+      actor: req.user.username || 'Lab',
+      message: `${test.testName} report ${sent ? 'resent to' : 'resend attempted for'} ${tokenPatient.name} (${token.tokenNumber}).`,
+      tokenNumber: token.tokenNumber,
+      refId: token._id,
+      severity: sent ? 'success' : 'warning'
+    });
+
+    if (!sent) {
+      return res.status(502).json({
+        message: `WhatsApp did not accept the message${result && result.error ? ` — ${result.error}` : ''}.`,
+        sent: false,
+        hasPdfLink: Boolean(link)
+      });
+    }
+
+    res.json({
+      message: `Report resent to ${tokenPatient.name} on WhatsApp.`,
+      sent: true,
+      hasPdfLink: Boolean(link)
+    });
+  } catch (err: any) {
+    logger.error('Error resending lab report', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });
