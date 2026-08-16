@@ -123,6 +123,24 @@ export default function PublicTVDisplay() {
                   <p className="text-xs text-[#22d3ee] font-extrabold uppercase tracking-widest">
                     {q.doctor?.currentRoom || 'Cabin A'}
                   </p>
+
+                  {/* Read from across a room, so the delay is a band and not a
+                      footnote — a patient scanning the wall for their cabin has
+                      to catch this without walking up to the screen. */}
+                  {q.delay?.delayed && (
+                    <div className="!mt-3 rounded-xl bg-amber-500/15 border border-amber-500/40 px-3 py-2">
+                      <p className="text-[13px] font-black text-amber-400 uppercase tracking-wide">
+                        {q.delay.revisedStart
+                          ? `Starts ${q.delay.revisedStart} · ${q.delay.minutesLate} min late`
+                          : `Running ${q.delay.minutesLate} min late`}
+                      </p>
+                      {q.delay.reason && (
+                        <p className="text-[11px] font-semibold text-amber-300/80 mt-0.5 truncate">
+                          {q.delay.reason}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="py-6 border-t border-b border-white/5 my-6 flex flex-col items-center justify-center min-h-[140px]">

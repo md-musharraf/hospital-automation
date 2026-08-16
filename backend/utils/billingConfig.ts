@@ -87,15 +87,46 @@ export const DEFAULT_CONFIG: DefaultBillingConfig = {
 export async function getBillingConfig(hospital?: string | null): Promise<any> {
   const tenant = hospital || 'general-hospital';
 
-  let config = await (BillingConfig as any).findOne({ hospital: tenant });
-  if (config) return config;
+  const readFacility = async (): Promise<any> => {
+    try {
+      return await (Hospital as any).findOne({ id: tenant });
+    } catch (err) {
+      logger.error('Could not read facility profile for billing letterhead', { err, hospital: tenant });
+      return null;
+    }
+  };
 
-  let facility: any = null;
-  try {
-    facility = await (Hospital as any).findOne({ id: tenant });
-  } catch (err) {
-    logger.error('Could not read facility profile while seeding billing config', { err, hospital: tenant });
+  let config = await (BillingConfig as any).findOne({ hospital: tenant });
+  if (config) {
+    // Back-fill a letterhead that was never filled in.
+    //
+    // The seeding below has always copied the facility's name onto the rate
+    // card, but rate cards created before it did — and any created while the
+    // Hospital lookup failed — carry an empty `displayName`. Every printed bill
+    // from those facilities then had no facility on it, because the PDF has
+    // nothing else to fall back to but the tenant slug. Repairing it on read
+    // fixes the existing rows without a migration, and costs one extra query
+    // only for the facilities that are actually broken.
+    if (!String(config.displayName || '').trim()) {
+      const facility = await readFacility();
+      if (facility && facility.name) {
+        config.displayName = facility.name;
+        if (!String(config.address || '').trim()) config.address = facility.address || '';
+        if (!String(config.phone || '').trim()) config.phone = facility.phone || '';
+        try {
+          await config.save();
+          logger.info('Back-filled billing letterhead from facility profile', { hospital: tenant });
+        } catch (err) {
+          // A bill printed with the right name beats a failed request; the
+          // in-memory value is already correct for this response.
+          logger.error('Could not persist back-filled billing letterhead', { err, hospital: tenant });
+        }
+      }
+    }
+    return config;
   }
+
+  const facility = await readFacility();
 
   config = new (BillingConfig as any)({
     hospital: tenant,

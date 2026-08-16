@@ -108,6 +108,7 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
   const [error, setError] = useState('');
 
   const [lateMins, setLateMins] = useState('');
+  const [newStart, setNewStart] = useState('');
   const [lateReason, setLateReason] = useState('');
   const [announcing, setAnnouncing] = useState(false);
 
@@ -167,22 +168,32 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
     }
   };
 
+  /**
+   * Announce today's revised start.
+   *
+   * Sends whichever form the doctor filled in — an exact clock time wins over a
+   * number of minutes, because someone who typed "11:30" after tapping "+30"
+   * meant the time they typed. The server moves today's sitting, recomputes
+   * every waiting patient's estimate and WhatsApps them their own new time.
+   */
   const announceLate = async () => {
     setError('');
     setNote('');
 
     const mins = parseInt(lateMins, 10);
-    if (isNaN(mins) || mins < 1) {
-      setError('How many minutes late are you?');
+    if (!newStart && (isNaN(mins) || mins < 1)) {
+      setError('Say how late you are, or give your new start time.');
       return;
     }
 
     setAnnouncing(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/running-late`, {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/shift-time`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${doctorToken}` },
-        body: JSON.stringify({ minutes: mins, reason: lateReason })
+        body: JSON.stringify(
+          newStart ? { start: newStart, reason: lateReason } : { minutes: mins, reason: lateReason }
+        )
       });
       const data = await res.json();
       if (!res.ok) {
@@ -192,6 +203,7 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
       setNote(data.message || 'Patients notified.');
       setLateMins('');
       setLateReason('');
+      setNewStart('');
       if (onSaved) onSaved();
     } catch (err) {
       setError('Network error — nobody was notified.');
@@ -200,8 +212,33 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
     }
   };
 
+  /** "I made it after all" — put the printed hours back. */
+  const clearDelay = async () => {
+    setError('');
+    setNote('');
+    setAnnouncing(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/shift-time`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${doctorToken}` }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || 'Could not clear the delay.');
+        return;
+      }
+      setNote(data.message || 'Delay cleared.');
+      if (onSaved) onSaved();
+    } catch (err) {
+      setError('Network error — the delay is still showing.');
+    } finally {
+      setAnnouncing(false);
+    }
+  };
+
   const status = schedule && schedule.status;
   const printed = (schedule && schedule.opdHours) || '';
+  const delay = (schedule && schedule.delay) || null;
 
   return (
     <div className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-5 space-y-5 shadow-[var(--card-shadow)]">
@@ -273,7 +310,19 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
 
       {printed && (
         <p className="text-[11px] text-[var(--text-secondary)] text-center">
-          Patients see: <span className="font-bold text-[var(--text-color)]">{printed}</span>
+          Patients see:{' '}
+          <span
+            className={`font-bold ${delay?.delayed ? 'text-[var(--text-secondary)] line-through' : 'text-[var(--text-color)]'}`}
+          >
+            {printed}
+          </span>
+          {delay?.delayed && schedule?.opdHoursToday && (
+            <>
+              {' '}
+              <span className="font-bold text-amber-600">{schedule.opdHoursToday}</span>{' '}
+              <span className="text-amber-600">today</span>
+            </>
+          )}
         </p>
       )}
 
@@ -286,19 +335,42 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
           </h4>
           <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">
             {waitingCount > 0
-              ? `Every one of the ${waitingCount} waiting patient(s) gets a WhatsApp with their new time.`
-              : 'Nobody is waiting yet — the delay is recorded for anyone who books next.'}
+              ? `Your sitting time moves for today only, and all ${waitingCount} waiting patient(s) get a WhatsApp with their new time.`
+              : 'Your sitting time moves for today only. Nobody is waiting yet, so anyone booking next is quoted from the new time.'}
           </p>
         </div>
+
+        {/* Already announced — show it, and offer to take it back. */}
+        {delay?.delayed && (
+          <div className="rounded-xl px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 space-y-2">
+            <p className="text-[12px] font-bold text-amber-600">
+              Announced: you now start at {delay.revisedStart} instead of {delay.originalStart} (
+              {delay.minutesLate} min late){delay.reason ? ` — ${delay.reason}` : ''}.
+            </p>
+            <button
+              type="button"
+              onClick={clearDelay}
+              disabled={announcing}
+              className="text-[11px] font-bold text-amber-700 hover:text-amber-800 underline disabled:opacity-40"
+            >
+              I made it after all — put my normal hours back
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           {[15, 30, 45, 60].map((m) => (
             <button
               key={m}
               type="button"
-              onClick={() => setLateMins(String(m))}
+              onClick={() => {
+                setLateMins(String(m));
+                // The two inputs are alternatives, so choosing one clears the
+                // other — otherwise a stale time silently wins at send.
+                setNewStart('');
+              }}
               className={`p-2 rounded-xl text-[12px] font-bold border transition-all ${
-                String(m) === lateMins
+                String(m) === lateMins && !newStart
                   ? 'bg-amber-500 text-white border-amber-500'
                   : 'bg-[var(--bg-color)] border-[var(--border-color)] text-[var(--text-color)] hover:border-amber-500/40'
               }`}
@@ -308,15 +380,20 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
           ))}
         </div>
 
-        <input
-          type="number"
-          min="1"
-          max="480"
-          className={inputCls}
-          placeholder="…or type the minutes"
-          value={lateMins}
-          onChange={(e) => setLateMins(e.target.value)}
-        />
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wide">
+            …or the time you will actually start
+          </label>
+          <input
+            type="time"
+            className={inputCls}
+            value={newStart}
+            onChange={(e) => {
+              setNewStart(e.target.value);
+              if (e.target.value) setLateMins('');
+            }}
+          />
+        </div>
 
         <input
           type="text"
@@ -330,11 +407,11 @@ export function DoctorSchedulePanel({ doctorToken, schedule, waitingCount = 0, o
         <button
           type="button"
           onClick={announceLate}
-          disabled={announcing || !lateMins}
+          disabled={announcing || (!lateMins && !newStart)}
           className="w-full bg-amber-500 hover:bg-amber-600 text-white font-black py-2.5 rounded-xl text-[13px] flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Icon name="send" className="text-[16px]" />
-          {announcing ? 'Notifying patients…' : 'Tell my waiting patients'}
+          {announcing ? 'Notifying patients…' : 'Update my start time & tell patients'}
         </button>
       </div>
 

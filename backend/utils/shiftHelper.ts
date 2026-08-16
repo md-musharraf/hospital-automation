@@ -63,6 +63,70 @@ export function dayName(date: Date = new Date()): string {
 }
 
 /**
+ * A date as "YYYY-MM-DD" in LOCAL time.
+ *
+ * Deliberately not `toISOString().slice(0, 10)`, which converts to UTC first —
+ * for a facility in IST that returns yesterday's date for the whole evening
+ * OPD, so an override set at 6pm would be filed against the wrong day and never
+ * apply.
+ */
+export function localDateKey(date: Date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export interface ShiftOverride {
+  date: string;
+  shiftIndex: number;
+  start: string;
+  end?: string;
+  reason?: string;
+}
+
+/** This doctor's override for `date`, or null. Last one written wins. */
+export function overrideFor(doctor: any, date: Date = new Date()): ShiftOverride | null {
+  const overrides = (doctor && Array.isArray(doctor.shiftOverrides) && doctor.shiftOverrides) || [];
+  const key = localDateKey(date);
+
+  let found: ShiftOverride | null = null;
+  for (const entry of overrides) {
+    if (!entry || entry.date !== key) continue;
+    if (parseHhMm(entry.start) === null) continue;
+    found = entry; // A doctor who pushes 11:00 to 11:30 and then to 12:00 means 12:00.
+  }
+  return found;
+}
+
+/**
+ * The doctor's sittings for `date`, with today's delay applied.
+ *
+ * Every reader of the schedule goes through this rather than `doctor.shifts`
+ * directly, so the queue estimate, the printed OPD hours and the patient's
+ * tracker cannot disagree about when consultation actually starts.
+ */
+export function effectiveShifts(doctor: any, date: Date = new Date()): Shift[] {
+  const shifts: Shift[] = (doctor && Array.isArray(doctor.shifts) && doctor.shifts) || [];
+  const override = overrideFor(doctor, date);
+  if (!override) return shifts;
+
+  return shifts.map((shift, index) => {
+    if (index !== override.shiftIndex) return shift;
+
+    const revisedEnd = override.end && parseHhMm(override.end) !== null ? override.end : shift.end;
+    // A start pushed past its own end would make the sitting vanish; keeping the
+    // original end in that case leaves a short sitting rather than none.
+    const endIsSane = parseHhMm(revisedEnd) !== null;
+    return {
+      ...(typeof (shift as any).toObject === 'function' ? (shift as any).toObject() : shift),
+      start: override.start,
+      end: endIsSane ? revisedEnd : shift.end
+    };
+  });
+}
+
+/**
  * Coerce whatever a client posted into storable shifts.
  *
  * Anything without a valid start AND end is dropped rather than stored half
@@ -164,12 +228,16 @@ export interface SittingStatus {
  *
  * Looks up to 7 days ahead so a Tue/Thu consultant booked on a Friday still
  * gets a real answer instead of falling through to "available now".
+ *
+ * Today's shifts are the OVERRIDDEN ones — a doctor who has pushed their 11:00
+ * start to 11:30 is not "sitting" at 11:15, and the wait quoted to a patient
+ * counts from 11:30. Later days use the standing schedule, because an override
+ * is only ever about today.
  */
 export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatus {
-  const shifts: Shift[] = (doctor && Array.isArray(doctor.shifts) && doctor.shifts) || [];
-  const usable = shifts.filter((s) => parseHhMm(s.start) !== null && parseHhMm(s.end) !== null);
+  const standing: Shift[] = (doctor && Array.isArray(doctor.shifts) && doctor.shifts) || [];
 
-  if (usable.length === 0) {
+  if (standing.filter((s) => parseHhMm(s.start) !== null && parseHhMm(s.end) !== null).length === 0) {
     return { sitting: true, minutesUntilStart: 0, nextStart: null, shift: null, unscheduled: true };
   }
 
@@ -178,6 +246,10 @@ export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatu
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
     const date = new Date(now);
     date.setDate(date.getDate() + dayOffset);
+
+    const usable = effectiveShifts(doctor, date).filter(
+      (s) => parseHhMm(s.start) !== null && parseHhMm(s.end) !== null
+    );
 
     for (const shift of usable) {
       if (!shiftRunsOn(shift, doctor, date)) continue;
@@ -219,6 +291,98 @@ export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatu
  */
 export function shiftLeadMinutes(doctor: any, now: Date = new Date()): number {
   return sittingStatus(doctor, now).minutesUntilStart;
+}
+
+/**
+ * The sitting hours to PRINT today: "10:00 AM – 1:00 PM · 5:00 PM – 8:00 PM",
+ * with a delay already folded in.
+ *
+ * `doctor.opdHours` is the standing label and stays untouched, because the
+ * standing schedule has not changed. Screens that show a patient what is
+ * happening now — the landing page, the waiting-room display, the tracker —
+ * call this instead, so nothing ever announces 11:00 for a doctor who has said
+ * they will arrive at 11:30.
+ */
+export function todayOpdHours(doctor: any, now: Date = new Date()): string {
+  const hours = shiftsToOpdHours(effectiveShifts(doctor, now));
+  return hours || (doctor && doctor.opdHours) || '';
+}
+
+export interface DelayNotice {
+  /** Is today's schedule revised at all? */
+  delayed: boolean;
+  /** How many minutes later than the standing start, when known. */
+  minutesLate: number;
+  /** The original start, as printed: "11:00 AM". */
+  originalStart: string;
+  /** The revised start, as printed: "11:30 AM". */
+  revisedStart: string;
+  /** Whatever the doctor typed, e.g. "stuck in traffic". */
+  reason: string;
+  /** A whole sentence a patient can read. Empty when not delayed. */
+  message: string;
+}
+
+/**
+ * Today's delay, described the way a patient needs to hear it.
+ *
+ * Returns `delayed: false` rather than throwing or guessing when there is no
+ * override — every caller renders the banner only when this says so.
+ */
+export function delayNotice(doctor: any, now: Date = new Date()): DelayNotice {
+  const none: DelayNotice = {
+    delayed: false,
+    minutesLate: 0,
+    originalStart: '',
+    revisedStart: '',
+    reason: '',
+    message: ''
+  };
+
+  const override = overrideFor(doctor, now);
+  if (!override) return none;
+
+  const shifts: Shift[] = (doctor && Array.isArray(doctor.shifts) && doctor.shifts) || [];
+  const original = shifts[override.shiftIndex];
+  if (!original) return none;
+
+  const originalMins = parseHhMm(original.start);
+  const revisedMins = parseHhMm(override.start);
+  if (originalMins === null || revisedMins === null) return none;
+
+  const minutesLate = Math.max(0, revisedMins - originalMins);
+  const label = original.label ? `${original.label} OPD` : 'OPD';
+  const revisedStart = formatHhMm(override.start);
+
+  return {
+    delayed: true,
+    minutesLate,
+    originalStart: formatHhMm(original.start),
+    revisedStart,
+    reason: override.reason || '',
+    message:
+      `${label} is running ${minutesLate} min late today — ${doctor.name || 'the doctor'} now starts at ${revisedStart}.` +
+      (override.reason ? ` (${override.reason})` : '')
+  };
+}
+
+/**
+ * Drop overrides that are not for `keepDate`.
+ *
+ * Called by the nightly reset. Yesterday's delay is not wrong so much as noise:
+ * it never matches a lookup, but it accumulates one sub-document per late day
+ * forever, and a doctor's record should not grow without bound.
+ */
+export function pruneOverrides(doctor: any, keepDate: Date = new Date()): boolean {
+  const overrides = (doctor && Array.isArray(doctor.shiftOverrides) && doctor.shiftOverrides) || [];
+  if (overrides.length === 0) return false;
+
+  const key = localDateKey(keepDate);
+  const kept = overrides.filter((entry: any) => entry && entry.date === key);
+  if (kept.length === overrides.length) return false;
+
+  doctor.shiftOverrides = kept;
+  return true;
 }
 
 /** "Evening OPD (5:00 PM)" — how a sitting is named in a patient's message. */

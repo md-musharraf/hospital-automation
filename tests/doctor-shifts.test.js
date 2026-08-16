@@ -21,7 +21,12 @@ const {
   sittingStatus,
   shiftsToOpdHours,
   formatHhMm,
-  parseHhMm
+  parseHhMm,
+  localDateKey,
+  effectiveShifts,
+  todayOpdHours,
+  delayNotice,
+  pruneOverrides
 } = require('../backend/dist/utils/shiftHelper');
 const {
   estimateWaitMinutes,
@@ -109,6 +114,130 @@ const TWO_SITTINGS = [
   const nextVisit = sittingStatus(visiting, on(11));
   check('A day-scoped sitting does not run on the wrong day', nextVisit.sitting === false, nextVisit);
   check('It points at the next day it DOES run', nextVisit.minutesUntilStart === 23 * 60, nextVisit);
+
+  section("Pushing today's start time");
+
+  /** A doctor whose morning OPD has been moved to 11:30 for `date` only. */
+  const withOverride = (date, start, opts = {}) => ({
+    name: 'Dr. Rao',
+    shifts: TWO_SITTINGS,
+    opdDays: [],
+    averageCheckupTime: 10,
+    shiftOverrides: [
+      {
+        date: localDateKey(date),
+        shiftIndex: opts.shiftIndex ?? 0,
+        start,
+        end: opts.end || '',
+        reason: opts.reason || ''
+      }
+    ]
+  });
+
+  check(
+    'A local date key does not roll over with the timezone',
+    localDateKey(on(23, 30)) === '2026-08-12',
+    localDateKey(on(23, 30))
+  );
+
+  const late = withOverride(on(11), '11:30', { reason: 'stuck in traffic' });
+
+  check(
+    "Today's shifts carry the revised start",
+    effectiveShifts(late, on(11))[0].start === '11:30',
+    effectiveShifts(late, on(11))[0]
+  );
+  check(
+    'The other sitting is untouched',
+    effectiveShifts(late, on(11))[1].start === '17:00',
+    effectiveShifts(late, on(11))[1]
+  );
+  check(
+    'Tomorrow uses the standing schedule again',
+    effectiveShifts(late, new Date(2026, 7, 13, 11))[0].start === '10:00',
+    effectiveShifts(late, new Date(2026, 7, 13, 11))[0]
+  );
+  check('The stored schedule itself is not rewritten', late.shifts[0].start === '10:00', late.shifts[0]);
+
+  // The bug this whole feature exists to fix: at 11:15 the old code said the
+  // doctor was sitting, because 11:15 is inside 10:00–13:00.
+  const atElevenFifteen = sittingStatus(late, on(11, 15));
+  check(
+    'At 11:15 a doctor who moved to 11:30 is NOT sitting',
+    atElevenFifteen.sitting === false,
+    atElevenFifteen
+  );
+  check(
+    '…and the wait counts from the revised start',
+    atElevenFifteen.minutesUntilStart === 15,
+    atElevenFifteen
+  );
+  check('At 11:45 they are sitting again', sittingStatus(late, on(11, 45)).sitting === true);
+  check(
+    'A patient booking at 09:00 is quoted the revised start',
+    estimateWaitMinutes(late, 0, 0, on(9)) === 150,
+    estimateWaitMinutes(late, 0, 0, on(9))
+  );
+
+  const printed = todayOpdHours(late, on(11));
+  check(
+    'The printed hours show the revised time today',
+    printed === '11:30 AM – 1:00 PM · 5:00 PM – 8:00 PM',
+    printed
+  );
+  check(
+    'Tomorrow prints the standing hours',
+    todayOpdHours(late, new Date(2026, 7, 13, 9)) === '10:00 AM – 1:00 PM · 5:00 PM – 8:00 PM',
+    todayOpdHours(late, new Date(2026, 7, 13, 9))
+  );
+
+  const notice = delayNotice(late, on(11));
+  check('The delay is reported as 90 minutes', notice.minutesLate === 90, notice);
+  check(
+    '…naming both clock times the way a patient reads them',
+    notice.revisedStart === '11:30 AM' && notice.originalStart === '10:00 AM',
+    notice
+  );
+  check('…and carrying the reason through', notice.reason === 'stuck in traffic', notice);
+  check('A doctor with no override has no delay notice', delayNotice(twoShift, on(11)).delayed === false);
+
+  // An evening-only delay must not move the morning.
+  const eveningLate = withOverride(on(18), '18:30', { shiftIndex: 1 });
+  check(
+    'Moving the evening leaves the morning alone',
+    effectiveShifts(eveningLate, on(18))[0].start === '10:00' &&
+      effectiveShifts(eveningLate, on(18))[1].start === '18:30',
+    effectiveShifts(eveningLate, on(18))
+  );
+
+  // The last word wins: a doctor who slips twice means the later time.
+  const slippedTwice = withOverride(on(11), '11:30');
+  slippedTwice.shiftOverrides.push({
+    date: localDateKey(on(11)),
+    shiftIndex: 0,
+    start: '12:00',
+    end: '',
+    reason: ''
+  });
+  check(
+    'A second slip replaces the first',
+    effectiveShifts(slippedTwice, on(11))[0].start === '12:00',
+    effectiveShifts(slippedTwice, on(11))[0]
+  );
+
+  const stale = withOverride(new Date(2026, 7, 11, 11), '11:30'); // yesterday
+  check(
+    "Yesterday's delay does not apply today",
+    effectiveShifts(stale, on(11))[0].start === '10:00',
+    effectiveShifts(stale, on(11))[0]
+  );
+  check('…and the nightly prune removes it', pruneOverrides(stale, on(11)) === true, stale.shiftOverrides);
+  check('…leaving nothing behind', stale.shiftOverrides.length === 0, stale.shiftOverrides);
+  check(
+    'Pruning a clean record changes nothing',
+    pruneOverrides(late, on(11)) === false,
+    late.shiftOverrides
+  );
 
   section('What the patient is quoted');
 

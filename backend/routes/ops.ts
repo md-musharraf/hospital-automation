@@ -23,7 +23,7 @@ const { onlyToday, minutesSince } = require('../utils/dates');
 const { toId, sameId } = require('../utils/ids');
 const { facilityOf, facilityDoctors } = require('../utils/tenancy');
 const { estimateWaitMinutes } = require('../utils/queueHelper');
-const { sittingStatus } = require('../utils/shiftHelper');
+const { sittingStatus, delayNotice, todayOpdHours } = require('../utils/shiftHelper');
 
 /** This facility's tokens, created today. */
 async function todaysTokens(hospital) {
@@ -92,6 +92,10 @@ router.get(
           // cabin guaranteed not to open.
           estimatedWait: estimateWaitMinutes(doctor, waiting, (queue && queue.bufferDelay) || 0),
           sitting: sittingStatus(doctor),
+          // Today's announced delay, so the floor board and the waiting-room
+          // screen carry the same revised start the patient was WhatsApped.
+          delay: delayNotice(doctor),
+          opdHoursToday: todayOpdHours(doctor),
           seenToday: countWhere(tokens, (t) => sameId(t.doctor, doctor) && t.status === 'Completed'),
           dailyTokenLimit: doctor.dailyTokenLimit || 0
         };

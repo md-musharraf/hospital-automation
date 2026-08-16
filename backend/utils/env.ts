@@ -40,6 +40,28 @@ export const useMockDb = (): boolean => !isProduction() && process.env.USE_MOCK_
  */
 export const allowAnyOrigin = (): boolean => !isProduction();
 
+/** Where the patient-facing app is served from, without a trailing slash. */
+const DEFAULT_APP_URL = 'https://hospital-automation-wine.vercel.app';
+
+/**
+ * The base URL to put in a link we send a patient.
+ *
+ * This was written out longhand at each of the places that WhatsApps a link —
+ * the booking confirmation, the prescription, the lab result — so moving the
+ * front end to a facility's own domain meant finding every one of them. A
+ * message with a link to the wrong host is worse than no link, because the
+ * patient has no way to tell it is wrong.
+ */
+export const publicAppUrl = (): string =>
+  String(process.env.PUBLIC_APP_URL || DEFAULT_APP_URL).replace(/\/+$/, '');
+
+/** The tracker page for a token: where the patient watches their own queue. */
+export const trackerUrl = (tokenId: string | object): string => `${publicAppUrl()}/track/${String(tokenId)}`;
+
+/** The prescription/report page for a token. */
+export const prescriptionUrl = (tokenId: string | object): string =>
+  `${publicAppUrl()}/prescription/${String(tokenId)}`;
+
 /**
  * Secrets that must be present, and long enough to be worth having.
  *

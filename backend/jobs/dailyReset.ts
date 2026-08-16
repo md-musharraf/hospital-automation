@@ -9,6 +9,7 @@ import Doctor from '../models/Doctor';
 import ArchivedToken from '../models/ArchivedToken';
 import logger from '../utils/logger';
 import { toFacility } from '../utils/realtime';
+import { pruneOverrides } from '../utils/shiftHelper';
 
 /**
  * Journey stages that mean treatment is still in progress.
@@ -60,12 +61,27 @@ export async function resetFacility(io: any, hospital: string, tokens: any[]): P
     await (Token as any).deleteMany({ _id: { $in: finished.map((t) => t._id) } });
   }
 
-  const doctors = await (Doctor as any).find({ hospital }).select('_id');
+  const doctors = await (Doctor as any).find({ hospital }).select('_id shiftOverrides');
   if (doctors.length > 0) {
     await (Queue as any).updateMany(
       { doctor: { $in: doctors.map((d: any) => d._id) } },
-      { currentToken: null, activeQueue: [], bufferDelay: 0 }
+      { currentToken: null, activeQueue: [], bufferDelay: 0, delayReason: '', delayedUntil: null }
     );
+
+    // Yesterday's "I'll be 30 minutes late" must not survive into today. The
+    // lookup is keyed by date so a stale row never applies, but clearing it
+    // keeps the record from growing one sub-document per late day forever, and
+    // keeps the doctor's own screen from showing a delay banner at 8am.
+    for (const doctor of doctors) {
+      if (pruneOverrides(doctor)) {
+        try {
+          doctor.markModified && doctor.markModified('shiftOverrides');
+          await doctor.save();
+        } catch (err) {
+          logger.error('Could not prune stale shift overrides', { err, doctor: String(doctor._id) });
+        }
+      }
+    }
   }
 
   toFacility(io, hospital, 'queue-reset', { archived: finished.length, carried });

@@ -26,6 +26,9 @@ const { setStage, deriveStage } = require('../utils/journeyHelper');
 const logger = require('../utils/logger');
 const { normalizePhone, parseBody, field } = require('@careeai/shared');
 const { findPatientByPhone, findPhoneConflict } = require('../utils/patientLookup');
+const { getBillingConfig } = require('../utils/billingConfig');
+const { delayNotice, todayOpdHours } = require('../utils/shiftHelper');
+const { trackerUrl, prescriptionUrl } = require('../utils/env');
 
 // GET all live queues for doctors in the staff member's hospital (Staff Overview)
 router.get('/queues', authenticateToken, ensureStaff, async (req, res) => {
@@ -418,6 +421,171 @@ router.post('/reminders/trigger', authenticateToken, ensureStaff, async (req, re
     res.json({ message: `Triggered reminders check successfully.`, sentReminders: processed });
   } catch (error: any) {
     logger.error('Error triggering reminders', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * Following a patient up on WhatsApp, from one place.
+ *
+ * Reception was answering the same four questions on the phone all day — what
+ * do I owe, is my report ready, where am I in the queue, when does the doctor
+ * sit — and each answer meant opening a different screen and retyping it into
+ * WhatsApp by hand. The facts are all already in the token, so the message is
+ * BUILT here from live data rather than typed: a bill that says ₹0 due when the
+ * patient has paid is worse than no message, and a hand-typed one drifts the
+ * moment anything changes.
+ *
+ * `custom` is the exception and is deliberately narrow — reception's own words,
+ * over the facility's name, for the cases the four canned kinds do not cover.
+ */
+const FOLLOW_UP_KINDS = new Set(['bill', 'report', 'queue', 'info', 'custom']);
+
+router.post('/follow-up/:tokenId', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const staffHosp = req.user.hospital || 'general-hospital';
+    const { kind, message: customMessage } = req.body || {};
+
+    if (!FOLLOW_UP_KINDS.has(kind)) {
+      return res.status(400).json({
+        message: `kind must be one of: ${[...FOLLOW_UP_KINDS].join(', ')}.`
+      });
+    }
+    if (kind === 'custom') {
+      if (!customMessage || typeof customMessage !== 'string' || !customMessage.trim()) {
+        return res.status(400).json({ message: 'Type the message you want to send.' });
+      }
+      if (customMessage.length > 500) {
+        return res.status(400).json({ message: 'Keep the message under 500 characters.' });
+      }
+    }
+
+    const token = await Token.findById(req.params.tokenId).populate('patient').populate('doctor');
+    if (!token) return res.status(404).json({ message: 'Token not found' });
+    if (token.hospital !== staffHosp) {
+      return res.status(403).json({ message: 'This token belongs to another facility' });
+    }
+    if (!token.patient || !token.patient.phone) {
+      return res.status(400).json({ message: 'This patient has no phone number on file.' });
+    }
+
+    const config = await getBillingConfig(staffHosp);
+    const facility = (config && config.displayName) || staffHosp;
+    const currency = (config && config.currencySymbol) || '₹';
+    const patientName = token.patient.name || 'Patient';
+
+    let body = '';
+
+    if (kind === 'bill') {
+      // Scoped by hospital as well as token. `Invoice` is tenant-owned, and a
+      // filter naming neither `hospital` nor `_id` is exactly what
+      // utils/tenantGuard refuses — it throws outside production and logs a
+      // guard error inside it. The token's facility is already verified above,
+      // so this is the same row either way; the clause is what keeps the query
+      // legible as tenant-scoped.
+      const invoice = await Invoice.findOne({ token: token._id, hospital: staffHosp }).sort({
+        createdAt: -1
+      });
+      if (!invoice) {
+        return res.status(400).json({ message: 'No bill has been raised for this patient yet.' });
+      }
+      const due = invoice.balanceDue || 0;
+      body =
+        `🏥 ${facility}\n` +
+        `Hello ${patientName}, here is your bill.\n\n` +
+        `Invoice: ${invoice.invoiceNumber}\n` +
+        `Total: ${currency}${invoice.totalAmount || 0}\n` +
+        `Paid: ${currency}${invoice.amountPaid || 0}${invoice.paymentMethod ? ` (${invoice.paymentMethod})` : ''}\n` +
+        (due > 0 ? `Balance due: ${currency}${due}\n` : `Fully paid — nothing outstanding. ✅\n`) +
+        (invoice.pdfUrl ? `\n📄 Download your official bill:\n${invoice.pdfUrl}\n` : '') +
+        `\nThank you. 🙏`;
+    } else if (kind === 'report') {
+      const done = (token.labTests || []).filter((t) => t.status === 'Completed');
+      if (done.length === 0) {
+        return res.status(400).json({ message: 'None of this patient’s tests are completed yet.' });
+      }
+      const lines = done.map((test) => {
+        const result = `${test.resultValue || 'Completed'}${test.unit ? ` ${test.unit}` : ''}`;
+        const flag = test.abnormal ? ' ⚠️ (outside normal range)' : '';
+        // Only a real link — never the inlined base64 fallback.
+        const link = /^https?:\/\//i.test(String(test.reportPdf || '')) ? `\n   📄 ${test.reportPdf}` : '';
+        return `• ${test.testName}: ${result}${flag}${link}`;
+      });
+      body =
+        `🧪 ${facility}\n` +
+        `Hello ${patientName}, your lab report${done.length > 1 ? 's are' : ' is'} ready.\n\n` +
+        lines.join('\n') +
+        `\n\nView online: ${prescriptionUrl(token._id)}\n` +
+        `Please show ${done.length > 1 ? 'these' : 'this'} to your doctor. 🙏`;
+    } else if (kind === 'queue') {
+      const queue = token.doctor ? await Queue.findOne({ doctor: token.doctor._id }) : null;
+      let ahead = -1;
+      if (queue) {
+        if (queue.currentToken && String(queue.currentToken) === String(token._id)) ahead = 0;
+        else ahead = (queue.activeQueue || []).findIndex((id) => String(id) === String(token._id)) + 1;
+      }
+      const notice = token.doctor ? delayNotice(token.doctor) : null;
+      const wait = token.estimatedWaitTime || 0;
+
+      body =
+        `⏱️ ${facility}\n` +
+        `Hello ${patientName}, here is your live status.\n\n` +
+        `Token: ${token.tokenNumber}\n` +
+        `Stage: ${token.journeyStage || token.status}\n` +
+        (ahead === 0
+          ? `You are being seen now — please go to ${token.doctor?.currentRoom || 'the cabin'}.\n`
+          : ahead > 0
+            ? `${ahead - 1} patient(s) ahead of you.\nApprox. your turn: ${formatApptTime(wait)} (~${wait} min)\n`
+            : `You are not in the active queue right now.\n`) +
+        (notice && notice.delayed
+          ? `\n⏳ ${notice.message}\n`
+          : queue && queue.bufferDelay > 0
+            ? `\n⏳ The cabin is running about ${queue.bufferDelay} min behind.\n`
+            : '') +
+        `\nTrack live: ${trackerUrl(token._id)}`;
+    } else if (kind === 'info') {
+      const hours = token.doctor ? todayOpdHours(token.doctor) : '';
+      body =
+        `🏥 ${facility}\n` +
+        `Hello ${patientName}.\n\n` +
+        (token.doctor ? `Your doctor: ${token.doctor.name} (${token.doctor.department})\n` : '') +
+        (token.doctor?.currentRoom ? `Cabin: ${token.doctor.currentRoom}\n` : '') +
+        (hours ? `Today's OPD: ${hours}\n` : '') +
+        (config?.address ? `\n📍 ${config.address}\n` : '') +
+        (config?.phone ? `📞 ${config.phone}\n` : '') +
+        `\nTrack your visit: ${trackerUrl(token._id)}`;
+    } else {
+      body = `🏥 ${facility}\n\n${customMessage.trim()}\n\n— Reception`;
+    }
+
+    const result = await sendWhatsAppNotification(token.patient.phone, body, req.io);
+    const sent = result && result.status === 'sent';
+
+    await logActivity(req.io, {
+      hospital: staffHosp,
+      type: 'patient-followed-up',
+      role: 'staff',
+      actor: req.user.username || 'Reception',
+      message: `${kind} follow-up ${sent ? 'sent to' : 'attempted for'} ${patientName} (${token.tokenNumber}).`,
+      tokenNumber: token.tokenNumber,
+      refId: token._id,
+      severity: sent ? 'success' : 'warning'
+    });
+
+    if (!sent) {
+      // Say so rather than reporting success on a message that never left: the
+      // Meta token expiring is a recurring failure here, and reception silently
+      // believing a patient was told is exactly how someone gets missed.
+      return res.status(502).json({
+        message: `WhatsApp did not accept the message${result && result.error ? ` — ${result.error}` : ''}.`,
+        sent: false,
+        preview: body
+      });
+    }
+
+    res.json({ message: `Sent to ${patientName} on WhatsApp.`, sent: true, kind, preview: body });
+  } catch (error: any) {
+    logger.error('Error sending patient follow-up', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });

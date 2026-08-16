@@ -87,6 +87,15 @@ const TokenSchema = new mongoose.Schema(
         remarks: { type: String },
         reportPdf: { type: String }, // Base64 PDF Data URI or Document Link
         reportFileName: { type: String },
+        // When the patient was WhatsApped this report's link.
+        //
+        // The report is sent the moment the lab attaches the PDF, and again
+        // nothing when the test is later marked complete — without this the
+        // patient gets the same document twice for one test, which reads as a
+        // second, different result. Stores the URL that was sent, so replacing a
+        // wrong report with a corrected one DOES notify again.
+        reportSharedAt: { type: Date },
+        reportSharedUrl: { type: String },
         requestedBy: { type: String },
         collectedAt: { type: Date },
         completedBy: { type: String },

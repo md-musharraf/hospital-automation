@@ -19,6 +19,9 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
   const [error, setError] = useState('');
   // Which test's report is mid-upload, so the bench sees the file is still going.
   const [uploading, setUploading] = useState('');
+  // The facility's letterhead, so a generated report carries the same name and
+  // address as its bills instead of the tenant slug.
+  const [labConfig, setLabConfig] = useState(null);
 
   // Put this bench in its facility's realtime rooms so it receives lab events
   // for THIS hospital only.
@@ -47,6 +50,22 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get('/billing/config')
+      .then((config) => {
+        if (!cancelled) setLabConfig(config);
+      })
+      .catch(() => {
+        // A missing letterhead degrades the report's header, it does not stop
+        // the bench working — the generator falls back to the facility slug.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
 
   // `lab-updated` fires the moment a doctor orders a test. Coalesced, so the
   // burst of events one clinical action produces causes a single refetch.
@@ -88,6 +107,33 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     reader.readAsDataURL(file);
   };
 
+  /**
+   * Attach the uploaded PDF to the test on the server, which is what sends it
+   * to the patient.
+   *
+   * Kept separate from the local worksheet state on purpose: the worksheet is a
+   * draft the bench is still editing, but a report is finished the moment it is
+   * uploaded, and the patient should not wait for someone to remember to press
+   * "complete" before they learn their result exists.
+   */
+  const publishReport = async (tokenId: string, testName: string, url: string, fileName: string) => {
+    try {
+      const data = await api.post(`/lab/tests/${tokenId}/report`, {
+        testName,
+        reportPdf: url,
+        reportFileName: fileName
+      });
+      setFlash(data.message || `Report for ${testName} attached.`);
+      refresh();
+      return true;
+    } catch (err: any) {
+      // The file itself is safe in cloud storage and on the worksheet; only the
+      // notification failed, so say which half went wrong.
+      setError(`Report uploaded, but the patient could not be notified: ${err.message}`);
+      return false;
+    }
+  };
+
   const handlePdfUpload = async (tokenId: string, testName: string, file: File) => {
     if (!file) return;
     setError('');
@@ -111,7 +157,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         if (!results[keyOf(tokenId, testName)]?.resultValue) {
           setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
         }
-        setFlash(`Report for ${testName} uploaded successfully!`);
+        await publishReport(tokenId, testName, shareUrl, file.name);
         return;
       }
 
@@ -144,7 +190,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     setError('');
 
     try {
-      const blob = generateLabReportPdfBlob(testData, selectedToken, labUser?.hospital);
+      const blob = generateLabReportPdfBlob(testData, selectedToken, labUser?.hospital, labConfig);
       const fileName = `${testName.replace(/[^a-zA-Z0-9_-]/g, '_')}-Report.pdf`;
 
       const shareUrl = await uploadPdfBlobToCloud(BACKEND_URL, blob, fileName, 'report', {
@@ -159,7 +205,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         if (!entry.resultValue) {
           setField(tokenId, testName, 'resultValue', 'Official PDF Generated');
         }
-        setFlash(`Official PDF report for ${testName} generated & saved to Cloud storage!`);
+        await publishReport(tokenId, testName, shareUrl, fileName);
         return;
       }
 
@@ -176,7 +222,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
   const handleShareReportWhatsApp = (test: any, tok = selectedToken) => {
     const phone = tok?.patient?.phone ? String(tok.patient.phone).replace(/\D/g, '') : '';
     const formattedPhone = phone.length === 10 ? `91${phone}` : phone;
-    const labName = (labUser?.hospital || 'Hospital').toUpperCase();
+    const labName = (labConfig?.displayName || labUser?.hospital || 'Hospital').toUpperCase();
     const resultLine = `${test.resultValue || 'Completed'}${test.unit ? ` ${test.unit}` : ''}${test.normalRange ? ` (Normal: ${test.normalRange})` : ''}`;
     const pdfLine = test.reportPdf ? `\n📄 Download Official PDF Report: ${test.reportPdf}\n` : '';
     const msg =

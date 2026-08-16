@@ -26,7 +26,7 @@ const { resolveLocation } = require('../utils/locationHelper');
 const { buildLandingPage } = require('../utils/facilityProfile');
 const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
 const logger = require('../utils/logger');
-const { useMockDb } = require('../utils/env');
+const { useMockDb, trackerUrl } = require('../utils/env');
 const { normalizePhone, phoneVariants, normalizeName } = require('@careeai/shared');
 const { stageMessage } = require('../utils/journeyHelper');
 const { onlyToday } = require('../utils/dates');
@@ -501,7 +501,7 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   await session.save();
 
   const refreshedToken = (await Token.findById(token._id)) || token;
-  const trackerLink = `https://hospital-automation-wine.vercel.app/track/${refreshedToken._id}`;
+  const trackerLink = trackerUrl(refreshedToken._id);
   const apptTime = formatApptTime(refreshedToken.estimatedWaitTime || 0);
   // Crowd-control message: tell the patient roughly WHEN to come and that they do
   // NOT need to stand in line — a WhatsApp ping will call them when their turn nears.
@@ -2468,7 +2468,20 @@ router.get('/public-tv-queues', async (req, res) => {
         populate: { path: 'patient' }
       });
 
-    res.json(queues);
+    // The waiting room is where a delay costs the most: everyone here came for
+    // the printed time and is now sitting because leaving risks missing the
+    // call. The screen has to say so, not just the WhatsApp they may not read.
+    const { delayNotice, todayOpdHours } = require('../utils/shiftHelper');
+    res.json(
+      queues.map((queue) => {
+        const plain = typeof queue.toObject === 'function' ? queue.toObject() : { ...queue };
+        return {
+          ...plain,
+          delay: queue.doctor ? delayNotice(queue.doctor) : null,
+          opdHoursToday: queue.doctor ? todayOpdHours(queue.doctor) : ''
+        };
+      })
+    );
   } catch (error: any) {
     logger.error('Error fetching public TV queues', { err: error });
     res.status(500).json({ message: 'Server error' });
@@ -2501,9 +2514,40 @@ router.get('/token/:tokenId', async (req, res) => {
     const stage = token.journeyStage || 'Waiting';
     const labTests = token.labTests || [];
 
+    // Is the cabin behind, and by how much?
+    //
+    // The doctor could already announce a delay and every waiting patient was
+    // WhatsApped — but the tracker they were told to watch said nothing, so a
+    // patient who checked the page instead of their messages saw the original
+    // time and came in on it. The two have to tell the same story.
+    const { delayNotice, todayOpdHours } = require('../utils/shiftHelper');
+    const notice = token.doctor ? delayNotice(token.doctor) : null;
+
     res.json({
       token,
       position,
+      delay:
+        notice && notice.delayed
+          ? {
+              ...notice,
+              // The queue's own running buffer, which moves independently of the
+              // announced start time (a sitting that began on time can still run
+              // late once it is under way).
+              bufferDelay: (queue && queue.bufferDelay) || 0,
+              opdHoursToday: todayOpdHours(token.doctor)
+            }
+          : {
+              delayed: (queue && queue.bufferDelay) > 0,
+              minutesLate: (queue && queue.bufferDelay) || 0,
+              reason: (queue && queue.delayReason) || '',
+              revisedStart: '',
+              originalStart: '',
+              bufferDelay: (queue && queue.bufferDelay) || 0,
+              message:
+                queue && queue.bufferDelay > 0
+                  ? `The cabin is running about ${queue.bufferDelay} min behind${queue.delayReason ? ` — ${queue.delayReason}` : ''}.`
+                  : ''
+            },
       journey: {
         stage,
         message: stageMessage(stage),

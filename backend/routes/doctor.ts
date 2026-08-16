@@ -8,13 +8,25 @@ const Patient = require('../models/Patient');
 const RefillRequest = require('../models/RefillRequest');
 const { authenticateToken, ensureRole } = require('../middleware/auth');
 const { recalculateQueueTimes, notifyUpcomingPatients, broadcastDelay } = require('../utils/queueHelper');
-const { normalizeShifts, shiftsToOpdHours, sittingStatus, MAX_SHIFTS } = require('../utils/shiftHelper');
+const {
+  normalizeShifts,
+  shiftsToOpdHours,
+  sittingStatus,
+  MAX_SHIFTS,
+  parseHhMm,
+  formatHhMm,
+  localDateKey,
+  shiftRunsOn,
+  delayNotice,
+  todayOpdHours
+} = require('../utils/shiftHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { toRole, toFacility, logActivity, announceJourney } = require('../utils/realtime');
 const { setStage, deriveStage, hasUndispensedRx } = require('../utils/journeyHelper');
 const { checkAvailability } = require('../utils/stockHelper');
 const logger = require('../utils/logger');
+const { prescriptionUrl } = require('../utils/env');
 
 /**
  * Which cabin is this request for?
@@ -117,6 +129,12 @@ router.get('/my-queue', authenticateToken, ensureDoctor, async (req, res) => {
         shifts: (me && me.shifts) || [],
         opdDays: (me && me.opdDays) || [],
         opdHours: (me && me.opdHours) || '',
+        // The standing label above, and what today actually looks like after any
+        // delay the doctor announced. Both, because the panel shows the change
+        // as a change — struck-through original next to the revised time — and
+        // that needs the two values side by side.
+        opdHoursToday: me ? todayOpdHours(me) : '',
+        delay: me ? delayNotice(me) : null,
         averageCheckupTime: (me && me.averageCheckupTime) || 10,
         status: me ? sittingStatus(me) : null
       }
@@ -296,7 +314,7 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
 
       // Trigger automatic WhatsApp message with Prescription Receipt link
       if (token.patient && token.patient.phone) {
-        const prescriptionLink = `https://hospital-automation-wine.vercel.app/prescription/${token._id}`;
+        const prescriptionLink = prescriptionUrl(token._id);
         let completeMsg = `Hello ${token.patient.name || 'Patient'}, your checkup is completed. You can view your digital prescription receipt at: ${prescriptionLink}.`;
 
         // If revisit days are specified, create a pending reminder
@@ -655,6 +673,237 @@ router.put('/schedule', authenticateToken, ensureDoctor, async (req, res) => {
     });
   } catch (error) {
     logger.error('Error updating doctor schedule', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/v1/doctor/queue/shift-time — "I will start at 11:30, not 11:00."
+ *
+ * The sibling of `running-late` below, and the difference is what the rest of
+ * the system is told. `running-late` says the queue is behind; this says the
+ * SITTING moved. That matters because the two are read by different people: a
+ * buffer is arithmetic only the queue sees, while the start time is the number
+ * printed on the landing page, shown on the waiting-room screen and quoted in
+ * every "your turn is at" message. A doctor who is an hour late needs both to
+ * move, or the board keeps announcing a time that stopped being true.
+ *
+ * Scoped to today. Changing the standing roster is `PUT /schedule`, and a late
+ * morning must not silently become the doctor's permanent hours.
+ */
+router.post('/queue/shift-time', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const { start, minutes, end = '', shiftIndex, reason = '', notify = true } = req.body || {};
+
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) {
+      return res.status(404).json({ message: 'Doctor details not found' });
+    }
+
+    const shifts = Array.isArray(doctor.shifts) ? doctor.shifts : [];
+    if (shifts.length === 0) {
+      return res.status(400).json({
+        message:
+          'Set your sitting hours first — there is no shift to move. Add one under OPD timings, then announce a delay.'
+      });
+    }
+
+    if (end && parseHhMm(String(end)) === null) {
+      return res.status(400).json({ message: 'end must be a 24-hour time like 14:00.' });
+    }
+
+    const now = new Date();
+
+    // Which sitting is being moved. The doctor may say, but usually will not —
+    // the useful default is the one they are late FOR: today's next sitting that
+    // has not finished yet, falling back to the first one that runs today.
+    let index = Number.isInteger(shiftIndex) ? shiftIndex : -1;
+    if (index < 0 || index >= shifts.length) {
+      const nowMins = now.getHours() * 60 + now.getMinutes();
+      const todays = shifts
+        .map((shift, i) => ({ shift, i }))
+        .filter(({ shift }) => shiftRunsOn(shift, doctor, now));
+
+      const upcoming = todays.find(({ shift }) => {
+        const endMins = parseHhMm(shift.end);
+        return endMins === null || endMins > nowMins;
+      });
+      index = upcoming ? upcoming.i : todays.length > 0 ? todays[0].i : 0;
+    }
+
+    const target = shifts[index];
+    const originalStart = parseHhMm(target.start);
+
+    // Two ways to say the same thing, because those are the two ways a person
+    // says it: "I'll be half an hour late" and "I'll be there by 11:30".
+    let revisedStart: string;
+    let startMins: number | null;
+
+    if (start !== undefined && start !== null && String(start).trim()) {
+      revisedStart = String(start).trim();
+      startMins = parseHhMm(revisedStart);
+      if (startMins === null) {
+        return res.status(400).json({ message: 'start must be a 24-hour time like 11:30.' });
+      }
+    } else {
+      const late = parseInt(minutes, 10);
+      if (isNaN(late) || late < 1 || late > 480) {
+        return res.status(400).json({
+          message: 'Say how late you are: minutes (1–480), or a new start time like 11:30.'
+        });
+      }
+      if (originalStart === null) {
+        return res.status(400).json({
+          message: 'That sitting has no valid start time to push. Fix your OPD timings first.'
+        });
+      }
+      // Counted from the SCHEDULED start, not from now: "30 minutes late" is a
+      // statement about the appointment everyone was given, and adding it to the
+      // current clock would compound every time the doctor pressed it twice.
+      startMins = originalStart + late;
+      if (startMins >= 24 * 60) {
+        return res.status(400).json({ message: 'That pushes the sitting past midnight.' });
+      }
+      revisedStart = `${String(Math.floor(startMins / 60)).padStart(2, '0')}:${String(startMins % 60).padStart(2, '0')}`;
+    }
+
+    // Refuse to move a start EARLIER. This endpoint exists to announce a delay,
+    // and pulling a sitting forward would tell patients to arrive at a time that
+    // has, for some of them, already passed — the one message that cannot be
+    // taken back. Bringing a sitting forward is a schedule change.
+    if (originalStart !== null && startMins < originalStart) {
+      return res.status(400).json({
+        message: `That is earlier than your scheduled ${formatHhMm(target.start)} start. Use OPD timings to change your hours.`
+      });
+    }
+
+    // A revised start that has already passed tells patients to arrive at a time
+    // in the past, which is worse than saying nothing.
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    if (startMins <= nowMinutes) {
+      return res.status(400).json({
+        message: `${formatHhMm(revisedStart)} has already passed. Give a later time, or a bigger delay.`
+      });
+    }
+
+    const dateKey = localDateKey(now);
+    const overrides = (Array.isArray(doctor.shiftOverrides) ? doctor.shiftOverrides : []).filter(
+      (entry) => entry && entry.date === dateKey && entry.shiftIndex !== index
+    );
+    overrides.push({
+      date: dateKey,
+      shiftIndex: index,
+      start: revisedStart,
+      end: end ? String(end).trim() : '',
+      reason: String(reason || '')
+        .trim()
+        .slice(0, 140),
+      createdAt: now
+    });
+    doctor.shiftOverrides = overrides;
+    doctor.markModified && doctor.markModified('shiftOverrides');
+    await doctor.save();
+
+    // Every waiting patient's estimate was computed from the old start.
+    await recalculateQueueTimes(doctorId);
+
+    const notice = delayNotice(doctor, now);
+
+    let notified = 0;
+    if (notify !== false && notice.delayed) {
+      notified = await broadcastDelay(doctorId, {
+        minutes: notice.minutesLate,
+        reason: notice.reason,
+        newStart: notice.revisedStart,
+        io: req.io
+      });
+    }
+
+    const hospital = req.user.hospital || 'general-hospital';
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId });
+      req.io.to(`doctor:${doctorId}`).emit('queue-updated');
+      toFacility(req.io, hospital, 'doctor-delayed', {
+        doctorId,
+        name: doctor.name,
+        minutes: notice.minutesLate,
+        reason: notice.reason,
+        revisedStart: notice.revisedStart,
+        originalStart: notice.originalStart,
+        opdHoursToday: todayOpdHours(doctor, now),
+        notified
+      });
+    }
+
+    await logActivity(req.io, {
+      hospital,
+      type: 'doctor-delayed',
+      role: 'doctor',
+      actor: doctor.name,
+      message:
+        `${doctor.name} moved today's ${target.label || 'OPD'} start from ${notice.originalStart || formatHhMm(target.start)} to ${notice.revisedStart}` +
+        `${notice.reason ? ` — ${notice.reason}` : ''}. ${notified} waiting patient(s) messaged.`,
+      severity: notice.minutesLate >= 30 ? 'warning' : 'info'
+    });
+
+    res.json({
+      message: notified
+        ? `${notified} waiting patient(s) have been told you now start at ${notice.revisedStart}.`
+        : `New start time saved (${notice.revisedStart}). No waiting patients to notify yet.`,
+      notice,
+      shiftIndex: index,
+      opdHoursToday: todayOpdHours(doctor, now),
+      status: sittingStatus(doctor, now),
+      notified
+    });
+  } catch (error) {
+    logger.error('Error updating doctor sitting time', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * DELETE /api/v1/doctor/queue/shift-time — "I made it after all, clear the delay."
+ */
+router.delete('/queue/shift-time', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor) return res.status(404).json({ message: 'Doctor details not found' });
+
+    const dateKey = localDateKey(new Date());
+    const before = (Array.isArray(doctor.shiftOverrides) ? doctor.shiftOverrides : []).length;
+    doctor.shiftOverrides = (Array.isArray(doctor.shiftOverrides) ? doctor.shiftOverrides : []).filter(
+      (entry) => !entry || entry.date !== dateKey
+    );
+
+    if (before === doctor.shiftOverrides.length) {
+      return res.json({ message: 'No delay was announced today.', cleared: false });
+    }
+
+    doctor.markModified && doctor.markModified('shiftOverrides');
+    await doctor.save();
+    await recalculateQueueTimes(doctorId);
+
+    const hospital = req.user.hospital || 'general-hospital';
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId });
+      toFacility(req.io, hospital, 'doctor-delay-cleared', {
+        doctorId,
+        name: doctor.name,
+        opdHoursToday: todayOpdHours(doctor)
+      });
+    }
+
+    res.json({
+      message: 'Delay cleared — your normal sitting hours are showing again.',
+      cleared: true,
+      opdHoursToday: todayOpdHours(doctor),
+      status: sittingStatus(doctor)
+    });
+  } catch (error) {
+    logger.error('Error clearing doctor sitting delay', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });

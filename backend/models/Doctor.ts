@@ -98,6 +98,31 @@ const DoctorSchema = new mongoose.Schema(
         days: [{ type: String }] // [] = follow opdDays
       }
     ],
+
+    // TODAY's revision to a sitting, when the doctor is not going to make it.
+    //
+    // "Running 30 minutes late" was already expressible as a queue buffer, but a
+    // buffer only moves wait estimates — the doctor's printed hours, the landing
+    // page and the waiting-room screen all carried on announcing 11:00 while
+    // everyone knew it was 11:30. A patient reads the printed time, not the
+    // queue arithmetic, so the two have to agree.
+    //
+    // Scoped to one date on purpose. A late morning is a fact about today, not a
+    // change to the doctor's schedule, and an override that outlived the day
+    // would quietly rewrite the roster. `date` is a local "YYYY-MM-DD" string
+    // rather than a Date so that comparing "is this for today" is a string
+    // equality and cannot drift by a timezone. The nightly reset clears anything
+    // stale; a missed reset is harmless because a past date never matches.
+    shiftOverrides: [
+      {
+        date: { type: String, default: '' }, // "YYYY-MM-DD", facility local
+        shiftIndex: { type: Number, default: 0 }, // which sitting was moved
+        start: { type: String, default: '' }, // revised "HH:MM"
+        end: { type: String, default: '' }, // revised end, '' = unchanged
+        reason: { type: String, default: '' },
+        createdAt: { type: Date, default: Date.now }
+      }
+    ],
     consultationFee: { type: Number, default: 0 }, // 0 = "ask at reception"
     about: { type: String, default: '' }
   },

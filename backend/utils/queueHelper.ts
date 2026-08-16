@@ -163,13 +163,32 @@ async function waitingWithPhones(doctorId: string): Promise<any[]> {
   return waitingOf(await populatedQueue(doctorId));
 }
 
-/** Bilingual, because the same queue serves both — matching the arrival alerts. */
-function delayMessage(doctorName: string, minutes: number, reason: string, newTime: string): string {
+/**
+ * Bilingual, because the same queue serves both — matching the arrival alerts.
+ *
+ * `newStart` is the doctor's revised sitting time, when one was announced. It is
+ * stated separately from the patient's own turn because they answer different
+ * questions: "when does the doctor arrive" tells the patient whether to set off
+ * at all, and "when is my turn" tells them when to be at the door. Quoting only
+ * the second leaves a patient at the front of the queue unsure whether the
+ * cabin is even open yet.
+ */
+function delayMessage(
+  doctorName: string,
+  minutes: number,
+  reason: string,
+  newTime: string,
+  newStart: string = ''
+): string {
   const because = reason ? ` (${reason})` : '';
+  const startLineEn = newStart ? `${doctorName} now starts at ${newStart}.\n` : '';
+  const startLineHi = newStart ? `${doctorName} अब ${newStart} बजे से बैठेंगे।\n` : '';
   return (
     `⏳ ${doctorName} is running about ${minutes} min late today${because}.\n` +
+    startLineEn +
     `Your new approximate turn: ${newTime}. Please come accordingly — you do not need to wait here.\n\n` +
     `⏳ ${doctorName} आज लगभग ${minutes} मिनट देर से हैं${because}।\n` +
+    startLineHi +
     `आपका अनुमानित नया समय: ${newTime}। कृपया उसी अनुसार आएँ — यहाँ इंतज़ार करने की ज़रूरत नहीं।`
   );
 }
@@ -188,9 +207,9 @@ function delayMessage(doctorName: string, minutes: number, reason: string, newTi
  */
 export async function broadcastDelay(
   doctorId: string,
-  options: { minutes?: number; reason?: string; io?: any } = {}
+  options: { minutes?: number; reason?: string; newStart?: string; io?: any } = {}
 ): Promise<number> {
-  const { minutes = 0, reason = '', io } = options;
+  const { minutes = 0, reason = '', newStart = '', io } = options;
   try {
     const doctor = await (Doctor as any).findById(doctorId);
     const doctorName = (doctor && doctor.name) || 'Your doctor';
@@ -205,7 +224,7 @@ export async function broadcastDelay(
       try {
         await sendWhatsAppNotification(
           token.patient.phone,
-          delayMessage(doctorName, minutes, reason, newTime)
+          delayMessage(doctorName, minutes, reason, newTime, newStart)
         );
         sent++;
       } catch (waErr) {
@@ -230,6 +249,7 @@ export async function broadcastDelay(
             tokenNumber: token.tokenNumber,
             minutes,
             reason,
+            newStart,
             estimatedWaitTime: token.estimatedWaitTime || 0
           });
         } catch (_) {}

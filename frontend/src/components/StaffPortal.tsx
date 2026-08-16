@@ -8,7 +8,12 @@ import HelpPanel from './HelpPanel';
 import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
 import DashboardShell from './dashboard/DashboardShell';
 import { PhoneInput, NumberInput } from './fields/NormalizedInput';
-import { generateInvoicePdfBlob, downloadPdfBlob, uploadPdfBlobToCloud } from '../lib/pdfGenerator';
+import {
+  generateInvoicePdfBlob,
+  downloadPdfBlob,
+  printPdfBlob,
+  uploadPdfBlobToCloud
+} from '../lib/pdfGenerator';
 
 /** Colour per billing category, so the counter can pick a charge by shape as
  *  well as by reading it — the same categories the Invoice schema allows. */
@@ -23,6 +28,20 @@ const CATEGORY_CHIP = {
 };
 
 const BILLING_CATEGORIES = Object.keys(CATEGORY_CHIP);
+
+/** The four questions reception answers on the phone all day. Each one is built
+ *  from live data by the server, so nothing here is retyped by hand. */
+const FOLLOW_UP_ACTIONS = [
+  { kind: 'bill', label: 'Bill', icon: 'receipt_long', hint: 'Total, paid, balance and the PDF link' },
+  { kind: 'report', label: 'Reports', icon: 'science', hint: 'Every completed lab result, with links' },
+  {
+    kind: 'queue',
+    label: 'Queue status',
+    icon: 'schedule',
+    hint: 'Position, approximate turn and any delay'
+  },
+  { kind: 'info', label: 'Visit info', icon: 'info', hint: "Doctor, cabin, today's OPD hours and address" }
+];
 
 export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const [queues, setQueues] = useState([]);
@@ -69,6 +88,10 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   // grant a special-needs priority, and start their bill.
   const [arrivals, setArrivals] = useState([]);
   const [arrivalSummary, setArrivalSummary] = useState(null);
+  // Which follow-up button is mid-flight, keyed "<tokenId>-<kind>" so one card's
+  // spinner does not freeze every other card's buttons.
+  const [followUpBusy, setFollowUpBusy] = useState('');
+  const [customFollowUp, setCustomFollowUp] = useState(null);
   const [arrivalFilter, setArrivalFilter] = useState('remote');
   const [arrivalBusyId, setArrivalBusyId] = useState('');
   const [arrivalError, setArrivalError] = useState('');
@@ -181,6 +204,46 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     } catch (err) {
       console.error('Error loading reception arrivals:', err);
     }
+  };
+
+  /**
+   * WhatsApp a patient their bill, reports, queue status or visit details.
+   *
+   * The message body is composed on the server from the token's current state
+   * rather than from what this screen happens to be showing — reception may be
+   * looking at a card that was rendered before the last payment landed, and a
+   * bill that quotes a stale balance is worse than no message.
+   */
+  const handleFollowUp = async (tokenId, kind, message = '') => {
+    setArrivalError('');
+    setArrivalNotice('');
+    setFollowUpBusy(`${tokenId}-${kind}`);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/staff/follow-up/${tokenId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffToken}` },
+        body: JSON.stringify({ kind, message })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setArrivalError(data.message || 'The message could not be sent.');
+        return false;
+      }
+      setArrivalNotice(data.message || 'Sent.');
+      setTimeout(() => setArrivalNotice(''), 5000);
+      return true;
+    } catch (err) {
+      setArrivalError('Network error — nothing was sent.');
+      return false;
+    } finally {
+      setFollowUpBusy('');
+    }
+  };
+
+  const sendCustomFollowUp = async () => {
+    if (!customFollowUp?.text?.trim()) return;
+    const ok = await handleFollowUp(customFollowUp.tokenId, 'custom', customFollowUp.text.trim());
+    if (ok) setCustomFollowUp(null);
   };
 
   /**
@@ -491,6 +554,14 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
     if (!inv) return;
     const blob = generateInvoicePdfBlob(inv, billingConfig);
     downloadPdfBlob(blob, `${inv.invoiceNumber || 'Invoice'}.pdf`);
+  };
+
+  // Printing goes through the same generated PDF as the download rather than
+  // through the on-screen receipt, so the paper copy and the copy the patient
+  // gets on WhatsApp are the same document.
+  const handlePrintInvoicePdf = (inv = selectedInvoice) => {
+    if (!inv) return;
+    printPdfBlob(generateInvoicePdfBlob(inv, billingConfig));
   };
 
   const handleUploadInvoicePdfToCloud = async (inv = selectedInvoice): Promise<string | null> => {
@@ -2205,6 +2276,37 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                           <span>{a.bill ? 'Open bill' : 'Start bill'}</span>
                         </button>
                       </div>
+
+                      {/* Follow up on WhatsApp.
+                          Each button builds its message from live data on the
+                          server, so reception never retypes a total or a queue
+                          position that has since moved. */}
+                      <div className="flex items-center gap-1.5 flex-wrap border-t border-[var(--border-color)]/30 pt-3">
+                        <span className="text-[12px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mr-1">
+                          Follow up
+                        </span>
+                        {FOLLOW_UP_ACTIONS.map((f) => (
+                          <button
+                            key={f.kind}
+                            disabled={followUpBusy === `${a.tokenId}-${f.kind}`}
+                            onClick={() => handleFollowUp(a.tokenId, f.kind)}
+                            title={f.hint}
+                            className="px-2.5 py-1 rounded-lg text-[12px] font-bold border bg-[var(--bg-color)] text-[var(--text-secondary)] border-[var(--border-color)]/40 hover:text-emerald-600 hover:border-emerald-500/40 transition-all disabled:opacity-40 flex items-center gap-1"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">{f.icon}</span>
+                            {followUpBusy === `${a.tokenId}-${f.kind}` ? 'Sending…' : f.label}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() =>
+                            setCustomFollowUp({ tokenId: a.tokenId, name: a.patient?.name, text: '' })
+                          }
+                          className="px-2.5 py-1 rounded-lg text-[12px] font-bold border bg-[var(--bg-color)] text-[var(--text-secondary)] border-[var(--border-color)]/40 hover:text-emerald-600 hover:border-emerald-500/40 transition-all flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[13px]">edit_note</span>
+                          Write a message
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -2394,6 +2496,15 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                         >
                           <span className="material-symbols-outlined text-[16px]">sync</span>
                           <span>Pull Doctor Rx / Tests</span>
+                        </button>
+
+                        <button
+                          onClick={() => handlePrintInvoicePdf(selectedInvoice)}
+                          className="px-3.5 py-2 bg-teal-700 hover:bg-teal-600 text-white font-bold text-[13px] rounded-xl shadow-sm transition-all flex items-center space-x-1.5"
+                          title="Print the official bill straight to the counter printer"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">print</span>
+                          <span>Print bill</span>
                         </button>
 
                         <button
@@ -3033,6 +3144,56 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         </div>
       )}
 
+      {/* Free-text follow-up, for what the four canned messages do not cover. */}
+      {customFollowUp && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--card-bg)] rounded-2xl max-w-md w-full p-6 shadow-2xl animate-fade-in text-left space-y-4">
+            <div>
+              <h3 className="text-lg font-extrabold text-[var(--text-color)] flex items-center gap-2">
+                <span className="material-symbols-outlined text-[22px] text-emerald-600">chat</span>
+                Message {customFollowUp.name || 'the patient'}
+              </h3>
+              <p className="text-[13px] text-[var(--text-secondary)] font-medium mt-0.5">
+                Sent on WhatsApp over this facility&apos;s name. For a bill, a report or the queue, use the
+                buttons on the card — those fill themselves in.
+              </p>
+            </div>
+
+            <textarea
+              rows={5}
+              maxLength={500}
+              autoFocus
+              value={customFollowUp.text}
+              onChange={(e) => setCustomFollowUp((prev) => ({ ...prev, text: e.target.value }))}
+              placeholder="e.g. Your medicines are ready at the pharmacy counter — please collect them before 6 pm."
+              className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl px-3 py-2.5 text-[13px] font-medium text-[var(--text-color)] outline-none focus:border-emerald-500 resize-none"
+            />
+            <p className="text-[11px] text-[var(--text-secondary)] font-semibold text-right -mt-2">
+              {customFollowUp.text.length}/500
+            </p>
+
+            {arrivalError && <p className="text-[12px] font-bold text-rose-500">{arrivalError}</p>}
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setCustomFollowUp(null)}
+                className="px-4 py-2 bg-[var(--bg-color)] border border-[var(--border-color)]/60 text-[var(--text-color)] font-bold text-[13px] rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={sendCustomFollowUp}
+                disabled={!customFollowUp.text.trim() || followUpBusy.endsWith('-custom')}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-[13px] rounded-xl shadow-sm flex items-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-[16px]">send</span>
+                {followUpBusy.endsWith('-custom') ? 'Sending…' : 'Send on WhatsApp'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 7. Digital Discharge Summary & Invoice Receipt Modal */}
       {showReceiptModal && selectedInvoice && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -3173,6 +3334,14 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
             {/* Footer Action Buttons */}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-6 border-t mt-4">
               <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => handlePrintInvoicePdf(selectedInvoice)}
+                  className="px-3.5 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-[12px] font-bold flex items-center space-x-1.5 shadow-sm transition-all active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-[16px]">print</span>
+                  <span>Print bill</span>
+                </button>
+
                 <button
                   onClick={() => handleDownloadInvoicePdf(selectedInvoice)}
                   className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[12px] font-bold flex items-center space-x-1.5 shadow-sm transition-all active:scale-95"

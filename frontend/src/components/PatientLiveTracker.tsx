@@ -76,11 +76,17 @@ export default function PatientLiveTracker() {
     socket.on('queue-updated', handleUpdate);
     socket.on('journey-updated', handleUpdate);
     socket.on('billing-updated', handleUpdate);
+    // Emitted into this patient's own room the moment their doctor announces a
+    // delay. Without it the banner would only appear on the next queue event,
+    // which for a patient sitting still on this page could be several minutes
+    // after the WhatsApp telling them the same thing already arrived.
+    socket.on('queue-delayed', handleUpdate);
 
     return () => {
       socket.off('queue-updated', handleUpdate);
       socket.off('journey-updated', handleUpdate);
       socket.off('billing-updated', handleUpdate);
+      socket.off('queue-delayed', handleUpdate);
     };
   }, [tokenId]);
 
@@ -165,7 +171,7 @@ export default function PatientLiveTracker() {
     );
   }
 
-  const { token, position, journey } = data;
+  const { token, position, journey, delay } = data;
   const inCabin = position === 0;
   // The visit as the patient experiences it. Before this they only saw a queue
   // position and had no idea they were meant to go to the lab or the pharmacy.
@@ -235,6 +241,38 @@ export default function PatientLiveTracker() {
             </div>
           </div>
         </div>
+
+        {/* The doctor is late.
+         *
+         * Sits directly under the ticket, above everything else on the page:
+         * this is the one fact that changes what the patient does in the next
+         * few minutes, and burying it below the progress rail would leave them
+         * reading a stage diagram while their journey home is the real answer. */}
+        {delay?.delayed && (
+          <div className="mb-6 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-left">
+            <div className="flex items-start gap-2.5">
+              <span className="material-symbols-outlined text-amber-500 text-[20px] leading-none mt-0.5">
+                schedule
+              </span>
+              <div className="space-y-1">
+                <p className="text-[13px] font-extrabold text-amber-700 dark:text-amber-400">
+                  {delay.revisedStart
+                    ? `${token.doctor?.name || 'Your doctor'} now starts at ${delay.revisedStart}`
+                    : `${token.doctor?.name || 'Your doctor'} is running about ${delay.minutesLate} min late`}
+                </p>
+                <p className="text-[12px] font-medium text-amber-700/80 dark:text-amber-400/80">
+                  {delay.revisedStart && delay.originalStart
+                    ? `Scheduled for ${delay.originalStart} — running about ${delay.minutesLate} min late today.`
+                    : 'The cabin is behind schedule today.'}
+                  {delay.reason ? ` ${delay.reason}.` : ''}
+                </p>
+                <p className="text-[12px] font-bold text-amber-700 dark:text-amber-400 pt-0.5">
+                  Your updated turn is shown below — there is no need to wait here until then.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Visit progress — what has happened and what to do next. */}
         {journey && (
