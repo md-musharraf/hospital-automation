@@ -15,6 +15,7 @@ const {
   isInTransit,
   travelMinutesOf,
   recallOffsetFor,
+  takeNextWaiting,
   MAX_DEFERS
 } = require('../utils/queueHelper');
 const {
@@ -27,7 +28,8 @@ const {
   localDateKey,
   shiftRunsOn,
   delayNotice,
-  todayOpdHours
+  todayOpdHours,
+  scheduledShifts
 } = require('../utils/shiftHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
@@ -195,13 +197,21 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
       }
     }
 
-    // Get the next token ID from activeQueue (front of the line)
-    const nextTokenId = queue.activeQueue.shift();
-    const token = await Token.findById(nextTokenId).populate('patient');
+    // The front of the line, skipping anything that is no longer in it — see
+    // takeNextWaiting. Whoever holds the lowest live token is next.
+    const { token, skipped } = await takeNextWaiting(queue);
+
+    if (skipped.length > 0) {
+      logger.warn('[QUEUE] Stale entries dropped from the front of the line', {
+        doctor: String(doctorId),
+        skipped
+      });
+    }
+
     if (!token) {
-      queue.activeQueue = queue.activeQueue.filter((id) => id.toString() !== nextTokenId.toString());
+      // Everything still listed had already been dealt with.
       await queue.save();
-      return res.status(404).json({ message: 'Next token in queue not found' });
+      return res.status(400).json({ message: 'Queue is empty. No more patients to call.' });
     }
 
     // Update token status
@@ -802,7 +812,11 @@ router.post('/queue/shift-time', authenticateToken, ensureDoctor, async (req, re
       return res.status(404).json({ message: 'Doctor details not found' });
     }
 
-    const shifts = Array.isArray(doctor.shifts) ? doctor.shifts : [];
+    // The same list the queue estimates from, so a doctor whose sittings were
+    // only ever typed into the facility's printed OPD hours can announce a
+    // delay too — they used to be told to "set your sitting hours first" for
+    // hours that were already on their own landing page.
+    const shifts = scheduledShifts(doctor);
     if (shifts.length === 0) {
       return res.status(400).json({
         message:

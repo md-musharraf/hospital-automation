@@ -479,6 +479,43 @@ export async function sendDepartureAlerts(doctor: any, waiting: any[], io?: any)
 }
 
 /**
+ * Take the next PATIENT off the front of a cabin's line.
+ *
+ * The front entry and the next patient are not the same thing. A token can stop
+ * waiting without leaving `activeQueue` — completed or marked absent down a path
+ * that only touched the token document, moved to another cabin, deleted outright.
+ * `recalculateQueueTimes` already steps over those when it numbers positions, so
+ * the board shows the line correctly while the array still holds the corpse; a
+ * cabin that calls index 0 blindly then opens for somebody who has already been
+ * seen, and the patient holding the lowest live token sits through it. A token
+ * number that does not decide who goes first is not a token number.
+ *
+ * Walks forward to the first genuinely waiting token and reports what it passed,
+ * so a queue that is quietly accumulating dead entries is visible in the log
+ * rather than only in the corridor. Mutates `queue.activeQueue`; the caller
+ * saves, because it has other changes to write in the same breath.
+ */
+export async function takeNextWaiting(queue: any): Promise<{ token: any; skipped: string[] }> {
+  const skipped: string[] = [];
+  if (!queue || !Array.isArray(queue.activeQueue)) return { token: null, skipped };
+
+  while (queue.activeQueue.length > 0) {
+    const nextId = queue.activeQueue.shift();
+    let candidate: any = null;
+    try {
+      candidate = await (Token as any).findById(nextId).populate('patient');
+    } catch (err) {
+      logger.error('Could not read the next token in a queue', { err });
+    }
+
+    if (candidate && candidate.status === 'Waiting') return { token: candidate, skipped };
+    skipped.push(String((candidate && candidate.tokenNumber) || nextId));
+  }
+
+  return { token: null, skipped };
+}
+
+/**
  * Move one waiting token back `slots` places, pulling everyone behind it up.
  *
  * The queue's answer to a patient who is not at the door when their turn comes:

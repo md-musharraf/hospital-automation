@@ -20,6 +20,8 @@ const {
   normalizeShifts,
   sittingStatus,
   shiftsToOpdHours,
+  shiftsFromOpdHours,
+  scheduledShifts,
   formatHhMm,
   parseHhMm,
   localDateKey,
@@ -34,7 +36,8 @@ const {
   trackWaitingPatients,
   cabinRemainingFrom,
   paceFromTokens,
-  recalculateQueueTimes
+  recalculateQueueTimes,
+  takeNextWaiting
 } = require('../backend/dist/utils/queueHelper');
 
 /** A fixed Wednesday, so a weekday-scoped shift is not at the mercy of the calendar. */
@@ -521,6 +524,127 @@ const TWO_SITTINGS = [
     row('R-3')
   );
   check('…and is not quoted a wait of its own', !row('R-2').estimatedWaitTime, row('R-2'));
+
+  section('The printed OPD hours are a schedule too');
+
+  // Structured `shifts` are only ever filled in by a doctor who signs in and
+  // opens the schedule panel. What every facility DOES fill in is the free-text
+  // "OPD hours" box on the onboarding form — so in practice `shifts` was empty
+  // almost everywhere, every doctor read as unscheduled ("sits around the
+  // clock"), and the wait quoted at 7am counted from 7am. The second person to
+  // book a 10am OPD was told "about 10 min".
+  const parsed = (label) => shiftsFromOpdHours(label);
+
+  check(
+    'An en-dashed range with both meridiems',
+    parsed('10:00 AM – 1:00 PM')[0].start === '10:00' && parsed('10:00 AM – 1:00 PM')[0].end === '13:00',
+    parsed('10:00 AM – 1:00 PM')
+  );
+  check(
+    'An unmarked start borrows the meridiem that runs forward',
+    parsed('10:00 – 1:00 PM')[0].start === '10:00' && parsed('10:00 – 1:00 PM')[0].end === '13:00',
+    parsed('10:00 – 1:00 PM')
+  );
+  check(
+    '…and an evening OPD is not read as a morning one',
+    parsed('5 - 8 PM')[0].start === '17:00' && parsed('5 - 8 PM')[0].end === '20:00',
+    parsed('5 - 8 PM')
+  );
+  check(
+    'Both sittings come back from one label',
+    parsed('10:00 AM – 1:00 PM · 5:00 PM – 8:00 PM').length === 2,
+    parsed('10:00 AM – 1:00 PM · 5:00 PM – 8:00 PM')
+  );
+  check(
+    '24-hour text is taken at face value',
+    parsed('10:00-13:00')[0].end === '13:00',
+    parsed('10:00-13:00')
+  );
+  check('Shorthand "10-1" is a morning OPD', parsed('10-1')[0].end === '13:00', parsed('10-1'));
+  check(
+    'A label with no times yields nothing',
+    parsed('Mornings only').length === 0,
+    parsed('Mornings only')
+  );
+  check('So does an empty one', parsed('').length === 0 && parsed(null).length === 0);
+  check(
+    'It round-trips through the printer',
+    shiftsToOpdHours(parsed('10:00 AM – 1:00 PM')) === '10:00 AM – 1:00 PM',
+    shiftsToOpdHours(parsed('10:00 AM – 1:00 PM'))
+  );
+
+  const printedOnly = {
+    name: 'Dr Anand Verma',
+    averageCheckupTime: 10,
+    shifts: [],
+    opdHours: '10:00 AM – 1:00 PM'
+  };
+
+  check(
+    'A doctor with only printed hours is not "sitting" at 7am',
+    sittingStatus(printedOnly, on(7)).sitting === false,
+    sittingStatus(printedOnly, on(7))
+  );
+  check(
+    'The 7am booking is quoted the wait to 10am, not 10 minutes',
+    estimateWaitMinutes(printedOnly, 1, 0, on(7)) === 190,
+    estimateWaitMinutes(printedOnly, 1, 0, on(7))
+  );
+  check(
+    '…and during the sitting nothing changes',
+    estimateWaitMinutes(printedOnly, 1, 0, on(11)) === 10,
+    estimateWaitMinutes(printedOnly, 1, 0, on(11))
+  );
+  check(
+    'Structured shifts still win when both exist',
+    scheduledShifts({ shifts: TWO_SITTINGS, opdHours: '9:00 AM – 9:30 AM' })[0].start === '10:00',
+    scheduledShifts({ shifts: TWO_SITTINGS, opdHours: '9:00 AM – 9:30 AM' })
+  );
+  check(
+    'A doctor with neither is still treated as always available',
+    estimateWaitMinutes({ averageCheckupTime: 10, shifts: [], opdHours: '' }, 4, 5, on(14)) === 45
+  );
+
+  section('The lowest live token is the one called next');
+
+  const callDoc = await new models.Doctor({
+    name: 'Dr Ipsita Sen',
+    hospital: 'ashoka-life-care-hospital',
+    currentRoom: 'Cabin 9',
+    averageCheckupTime: 10
+  }).save();
+
+  const mkCallToken = (n, status) =>
+    new models.Token({
+      tokenNumber: n,
+      patient: waiting2._id,
+      doctor: callDoc._id,
+      hospital: 'ashoka-life-care-hospital',
+      status
+    }).save();
+
+  // The queue array outlives the tokens in it: C-1 was completed and C-2 marked
+  // absent down paths that only touched the token, so both are still listed.
+  const c1 = await mkCallToken('C-1', 'Completed');
+  const c2 = await mkCallToken('C-2', 'Absent');
+  const c3 = await mkCallToken('C-3', 'Waiting');
+  const c4 = await mkCallToken('C-4', 'Waiting');
+
+  const callQueue = await new models.Queue({
+    doctor: callDoc._id,
+    activeQueue: [c1._id, c2._id, c3._id, c4._id]
+  }).save();
+
+  const first = await takeNextWaiting(callQueue);
+  check('The dead entries at the front are stepped over', first.token.tokenNumber === 'C-3', first.token);
+  check('…and reported rather than swallowed', first.skipped.join(',') === 'C-1,C-2', first.skipped);
+  check('…and removed from the line', callQueue.activeQueue.length === 1, callQueue.activeQueue);
+
+  const second = await takeNextWaiting(callQueue);
+  check('The next call takes the next live token', second.token.tokenNumber === 'C-4', second.token);
+
+  const third = await takeNextWaiting(callQueue);
+  check('An exhausted queue returns nothing rather than a stale token', third.token === null, third);
 
   report();
 })();

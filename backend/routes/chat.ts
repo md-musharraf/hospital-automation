@@ -37,6 +37,7 @@ const logger = require('../utils/logger');
 const { useMockDb, trackerUrl } = require('../utils/env');
 const { normalizePhone, phoneVariants, normalizeName } = require('@careeai/shared');
 const { stageMessage } = require('../utils/journeyHelper');
+const { describeNextSitting } = require('../utils/shiftHelper');
 const { onlyToday } = require('../utils/dates');
 const { findPatientByPhone } = require('../utils/patientLookup');
 
@@ -124,6 +125,10 @@ const dictionary = {
         : cat === 'Pregnant'
           ? '🤰 Expecting mother — you have been given priority in the queue.'
           : '♿ Priority patient — you have been moved ahead in the queue.',
+    // Shown whenever the doctor is not in the room yet, because a long wait at an
+    // empty hospital looks like a broken estimate until you say the cabin is shut.
+    sittingNote: (doctor, sitting) =>
+      `🕒 ${doctor} sits for ${sitting} — your wait is counted from then, so there is nothing to gain by coming earlier.`,
     bookingCompleteHeader: 'Booking Complete! 🎉',
     bookingCompleteBody: (tokenNumber, doctor, room, wait) =>
       `• Token Number: ${tokenNumber}\n• Doctor: ${doctor}\n• Cabin: ${room}\n• Estimated Wait: ${wait} mins.`,
@@ -265,6 +270,8 @@ const dictionary = {
         : cat === 'Pregnant'
           ? '🤰 गर्भवती महिला — आपको क़तार में प्राथमिकता दी गई है।'
           : '♿ प्राथमिकता मरीज़ — आपको क़तार में आगे कर दिया गया है।',
+    sittingNote: (doctor, sitting) =>
+      `🕒 ${doctor} ${sitting} से बैठेंगे — आपका इंतज़ार उसी समय से गिना गया है, इसलिए जल्दी आने का कोई फ़ायदा नहीं।`,
     bookingCompleteHeader: 'बुकिंग पूरी हो गई! 🎉',
     bookingCompleteBody: (tokenNumber, doctor, room, wait) =>
       `• टोकन नंबर: ${tokenNumber}\n• डॉक्टर: ${doctor}\n• केबिन: ${room}\n• अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
@@ -588,9 +595,16 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
     ? `\n🚗 Leave home by: ${leaveBy === 'now' ? 'NOW' : leaveBy} (${tokenTravel} min travel + ${PREP_BUFFER_MINUTES} min). We will also WhatsApp you at that moment.\n🚗 घर से निकलें: ${leaveBy === 'now' ? 'अभी' : leaveBy} — उसी समय हम आपको संदेश भी भेजेंगे।\n`
     : '';
 
+  // When the cabin actually opens. A patient booking at 7am for a 10am OPD is
+  // quoted a three-hour wait, and without saying WHY, a three-hour wait at an
+  // empty hospital reads as a mistake — so the number and the reason for it
+  // travel together.
+  const nextSitting = describeNextSitting(selectedDoc, new Date());
+  const sittingLine = nextSitting ? `🕒 ${selectedDoc.name} sits for ${nextSitting}.\n` : '';
+
   // Crowd-control message: tell the patient roughly WHEN to come and that they do
   // NOT need to stand in line — a WhatsApp ping will call them when their turn nears.
-  const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Your approx. turn: ${apptTime} (~${refreshedToken.estimatedWaitTime || 0} min).\n${leaveLine}\n✅ No need to stand in line — wait at home/outside. We will WhatsApp you when your turn is near.\n🔔 घर पर आराम करें, लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम आपको WhatsApp कर देंगे।\n\nTrack live: ${trackerLink}`;
+  const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}.\n${sittingLine}Your approx. turn: ${apptTime} (~${refreshedToken.estimatedWaitTime || 0} min).\n${leaveLine}\n✅ No need to stand in line — wait at home/outside. We will WhatsApp you when your turn is near.\n🔔 घर पर आराम करें, लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम आपको WhatsApp कर देंगे।\n\nTrack live: ${trackerLink}`;
 
   try {
     await sendWhatsAppNotification(patient.phone, bookingMessage);
@@ -655,6 +669,9 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
       )
     }
   ];
+  if (nextSitting) {
+    completeMessages.push({ sender: 'bot', text: text.sittingNote(selectedDoc.name, nextSitting) });
+  }
   if (priorityCategory && priorityCategory !== 'None') {
     completeMessages.push({ sender: 'bot', text: text.priorityNote(priorityCategory) });
   }

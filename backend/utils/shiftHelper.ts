@@ -107,7 +107,7 @@ export function overrideFor(doctor: any, date: Date = new Date()): ShiftOverride
  * tracker cannot disagree about when consultation actually starts.
  */
 export function effectiveShifts(doctor: any, date: Date = new Date()): Shift[] {
-  const shifts: Shift[] = (doctor && Array.isArray(doctor.shifts) && doctor.shifts) || [];
+  const shifts: Shift[] = scheduledShifts(doctor);
   const override = overrideFor(doctor, date);
   if (!override) return shifts;
 
@@ -176,6 +176,149 @@ export function shiftsToOpdHours(shifts?: Shift[] | null): string {
     .slice(0, 60);
 }
 
+// The word forms carry \b so a separator can never be found inside a word — an
+// unbounded "se" would cut a label in half at a place no time follows, and the
+// whole sitting would be dropped for a reason nobody could see.
+/** How the two halves of one sitting are separated: "10:00 AM – 1:00 PM". */
+const RANGE_SEPARATOR = /\s*(?:–|—|−|-|\bto\b|\btill\b|\buntil\b|\bse\b)\s*/i;
+
+/** How two sittings are separated: "10 AM – 1 PM · 5 PM – 8 PM". */
+const SITTING_SEPARATOR = /\s*(?:·|•|\||;|,|&|\band\b)\s*/i;
+
+/** One clock time as a patient writes it: "10", "10:30", "10 AM", "1:05pm". */
+const CLOCK = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/i;
+
+interface ClockPart {
+  hours: number;
+  minutes: number;
+  meridiem: 'am' | 'pm' | null;
+}
+
+function readClock(raw: string): ClockPart | null {
+  const match = String(raw || '')
+    .trim()
+    .match(CLOCK);
+  if (!match) return null;
+
+  const hours = parseInt(match[1], 10);
+  const minutes = match[2] ? parseInt(match[2], 10) : 0;
+  if (isNaN(hours) || isNaN(minutes) || hours > 23 || minutes > 59) return null;
+
+  const suffix = (match[3] || '').replace(/\./g, '').toLowerCase();
+  return { hours, minutes, meridiem: suffix === 'am' || suffix === 'pm' ? (suffix as any) : null };
+}
+
+/** A part as minutes-since-midnight under an assumed meridiem. */
+function atMeridiem(part: ClockPart, meridiem: 'am' | 'pm' | null): number {
+  let hours = part.hours;
+  if (meridiem === 'am' && hours === 12) hours = 0;
+  else if (meridiem === 'pm' && hours < 12) hours += 12;
+  return hours * 60 + part.minutes;
+}
+
+const hhmm = (total: number): string =>
+  `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+
+/**
+ * Turn one printed range — "10:00 AM – 1:00 PM", "5-8 PM", "10:00-13:00" — into
+ * a start/end pair, or null when it cannot be read with confidence.
+ *
+ * The hard part is the half that carries no AM/PM, which is how people actually
+ * write these: "10:00 – 1:00 PM" and "5 – 8 PM" are both one unmarked hour
+ * followed by a marked one, and they mean 10am and 5pm respectively. The rule
+ * that gets both right is to assume the unmarked side shares its neighbour's
+ * meridiem, and to fall back to the other only when that would run the sitting
+ * backwards. Guessing wrong by twelve hours is worse than not guessing, so
+ * anything still ambiguous after that is dropped.
+ */
+function readRange(raw: string): { start: string; end: string } | null {
+  const halves = String(raw || '')
+    .trim()
+    .split(RANGE_SEPARATOR)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (halves.length !== 2) return null;
+
+  const from = readClock(halves[0]);
+  const to = readClock(halves[1]);
+  if (!from || !to) return null;
+
+  let startMins = atMeridiem(from, from.meridiem);
+  let endMins = atMeridiem(to, to.meridiem);
+
+  if (from.meridiem === null && to.meridiem !== null) {
+    const sameSide = atMeridiem(from, to.meridiem);
+    startMins = sameSide < endMins ? sameSide : atMeridiem(from, to.meridiem === 'pm' ? 'am' : 'pm');
+  } else if (to.meridiem === null && from.meridiem !== null) {
+    const sameSide = atMeridiem(to, from.meridiem);
+    endMins = sameSide > startMins ? sameSide : atMeridiem(to, from.meridiem === 'pm' ? 'am' : 'pm');
+  } else if (from.meridiem === null && to.meridiem === null && endMins <= startMins) {
+    // No marks at all. "10:00-13:00" is 24-hour and already reads correctly;
+    // "10-1" is a morning OPD written the short way, so the end is an
+    // afternoon. If that still does not move forward, the label was not a
+    // range we understand and the check below drops it.
+    endMins = atMeridiem(to, 'pm');
+  }
+
+  // A sitting that does not move forward was misread, not written badly. An
+  // overnight OPD is real but cannot be told apart from a bad guess here, so it
+  // stays a job for the structured editor.
+  if (endMins <= startMins) return null;
+
+  return { start: hhmm(startMins), end: hhmm(endMins) };
+}
+
+/**
+ * Read the PRINTED OPD hours back into computable sittings — the inverse of
+ * `shiftsToOpdHours`.
+ *
+ * `opdHours` is free text, and until now it was the only place most facilities
+ * ever recorded when their doctors sit: the admin panel's onboarding form asks
+ * for "10:00 AM – 1:00 PM" and stores exactly that, while structured `shifts`
+ * are only ever filled in by a doctor who signs in personally and opens the
+ * schedule panel. So in practice `doctor.shifts` was empty almost everywhere,
+ * every doctor read as "unscheduled" — which `sittingStatus` treats as sitting
+ * around the clock — and the wait quoted at 7am counted from 7am. A patient
+ * booking the second slot of a 10am OPD was told "about 10 min".
+ *
+ * The label is the facility's own statement of its hours, so honouring it is
+ * not a guess. Anything unreadable yields nothing and the old
+ * always-available behaviour stands.
+ */
+export function shiftsFromOpdHours(label?: string | null): Shift[] {
+  if (typeof label !== 'string' || !label.trim()) return [];
+
+  const out: Shift[] = [];
+  for (const chunk of label.split(SITTING_SEPARATOR)) {
+    if (out.length >= MAX_SHIFTS) break;
+    const range = readRange(chunk);
+    if (!range) continue;
+    out.push({ label: '', start: range.start, end: range.end, days: [] });
+  }
+  return out;
+}
+
+/**
+ * This doctor's standing sittings, from wherever they are actually recorded.
+ *
+ * Structured `shifts` win whenever they hold anything usable — they are the
+ * editable truth, and their INDEXES are what `shiftOverrides.shiftIndex` points
+ * at. The printed label is the fallback, so a facility that only ever filled in
+ * the onboarding form still gets a queue that knows when its doctors sit.
+ *
+ * Every reader goes through this rather than `doctor.shifts`, so the estimate,
+ * the printed hours and today's delay cannot disagree about which list they are
+ * indexing into.
+ */
+export function scheduledShifts(doctor: any): Shift[] {
+  const stored: Shift[] = (doctor && Array.isArray(doctor.shifts) && doctor.shifts) || [];
+  const usable = stored.filter((s) => parseHhMm(s.start) !== null && parseHhMm(s.end) !== null);
+  // The stored list, not the filtered one: dropping a malformed row would shift
+  // every index after it out from under the overrides.
+  if (usable.length > 0) return stored;
+  return shiftsFromOpdHours(doctor && doctor.opdHours);
+}
+
 /** Does this shift run on `date`? An empty `days` falls back to the doctor's OPD days. */
 export function shiftRunsOn(shift: Shift, doctor: any, date: Date): boolean {
   const today = dayName(date);
@@ -235,7 +378,7 @@ export interface SittingStatus {
  * is only ever about today.
  */
 export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatus {
-  const standing: Shift[] = (doctor && Array.isArray(doctor.shifts) && doctor.shifts) || [];
+  const standing: Shift[] = scheduledShifts(doctor);
 
   if (standing.filter((s) => parseHhMm(s.start) !== null && parseHhMm(s.end) !== null).length === 0) {
     return { sitting: true, minutesUntilStart: 0, nextStart: null, shift: null, unscheduled: true };
@@ -342,7 +485,7 @@ export function delayNotice(doctor: any, now: Date = new Date()): DelayNotice {
   const override = overrideFor(doctor, now);
   if (!override) return none;
 
-  const shifts: Shift[] = (doctor && Array.isArray(doctor.shifts) && doctor.shifts) || [];
+  const shifts: Shift[] = scheduledShifts(doctor);
   const original = shifts[override.shiftIndex];
   if (!original) return none;
 
