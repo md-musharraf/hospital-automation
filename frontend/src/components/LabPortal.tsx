@@ -20,6 +20,11 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
   const [error, setError] = useState('');
   // Which test's report is mid-upload, so the bench sees the file is still going.
   const [uploading, setUploading] = useState('');
+  // Outcome of the unified "send to doctor & patient" action, per test. Held
+  // next to the button rather than in the page-level flash: the bench is
+  // looking at one row when they press it, and a banner at the top of a
+  // scrolled list is a result they will not see.
+  const [sendState, setSendState] = useState({ key: '', stage: '', message: '' });
   // The facility's letterhead, so a generated report carries the same name and
   // address as its bills instead of the tenant slug.
   const [labConfig, setLabConfig] = useState(null);
@@ -159,7 +164,11 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       const shareUrl = await uploadPdfBlobToCloud(BACKEND_URL, file, file.name, 'report', {
         hospitalId: labUser?.hospital,
         sessionToken: labToken,
-        tokenId
+        tokenId,
+        // Stored as patient_<id>_<test>_report.pdf, so a report can be found by
+        // the person it belongs to rather than by whatever the scanner named it.
+        patientId: selectedToken?.patient?._id,
+        testName
       });
 
       if (shareUrl) {
@@ -207,7 +216,9 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       const shareUrl = await uploadPdfBlobToCloud(BACKEND_URL, blob, fileName, 'report', {
         hospitalId: labUser?.hospital,
         sessionToken: labToken,
-        tokenId
+        tokenId,
+        patientId: selectedToken?.patient?._id,
+        testName
       });
 
       if (shareUrl) {
@@ -258,6 +269,66 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       setError(err.message || 'The report could not be sent.');
     } finally {
       setUploading('');
+    }
+  };
+
+  /**
+   * The one button the bench actually needs: file the report, tell the doctor,
+   * send the patient their copy.
+   *
+   * Uploading already publishes to the patient on its own, so this is the
+   * fallback for the paths that do not go through an upload at all — a result
+   * typed straight into the worksheet, or a report whose auto-send failed and
+   * needs pushing again. It states plainly which half succeeded, because "sent
+   * to the doctor" and "the patient has their copy" fail independently: a Meta
+   * token that has expired stops the second and not the first, and the bench is
+   * the only person positioned to hand over a printout instead.
+   */
+  const handleSendToDoctorAndPatient = async (tokenId, test) => {
+    const key = keyOf(tokenId, test.testName);
+    const entry = results[key] || {};
+
+    setError('');
+    setSendState({ key, stage: 'working', message: 'Filing the report…' });
+
+    try {
+      // No document anywhere yet — build one from the values on screen rather
+      // than sending a patient a result with nothing attached.
+      if (!entry.reportPdf && !test.reportPdf) {
+        setSendState({ key, stage: 'working', message: 'Generating the PDF…' });
+        await handleAutoGeneratePdf(tokenId, test.testName);
+      }
+
+      setSendState({ key, stage: 'working', message: 'Sending…' });
+      // `reportPdf` is deliberately not resent: the upload above already filed
+      // it server-side, and this state may not have caught up yet. The server
+      // keeps whatever it holds when the field is empty.
+      const data = await api.post(`/lab/tests/${tokenId}/complete`, {
+        testName: test.testName,
+        resultValue:
+          entry.resultValue || (entry.reportPdf || test.reportPdf ? 'PDF Report Attached' : 'Normal'),
+        unit: entry.unit || '',
+        normalRange: entry.normalRange || '',
+        abnormal: Boolean(entry.abnormal),
+        remarks: entry.remarks || 'Completed successfully.'
+      });
+
+      const outcome = data.patientNotified
+        ? `${test.testName}: sent — the doctor has the result and the patient has their report.`
+        : `${test.testName}: the doctor has the result, but the patient could NOT be messaged. Hand them a printout.`;
+
+      setSendState({ key, stage: data.patientNotified ? 'ok' : 'partial', message: outcome });
+      // Also at page level, because a filed test leaves the pending list on the
+      // next refresh and takes its own row — and the message printed in it —
+      // with it. The bench pressed a button and must be told what happened,
+      // even though the thing they pressed it on has just disappeared.
+      if (data.patientNotified) setFlash(outcome);
+      else setError(outcome);
+      refresh();
+    } catch (err: any) {
+      const failure = `${test.testName}: ${err.message || 'could not be sent.'}`;
+      setSendState({ key, stage: 'error', message: failure });
+      setError(failure);
     }
   };
 
@@ -649,6 +720,55 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                           >
                             Send to doctor
                           </button>
+                        </div>
+
+                        {/* The unified action. Uploading a report already sends
+                            it on its own; this is the one button for everything
+                            else — generate if needed, file it, notify both. */}
+                        <div className="space-y-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleSendToDoctorAndPatient(selectedToken._id, test)}
+                            disabled={
+                              sendState.key === keyOf(selectedToken._id, test.testName) &&
+                              sendState.stage === 'working'
+                            }
+                            className="w-full px-4 py-2.5 rounded-xl bg-[var(--primary-color)] hover:opacity-90 disabled:opacity-60 text-white text-[13px] font-black shadow-sm transition-all active:scale-[0.99] flex items-center justify-center gap-2"
+                          >
+                            <span className="material-symbols-outlined text-[17px]">
+                              {sendState.key === keyOf(selectedToken._id, test.testName) &&
+                              sendState.stage === 'working'
+                                ? 'hourglass_top'
+                                : 'send'}
+                            </span>
+                            <span>
+                              {sendState.key === keyOf(selectedToken._id, test.testName) &&
+                              sendState.stage === 'working'
+                                ? sendState.message
+                                : '📄 Send Report to Doctor & Patient'}
+                            </span>
+                          </button>
+
+                          {sendState.key === keyOf(selectedToken._id, test.testName) &&
+                            sendState.stage !== '' &&
+                            sendState.stage !== 'working' && (
+                              <p
+                                className={`text-[12px] font-bold px-3 py-2 rounded-lg border ${
+                                  sendState.stage === 'ok'
+                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600'
+                                    : sendState.stage === 'partial'
+                                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-600'
+                                      : 'bg-rose-500/10 border-rose-500/30 text-rose-500'
+                                }`}
+                              >
+                                {sendState.stage === 'ok'
+                                  ? '✅ '
+                                  : sendState.stage === 'partial'
+                                    ? '⚠️ '
+                                    : '❌ '}
+                                {sendState.message}
+                              </p>
+                            )}
                         </div>
                       </div>
                     );

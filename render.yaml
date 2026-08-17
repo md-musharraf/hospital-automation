@@ -1,0 +1,159 @@
+# Render blueprint — one API service and one static site.
+#
+# Written for the free tier, where the instance has 512 MB and is killed the
+# moment it goes over. Two things had to be got right for that, and neither is
+# what the plan documentation suggests:
+#
+#   1. `npm ci --production` DOES NOT WORK for this repo, and would be the
+#      shortest path to a red deploy. The backend is TypeScript: its `build`
+#      script runs `tsc`, and `typescript` is a devDependency. Installing
+#      production-only skips it, `postinstall` fails, and the deploy never
+#      reaches the memory limit it was trying to avoid. The correct shape is
+#      install everything → build → THEN prune the dev tree, which is what
+#      `buildCommand` below does. The runtime image ends up the same size; only
+#      the order differs.
+#
+#   2. The frontend must not be built by the API service. Vite + esbuild is by
+#      far the heaviest step in this repo, and building it inside the same
+#      service as the server is how a deploy that used to pass starts failing
+#      after a few components are added. It is a separate static site here, so
+#      the API never pays for it.
+#
+# The runtime heap is capped below the container limit on purpose: Node's
+# default heap target on a 512 MB box is optimistic, and an OOM kill gives no
+# stack trace, no log line and no clue. A heap ceiling turns the same event into
+# a JavaScript heap-out-of-memory error with a stack, which is debuggable.
+
+services:
+  # ---------------------------------------------------------------------------
+  # API + Socket.IO + the cron jobs (queue sweeps, licence reminders, close of
+  # day). One instance: the sweeps assume a single writer, and `trackerRunning`
+  # in queueHelper guards overlap WITHIN a process, not across two of them.
+  # Scale this to more than one instance only after those jobs move behind a
+  # lock.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: careeai-api
+    runtime: node
+    plan: free
+    region: singapore # closest to the facilities this serves
+    rootDir: backend
+    healthCheckPath: /api/v1/health
+
+    # Install (with dev deps, because the build needs the compiler) → build →
+    # drop the dev tree. `--omit=dev` is the modern spelling of `--production`.
+    # `--ignore-scripts` on the install stops `postinstall` building a second
+    # time, which on this repo doubled the longest step of the deploy.
+    buildCommand: npm ci --ignore-scripts && npm run build && npm prune --omit=dev
+    startCommand: npm start
+
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      # Below the container's 512 MB so an overrun is a catchable JS error
+      # rather than a silent SIGKILL from the platform.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=400
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+
+      # --- Secrets. Every one of these is `sync: false`: Render prompts for the
+      # value once and stores it, and it never lands in this file or in git. ---
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
+
+      # WhatsApp Cloud API. Without these the app still runs — dispatch is
+      # recorded and reported as unsent — so a missing token degrades the
+      # product rather than breaking the deploy.
+      - key: META_WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: META_PHONE_NUMBER_ID
+        sync: false
+      - key: META_DISPLAY_NUMBER
+        sync: false
+
+      # ImageKit. Optional in the same way: unconfigured, reports fall back to
+      # an inline data URI and the patient is sent their report page instead of
+      # the file.
+      - key: IMAGEKIT_PUBLIC_KEY
+        sync: false
+      - key: IMAGEKIT_PRIVATE_KEY
+        sync: false
+      - key: IMAGEKIT_URL_ENDPOINT
+        sync: false
+
+      # Web push (VAPID). Optional.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+
+      # Where the patient-facing links point. Must be the STATIC SITE's URL, not
+      # this service's: a tracker link that resolves to the API returns JSON to
+      # a patient's phone.
+      - key: PUBLIC_APP_URL
+        fromService:
+          type: web
+          name: careeai-web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CORS_ORIGIN
+        fromService:
+          type: web
+          name: careeai-web
+          envVarKey: RENDER_EXTERNAL_URL
+
+      # The clock every cron job and every "today" boundary is read in. Left to
+      # the platform this is UTC, which rolls the OPD day over at 5:30am local
+      # and files an evening shift override against the wrong date.
+      - key: FACILITY_TIMEZONE
+        value: Asia/Kolkata
+
+      # Strict once the logs are quiet — see utils/tenantGuard.ts. Report-only
+      # is the safe default in production and is what the code picks itself.
+      - key: TENANT_GUARD
+        value: report
+
+  # ---------------------------------------------------------------------------
+  # The console + patient pages. A static bundle on a CDN: no instance, no
+  # memory, nothing to keep warm, and no cold start for a patient opening a
+  # tracker link.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: careeai-web
+    runtime: static
+    plan: free
+    rootDir: .
+    # Builds the shared workspace and then the app. The heap cap matters more
+    # here than on the API: Vite is the memory peak of the whole repo.
+    buildCommand: npm ci && npm run build
+    staticPublishPath: frontend/dist
+
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=1024
+      - key: VITE_BACKEND_URL
+        fromService:
+          type: web
+          name: careeai-api
+          envVarKey: RENDER_EXTERNAL_URL
+
+    # A single-page app: every deep link (/track/:id, /login, /h/:facility) has
+    # to be served index.html or a patient opening their tracker link from
+    # WhatsApp gets a 404 from the CDN.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable

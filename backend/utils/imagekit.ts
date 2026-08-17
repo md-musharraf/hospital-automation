@@ -62,7 +62,7 @@ export const PURPOSES: Record<string, { folder: string; maxBytes: number; allowe
   gallery: { folder: 'gallery', maxBytes: 5 * 1024 * 1024 },
   doctor: { folder: 'doctors', maxBytes: 3 * 1024 * 1024 },
   invoice: { folder: 'invoices', maxBytes: 15 * 1024 * 1024, allowedMime: ['application/pdf'] },
-  report: { folder: 'reports', maxBytes: 15 * 1024 * 1024, allowedMime: ['application/pdf'] }
+  report: { folder: 'patient_reports', maxBytes: 15 * 1024 * 1024, allowedMime: ['application/pdf'] }
 };
 
 export const ALLOWED_MIME: string[] = ['image/jpeg', 'image/png', 'image/webp'];
@@ -79,6 +79,32 @@ export function folderFor(hospitalId?: string | null, purpose?: string): string 
   if (!safeId) return null;
 
   return `/facilities/${safeId}/${rule.folder}`;
+}
+
+/**
+ * The name a patient's report is stored under: `patient_<id>_<test>_report.pdf`.
+ *
+ * Decided here, from the caller's session, for the same reason the folder is:
+ * a browser that names its own object can overwrite somebody else's. The upload
+ * itself still goes browser → ImageKit and never through this server — see the
+ * note at the top of this file — so this is the whole of the server's say in
+ * where the bytes land.
+ *
+ * The test name is part of it deliberately. A patient with a CBC and a thyroid
+ * panel would otherwise write both to `patient_<id>_report.pdf`, and the second
+ * upload would silently replace the first: one patient, two results, one file,
+ * and a doctor reading the wrong panel. A predictable prefix is worth having;
+ * a predictable prefix that destroys the previous report is not.
+ */
+export function reportFileName(patientId?: string | null, testName?: string | null): string {
+  const safeId = String(patientId || '').replace(/[^a-zA-Z0-9_-]/g, '') || 'unknown';
+  const safeTest = String(testName || '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40)
+    .toLowerCase();
+
+  return safeTest ? `patient_${safeId}_${safeTest}_report.pdf` : `patient_${safeId}_report.pdf`;
 }
 
 export interface AuthParams {

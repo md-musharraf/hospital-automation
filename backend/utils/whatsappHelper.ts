@@ -43,8 +43,29 @@ export interface DispatchRecord {
   [key: string]: any;
 }
 
-// Outgoing message audit history log
+/**
+ * Outgoing message audit log — a RING BUFFER, not a list.
+ *
+ * This array grew without any bound: one record per WhatsApp ever sent, each
+ * holding the full message body, kept for the lifetime of the process. A single
+ * busy facility sends a few thousand a day (booking, departure, arrival, delay,
+ * report, bill), so on a 512 MB host the process slowly filled with the text of
+ * messages that had already been delivered and then died — the classic shape of
+ * "it works for a week and then the deploy keeps restarting".
+ *
+ * Nothing needs the whole history: `getWhatsAppHistory` shows the last 20 in the
+ * admin tester, and anything that must survive a restart is already written to
+ * the activity log in MongoDB. Two hundred is generous for a debugging window
+ * and costs roughly a hundred kilobytes.
+ */
+const MAX_HISTORY = 200;
 const sentHistory: DispatchRecord[] = [];
+
+/** Append one dispatch record, discarding the oldest once the window is full. */
+function recordDispatch(record: DispatchRecord): void {
+  sentHistory.push(record);
+  if (sentHistory.length > MAX_HISTORY) sentHistory.splice(0, sentHistory.length - MAX_HISTORY);
+}
 
 /**
  * Gets current active WhatsApp API configuration and engine status
@@ -293,7 +314,7 @@ export async function sendWhatsAppNotification(
         log.info(`Message ID: ${msgId} to ${cleanPhone}`);
         dispatchRecord.sid = msgId;
         dispatchRecord.provider = 'meta';
-        sentHistory.push(dispatchRecord);
+        recordDispatch(dispatchRecord);
 
         const io = socketIo || (global as any).io;
         if (io) {
@@ -322,7 +343,7 @@ export async function sendWhatsAppNotification(
     log.error(`To: ${cleanPhone} | Reason: ${dispatchRecord.metaError || 'unknown'}`);
     dispatchRecord.status = 'failed';
     dispatchRecord.provider = 'meta';
-    sentHistory.push(dispatchRecord);
+    recordDispatch(dispatchRecord);
 
     const failIo = socketIo || (global as any).io;
     if (failIo) {
@@ -347,7 +368,7 @@ export async function sendWhatsAppNotification(
   log.info(`From: whatsapp:${cleanSender} -> To: whatsapp:${cleanPhone} | Msg: "${autoText}"`);
   dispatchRecord.provider = 'auto_gateway';
   dispatchRecord.note = 'Dispatched via Meta WhatsApp Cloud API Auto-Gateway';
-  sentHistory.push(dispatchRecord);
+  recordDispatch(dispatchRecord);
 
   const io = socketIo || (global as any).io;
   if (io) {

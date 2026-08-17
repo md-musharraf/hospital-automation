@@ -462,6 +462,46 @@ const sentTo = (phone) => outbound.filter((m) => m.phone === phone);
   const moved = models.Patient._rows.find((p) => p.name === 'Ramesh Kumar');
   check('…and it is written back to their record', moved.travelMinutes === 20, moved);
 
+  section('A tapped option means the option, not its number');
+
+  // WhatsApp never sends the label back. Meta collapses an interactive reply to
+  // its 1-based option number, and the Twilio path prints a numbered list the
+  // patient answers the same way — so the whole question arrives as a single
+  // digit. Read as a duration, "1 hour" (option 4) became four minutes and the
+  // departure alert that the question exists to time went out hours late.
+  const s5 = 'travel-wa-option';
+  await say(s5, 'hi');
+  await say(s5, 'English');
+  await say(s5, 'stomach pain since morning');
+  await say(s5, '+91 98765 43777');
+  await say(s5, 'Sunita Devi');
+  await say(s5, '41');
+  await say(s5, 'f');
+  await say(s5, 'yes');
+
+  reply = await say(s5, '4'); // the "1 hour" button
+  check('Option 4 is one hour, not four minutes', /about 60 min/i.test(reply.flat), reply.flat);
+
+  const sunita = models.Patient._rows.find((p) => p.name === 'Sunita Devi');
+  check('…and 60 is what gets stored', sunita && sunita.travelMinutes === 60, sunita);
+
+  // Option 1 is "I'm at the hospital" — zero, which must survive as zero and
+  // not become "one minute away".
+  const s6 = 'travel-wa-here';
+  await say(s6, 'hi');
+  await say(s6, 'English');
+  await say(s6, 'ear pain');
+  await say(s6, '+91 98765 43888');
+  await say(s6, 'Alok Nath');
+  await say(s6, '29');
+  await say(s6, 'm');
+  await say(s6, 'yes');
+
+  reply = await say(s6, '1'); // the "I'm at the hospital" button
+  check('Option 1 means already here', /you are here already/i.test(reply.flat), reply.flat);
+  const alok = models.Patient._rows.find((p) => p.name === 'Alok Nath');
+  check('…stored as zero', alok && alok.travelMinutes === 0, alok);
+
   section('An emergency is never made to answer a question first');
 
   const s4 = 'travel-emergency';

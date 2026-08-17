@@ -73,6 +73,48 @@ function loadWith(env) {
   check('An id of only punctuation is refused outright', mod.folderFor('../..', 'hero') === null);
   check('An unknown purpose is refused', mod.folderFor('city-hospital', 'anything') === null);
 
+  section('Uploads — a report is named after the patient it belongs to');
+
+  check(
+    'Reports land in the patient_reports folder',
+    mod.folderFor('city-hospital', 'report') === '/facilities/city-hospital/patient_reports',
+    mod.folderFor('city-hospital', 'report')
+  );
+  check(
+    'The object is named for the patient and the test',
+    mod.reportFileName('abc123', 'Complete Blood Count') === 'patient_abc123_complete_blood_count_report.pdf',
+    mod.reportFileName('abc123', 'Complete Blood Count')
+  );
+
+  // Two tests for one patient must not resolve to one storage key. Without the
+  // test in the name, a thyroid panel would overwrite that patient's CBC — one
+  // person, two results, one file, and a doctor reading the wrong panel.
+  check(
+    'Two tests for the same patient are two different files',
+    mod.reportFileName('abc123', 'CBC') !== mod.reportFileName('abc123', 'Thyroid Panel (TSH)'),
+    mod.reportFileName('abc123', 'CBC')
+  );
+  check(
+    'Punctuation in a test name cannot become a path',
+    !mod.reportFileName('abc123', '../../etc/passwd').includes('/'),
+    mod.reportFileName('abc123', '../../etc/passwd')
+  );
+  check(
+    'Neither can a patient id',
+    mod.reportFileName('../../secret', 'CBC') === 'patient_secret_cbc_report.pdf',
+    mod.reportFileName('../../secret', 'CBC')
+  );
+  check(
+    'A missing patient id still produces a usable name',
+    mod.reportFileName(null, 'CBC') === 'patient_unknown_cbc_report.pdf',
+    mod.reportFileName(null, 'CBC')
+  );
+  check(
+    'A report with no test name is still named for the patient',
+    mod.reportFileName('abc123', '') === 'patient_abc123_report.pdf',
+    mod.reportFileName('abc123', '')
+  );
+
   section('Uploads — the credential');
 
   const auth = mod.buildAuthParams();

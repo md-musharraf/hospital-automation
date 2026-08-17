@@ -100,6 +100,10 @@ const dictionary = {
       '2 hours',
       'More than 2 hours'
     ],
+    // Minutes behind each option above, position for position — see
+    // `travelChoiceMinutes`. Neither channel sends the label back, so the
+    // option's meaning has to live somewhere other than its text.
+    travelOptionMinutes: [0, 15, 30, 60, 120, 180],
     invalidTravelTime: 'Please tap one of the options below, or type a time like "20 min" or "1 hour".',
     travelSaved: (mins) =>
       mins === 0
@@ -240,6 +244,7 @@ const dictionary = {
     askTravelTime:
       '🚗 आख़िरी सवाल — अस्पताल पहुँचने में आपको लगभग कितना समय लगेगा?\n\nनीचे से चुनें (या टाइप करें, जैसे "45 मिनट")। इसी से हम आपको ठीक समय पर WhatsApp करेंगे कि अब निकलिए — यहाँ इंतज़ार करने की ज़रूरत नहीं।',
     travelOptions: ['मैं अस्पताल में ही हूँ', '15 मिनट', '30 मिनट', '1 घंटा', '2 घंटे', '2 घंटे से ज़्यादा'],
+    travelOptionMinutes: [0, 15, 30, 60, 120, 180],
     invalidTravelTime: 'कृपया नीचे दिए विकल्पों में से चुनें, या समय टाइप करें जैसे "20 मिनट" या "1 घंटा"।',
     travelSaved: (mins) =>
       mins === 0
@@ -687,6 +692,41 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
  *   - A patient who has answered before. Once in a lifetime, not once a visit.
  *   - A walk-in, which never reaches this code at all — reception knows.
  */
+/**
+ * Which travel-time OPTION the patient picked, or null when they typed a
+ * duration in their own words instead.
+ *
+ * Neither WhatsApp channel ever sends the label back. Meta collapses an
+ * interactive reply to its 1-based option number ("4"), and the Twilio path
+ * prints the choices as a numbered list the patient answers the same way. Both
+ * therefore arrived at `parseTravelMinutes` as a bare digit and were read as a
+ * duration: "1 hour" (option 4) became FOUR minutes, "I'm at the hospital"
+ * became one — so every departure alert built on the answer fired hours late,
+ * which is the one thing this question exists to prevent.
+ *
+ * Resolve the option first — by label for the web widget, by number for
+ * WhatsApp — and only then fall back to reading free text.
+ */
+function travelChoiceMinutes(raw, text) {
+  const labels = (text && text.travelOptions) || [];
+  const minutes = (text && text.travelOptionMinutes) || [];
+  const needle = norm(raw);
+  if (!needle) return null;
+
+  const byLabel = labels.findIndex((o) => norm(o) === needle);
+  if (byLabel >= 0) return minutes[byLabel] ?? null;
+
+  // A bare number inside the option range is a button press, not a journey:
+  // the six choices are what the patient was just shown, and nobody types "5"
+  // to mean they live five minutes away.
+  if (/^\d+$/.test(needle)) {
+    const idx = Number(needle) - 1;
+    if (idx >= 0 && idx < labels.length) return minutes[idx] ?? null;
+  }
+
+  return null;
+}
+
 async function askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo }) {
   const temp = session.tempData || {};
   const known = parseTravelMinutes(temp.travelMinutes);
@@ -2422,7 +2462,8 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   // patient's own. The doctor is already chosen and held in tempData; all that
   // is left is to read a duration out of whatever they replied.
   if (state === 'AWAITING_TRAVEL_TIME') {
-    const minutes = parseTravelMinutes(cleanMsg);
+    const picked = travelChoiceMinutes(cleanMsg, text);
+    const minutes = picked !== null ? picked : parseTravelMinutes(cleanMsg);
     if (minutes === null) {
       return {
         messages: [{ sender: 'bot', text: text.invalidTravelTime }],
@@ -3257,83 +3298,110 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                 const formattedPhone = fromPhone.startsWith('+') ? fromPhone : `+${fromPhone}`;
                 const sessionId = `wa_${formattedPhone.replace(/\D/g, '')}`;
 
-                // Decide which facility this WhatsApp chat belongs to.
-                // Priority: a hospital the session ALREADY locked onto (e.g. the
-                // patient scanned a facility QR "HI_<id>") must ALWAYS win — never
-                // clobber it on later turns (that was the old bug: every message
-                // forced 'general-hospital', so QR-scanned facilities were lost).
-                // Only for a BRAND-NEW chat do we seed the facility from the number
-                // that RECEIVED the message (metadata.display_phone_number).
-                let seedHospitalId; // undefined => let the session / default decide
-                const existingSession = await ChatSession.findOne({ sessionId });
-                if (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) {
-                  seedHospitalId = undefined; // preserve the session's facility
-                } else if (receivingDisplayNumber) {
-                  const rxDigits = receivingDisplayNumber.replace(/\D/g, '');
-                  const allHosp = await Hospital.find({});
-                  const matched = allHosp.filter(
-                    (h) => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === rxDigits
+                // Everything below can throw, and a throw here is INVISIBLE to
+                // the patient: the 200 went back to Meta at the top of the
+                // handler, so all a failure does is skip the reply. They see
+                // nothing, send the same thing again, hit the same failure —
+                // the "WhatsApp loop" where a booking never completes and the
+                // only trace is a stack in the server log. Contain it to this
+                // one message and always answer with a way out.
+                try {
+                  // Decide which facility this WhatsApp chat belongs to.
+                  // Priority: a hospital the session ALREADY locked onto (e.g. the
+                  // patient scanned a facility QR "HI_<id>") must ALWAYS win — never
+                  // clobber it on later turns (that was the old bug: every message
+                  // forced 'general-hospital', so QR-scanned facilities were lost).
+                  // Only for a BRAND-NEW chat do we seed the facility from the number
+                  // that RECEIVED the message (metadata.display_phone_number).
+                  let seedHospitalId; // undefined => let the session / default decide
+                  const existingSession = await ChatSession.findOne({ sessionId });
+                  if (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) {
+                    seedHospitalId = undefined; // preserve the session's facility
+                  } else if (receivingDisplayNumber) {
+                    const rxDigits = receivingDisplayNumber.replace(/\D/g, '');
+                    const allHosp = await Hospital.find({});
+                    const matched = allHosp.filter(
+                      (h) => h.whatsappNumber && h.whatsappNumber.replace(/\D/g, '') === rxDigits
+                    );
+                    // Seed the facility ONLY when this number belongs to exactly one
+                    // of them. Facilities normally share the single platform number,
+                    // and picking the first match there would lock every patient into
+                    // whichever hospital happened to be registered first — the list of
+                    // hospitals ("hi") is what must decide instead.
+                    seedHospitalId = matched.length === 1 ? matched[0].id : undefined;
+                  }
+
+                  console.log(
+                    `[META INCOMING WHATSAPP] From: ${formattedPhone} | To(phone_number_id): ${receivingPhoneNumberId} | RxNumber: ${receivingDisplayNumber || '-'} | Facility: ${seedHospitalId || (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) || 'default'} | Session: ${sessionId} | Text: "${textContent}"`
                   );
-                  // Seed the facility ONLY when this number belongs to exactly one
-                  // of them. Facilities normally share the single platform number,
-                  // and picking the first match there would lock every patient into
-                  // whichever hospital happened to be registered first — the list of
-                  // hospitals ("hi") is what must decide instead.
-                  seedHospitalId = matched.length === 1 ? matched[0].id : undefined;
-                }
 
-                console.log(
-                  `[META INCOMING WHATSAPP] From: ${formattedPhone} | To(phone_number_id): ${receivingPhoneNumberId} | RxNumber: ${receivingDisplayNumber || '-'} | Facility: ${seedHospitalId || (existingSession && existingSession.tempData && existingSession.tempData.hospitalId) || 'default'} | Session: ${sessionId} | Text: "${textContent}"`
-                );
+                  // Feed input into CareeAi patient appointment state engine
+                  const botResponse = await processChatMessage({
+                    sessionId,
+                    message: textContent,
+                    hospitalId: seedHospitalId,
+                    socketIo: req.io || global.io
+                  });
 
-                // Feed input into CareeAi patient appointment state engine
-                const botResponse = await processChatMessage({
-                  sessionId,
-                  message: textContent,
-                  hospitalId: seedHospitalId,
-                  socketIo: req.io || global.io
-                });
+                  // Dispatch the state-machine response back via Meta Cloud API.
+                  // ONE reply per patient message: a 3-line bot answer used to
+                  // arrive as 3 separate WhatsApp notifications, which reads as
+                  // spam and pushes the option buttons off screen. Merge the lines
+                  // into a single bubble and attach the choices to it.
+                  if (botResponse && botResponse.messages && botResponse.messages.length > 0) {
+                    const opts =
+                      botResponse.options && botResponse.options.length > 0 ? botResponse.options : [];
+                    const lines = botResponse.messages.map((m) => m.text).filter(Boolean);
+                    const combined = lines.join('\n\n');
 
-                // Dispatch the state-machine response back via Meta Cloud API.
-                // ONE reply per patient message: a 3-line bot answer used to
-                // arrive as 3 separate WhatsApp notifications, which reads as
-                // spam and pushes the option buttons off screen. Merge the lines
-                // into a single bubble and attach the choices to it.
-                if (botResponse && botResponse.messages && botResponse.messages.length > 0) {
-                  const opts =
-                    botResponse.options && botResponse.options.length > 0 ? botResponse.options : [];
-                  const lines = botResponse.messages.map((m) => m.text).filter(Boolean);
-                  const combined = lines.join('\n\n');
-
-                  // Meta caps an interactive message body at 1024 chars. If the
-                  // reply is longer, send the detail as plain text first and keep
-                  // the (short) last line as the interactive prompt.
-                  const INTERACTIVE_BODY_LIMIT = 1000;
-                  if (opts.length > 0 && combined.length > INTERACTIVE_BODY_LIMIT && lines.length > 1) {
-                    const head = lines.slice(0, -1).join('\n\n');
-                    const tail = lines[lines.length - 1];
+                    // Meta caps an interactive message body at 1024 chars. If the
+                    // reply is longer, send the detail as plain text first and keep
+                    // the (short) last line as the interactive prompt.
+                    const INTERACTIVE_BODY_LIMIT = 1000;
+                    if (opts.length > 0 && combined.length > INTERACTIVE_BODY_LIMIT && lines.length > 1) {
+                      const head = lines.slice(0, -1).join('\n\n');
+                      const tail = lines[lines.length - 1];
+                      await sendWhatsAppNotification(
+                        formattedPhone,
+                        head,
+                        [],
+                        req.io || global.io,
+                        receivingPhoneNumberId
+                      );
+                      await sendWhatsAppNotification(
+                        formattedPhone,
+                        tail,
+                        opts,
+                        req.io || global.io,
+                        receivingPhoneNumberId
+                      );
+                    } else {
+                      await sendWhatsAppNotification(
+                        formattedPhone,
+                        combined,
+                        opts,
+                        req.io || global.io,
+                        receivingPhoneNumberId
+                      );
+                    }
+                  }
+                } catch (msgErr: any) {
+                  logger.error('Could not answer a WhatsApp message', {
+                    err: msgErr,
+                    from: formattedPhone,
+                    text: textContent
+                  });
+                  // Never leave the patient talking to silence.
+                  try {
                     await sendWhatsAppNotification(
                       formattedPhone,
-                      head,
+                      '⚠️ Sorry — something went wrong at our end and that step did not go through.\n\nPlease reply *HI* to start again from the menu.',
                       [],
                       req.io || global.io,
                       receivingPhoneNumberId
                     );
-                    await sendWhatsAppNotification(
-                      formattedPhone,
-                      tail,
-                      opts,
-                      req.io || global.io,
-                      receivingPhoneNumberId
-                    );
-                  } else {
-                    await sendWhatsAppNotification(
-                      formattedPhone,
-                      combined,
-                      opts,
-                      req.io || global.io,
-                      receivingPhoneNumberId
-                    );
+                  } catch (replyErr: any) {
+                    logger.error('Could not even send the WhatsApp failure notice', { err: replyErr });
                   }
                 }
               }

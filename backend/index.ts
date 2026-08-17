@@ -72,7 +72,20 @@ app.set('trust proxy', 1);
 // for why a per-IP cap throttles an entire hospital through one NAT address.
 app.use('/api/', apiLimiter);
 
+// Where the console may be served from.
+//
+// The hardcoded entries are the deployments that exist today; `CORS_ORIGIN` is
+// how a NEW one is added without a code change. That matters more than it
+// looks: moving the front end to another host (Render, a custom domain) with
+// only this list would produce a console that loads, shows a login box, and
+// fails every single request with an opaque CORS error — the deploy looks
+// successful and nothing works. A comma-separated list, because a facility on
+// its own domain plus the platform's own is the normal case.
 const allowedOrigins = [
+  ...String(process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean),
   'https://hospital-automation-wine.vercel.app',
   'https://www.hospital-automation-wine.vercel.app',
   'http://localhost:5173',

@@ -262,6 +262,48 @@ async function say(sessionId, message) {
     reply.flat
   );
 
+  section('Every state the engine parks a patient in is a state the schema allows');
+
+  // The bug this exists to prevent, in full: AWAITING_TRAVEL_TIME was added to
+  // the state engine and not to the ChatSession enum. Nothing failed in
+  // development, because the in-memory DB used by this very suite has no schema
+  // — so the flow passed its tests, shipped, and stopped every booking at every
+  // facility the moment a real MongoDB refused the save:
+  //
+  //   ChatSession validation failed: currentState: `AWAITING_TRAVEL_TIME`
+  //   is not a valid enum value for path `currentState`.
+  //
+  // A schemaless test database cannot catch a schema mistake, so the check has
+  // to be made against the source itself.
+  {
+    const fs = require('fs');
+    // Read from the file rather than `require`-ing it: this suite replaces every
+    // model in require.cache with an in-memory stand-in, so requiring the module
+    // would hand back the fake — which is precisely the thing that cannot see a
+    // schema. The list has to come from the schema's own source.
+    const schemaSource = fs.readFileSync(path.join(BACKEND, 'models', 'ChatSession.js'), 'utf8');
+    const declaration = schemaSource.match(/CHAT_STATES\s*=\s*\[([\s\S]*?)\]/);
+    const CHAT_STATES = declaration ? [...declaration[1].matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]) : [];
+    const engine = fs.readFileSync(path.join(BACKEND, 'routes', 'chat.js'), 'utf8');
+
+    check('The schema declares a state list at all', CHAT_STATES.length >= 12, CHAT_STATES);
+
+    // Every literal the engine assigns to currentState, however it is written.
+    const assigned = new Set();
+    for (const m of engine.matchAll(/currentState\s*=\s*'([A-Z_]+)'/g)) assigned.add(m[1]);
+    for (const m of engine.matchAll(/currentState:\s*'([A-Z_]+)'/g)) assigned.add(m[1]);
+
+    const missing = [...assigned].filter((state) => !CHAT_STATES.includes(state));
+
+    check('The engine assigns at least a dozen states', assigned.size >= 12, `${assigned.size} found`);
+    check(
+      'Every state the engine writes is allowed by the schema',
+      missing.length === 0,
+      `missing from the ChatSession enum: ${missing.join(', ')}`
+    );
+    check('AWAITING_TRAVEL_TIME specifically', CHAT_STATES.includes('AWAITING_TRAVEL_TIME'), CHAT_STATES);
+  }
+
   section('Unknown token is handled');
   session = 'web5';
   await say(session, 'hi');

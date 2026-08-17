@@ -1067,7 +1067,13 @@ export async function uploadPdfBlobToImageKit(
   blob: Blob,
   fileName: string,
   purpose: 'invoice' | 'report',
-  options?: { hospitalId?: string; sessionToken?: string; adminSecret?: string }
+  options?: {
+    hospitalId?: string;
+    sessionToken?: string;
+    adminSecret?: string;
+    patientId?: string;
+    testName?: string;
+  }
 ): Promise<string | null> {
   try {
     const authRes = await fetch(`${backendUrl}/api/v1/uploads/imagekit/auth`, {
@@ -1077,15 +1083,28 @@ export async function uploadPdfBlobToImageKit(
         ...(options?.adminSecret ? { 'X-Admin-Secret': options.adminSecret } : {}),
         ...(options?.sessionToken ? { Authorization: `Bearer ${options.sessionToken}` } : {})
       },
-      body: JSON.stringify({ purpose, hospitalId: options?.hospitalId })
+      body: JSON.stringify({
+        purpose,
+        hospitalId: options?.hospitalId,
+        // Only meaningful for a report: the server names the object after the
+        // patient rather than trusting whatever the bench's file was called.
+        patientId: options?.patientId,
+        testName: options?.testName
+      })
     });
 
     if (!authRes.ok) return null;
     const auth = await authRes.json();
 
+    // The server's name wins when it issues one. A client-chosen filename is a
+    // client-chosen storage key, and the point of asking the server for the
+    // folder is lost if the browser still decides what lands in it.
+    const withExtension = fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`;
+    const storedName = auth.fileName || withExtension;
+
     const form = new FormData();
-    form.append('file', blob, fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`);
-    form.append('fileName', fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`);
+    form.append('file', blob, storedName);
+    form.append('fileName', storedName);
     form.append('publicKey', auth.publicKey);
     form.append('signature', auth.signature);
     form.append('expire', String(auth.expire));
@@ -1122,6 +1141,8 @@ export async function uploadPdfBlobToCloud(
     sessionToken?: string;
     tokenId?: string;
     invoiceNumber?: string;
+    patientId?: string;
+    testName?: string;
   }
 ): Promise<string | null> {
   return uploadPdfBlobToImageKit(backendUrl, blob, fileName, purpose, options);

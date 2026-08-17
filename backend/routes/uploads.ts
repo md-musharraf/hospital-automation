@@ -27,6 +27,7 @@ const {
   isConfigured,
   buildAuthParams,
   folderFor,
+  reportFileName,
   PURPOSES,
   ALLOWED_MIME,
   EXPIRY_SECONDS
@@ -93,10 +94,18 @@ router.post('/imagekit/auth', (req, res, next) => {
     const auth = buildAuthParams();
     logger.info('[UPLOAD] Issued credential', { actor, hospitalId, purpose });
 
+    // A lab report is filed against a person, so it is named after them rather
+    // than after whatever the bench's file picker called it ("scan_0012.pdf").
+    // The name is built here, from ids the caller supplies but which this
+    // server sanitises, so a browser cannot write outside its own tenant's tree
+    // or over another patient's document.
+    const fileName = purpose === 'report' ? reportFileName(req.body.patientId, req.body.testName) : undefined;
+
     return res.json({
       configured: true,
       ...auth,
       folder,
+      ...(fileName ? { fileName } : {}),
       maxBytes: PURPOSES[purpose].maxBytes,
       allowedTypes: PURPOSES[purpose].allowedMime || ALLOWED_MIME,
       expiresInSeconds: EXPIRY_SECONDS
