@@ -49,6 +49,7 @@ const { requestObservability, metricsSnapshot } = require('./middleware/observab
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 const { runDailyReset } = require('./jobs/dailyReset');
+const { QUEUE_SWEEP_MINUTES } = require('./utils/queueHelper');
 const { apiLimiter } = require('./middleware/rateLimits');
 
 // Every facility this platform serves is in India, and the schedules that matter
@@ -292,6 +293,12 @@ cron.schedule(
 // Ten minutes is the cadence, but it is NOT how often a patient hears from us:
 // trackWaitingPatients only messages someone whose wait has moved past
 // WAIT_DRIFT_THRESHOLD since the last thing they were told.
+//
+// The same sweep carries the departure alerts — "leave for the hospital now",
+// timed off each patient's own stated travel time. The interval is imported
+// rather than written here because the departure check looks exactly one sweep
+// ahead to avoid ever firing late; two copies of "10" that could drift apart
+// would put that guarantee at the mercy of a stale edit.
 setInterval(
   async () => {
     try {
@@ -304,7 +311,7 @@ setInterval(
       logger.error('[QUEUE-TRACKER] Update sweep failed', { err: error.message });
     }
   },
-  10 * 60 * 1000
+  QUEUE_SWEEP_MINUTES * 60 * 1000
 );
 
 // Periodic auto follow-up notifications checker (runs every 5 minutes)

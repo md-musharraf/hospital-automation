@@ -14,7 +14,12 @@ const {
   estimateWaitMinutes,
   projectedWaitMinutes,
   paceFromTokens,
-  cabinRemainingFrom
+  cabinRemainingFrom,
+  parseTravelMinutes,
+  leaveByLabel,
+  travelMinutesOf,
+  isInTransit,
+  PREP_BUFFER_MINUTES
 } = require('../utils/queueHelper');
 const {
   sendWhatsAppNotification,
@@ -84,6 +89,27 @@ const dictionary = {
       `✅ Based on your symptoms, the right department is *${dept}*.\n\n👨‍⚕️ Recommended: ${doctor}\n🚪 ${room}\n⏱️ Approx. wait: ${wait} min (least-busy doctor for you)`,
     triageConfirmPrompt: 'Shall I book this token for you now?',
     triageConfirmOptions: ['✅ Yes, Book My Token', '🔄 Choose Another Doctor'],
+    // --- Travel time: asked ONCE, so every later alert is timed for THIS patient
+    askTravelTime:
+      '🚗 Last question — about how long do you need to REACH the hospital?\n\nTap one below (or type it, e.g. "45 min"). We use this to WhatsApp you exactly when to set off, so you never wait here.',
+    travelOptions: [
+      "I'm at the hospital",
+      '15 minutes',
+      '30 minutes',
+      '1 hour',
+      '2 hours',
+      'More than 2 hours'
+    ],
+    invalidTravelTime: 'Please tap one of the options below, or type a time like "20 min" or "1 hour".',
+    travelSaved: (mins) =>
+      mins === 0
+        ? '👍 Noted — you are here already.'
+        : `👍 Noted — about ${mins} min to reach. We will message you ${mins + 10} min before your turn so you can leave on time.`,
+    travelReuse: (mins) =>
+      `🚗 Last time you said you need about ${mins} min to reach us. Still right?\n\nTap *Yes* to keep it, or type a new time (e.g. "20 min").`,
+    travelReuseOptions: ['✅ Yes, same as before', '✏️ It has changed'],
+    travelTooFarToday: (mins) =>
+      `⚠️ You said about ${Math.round(mins / 60)} hour(s) to reach — today's OPD is likely to close before you can get here. I have still booked your token, but please check the timing below before setting off.`,
     opdFull:
       "🛑 Sorry, today's OPD token limit for this department is full. Please come tomorrow morning, or choose another facility. No need to travel today — you would not get a token.\n🛑 क्षमा करें, आज के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं — आज आने की ज़रूरत नहीं।",
     priorityNote: (cat) =>
@@ -208,6 +234,20 @@ const dictionary = {
       `✅ आपके लक्षणों के आधार पर सही विभाग है *${dept}*।\n\n👨‍⚕️ सुझाव: ${doctor}\n🚪 ${room}\n⏱️ अनुमानित प्रतीक्षा: ${wait} मिनट (आपके लिए सबसे कम भीड़ वाले डॉक्टर)`,
     triageConfirmPrompt: 'क्या मैं आपका टोकन अभी बुक कर दूँ?',
     triageConfirmOptions: ['✅ हाँ, मेरा टोकन बुक करें', '🔄 दूसरा डॉक्टर चुनें'],
+    // --- यात्रा समय: एक बार पूछा जाता है, फिर हर अलर्ट इसी हिसाब से जाता है
+    askTravelTime:
+      '🚗 आख़िरी सवाल — अस्पताल पहुँचने में आपको लगभग कितना समय लगेगा?\n\nनीचे से चुनें (या टाइप करें, जैसे "45 मिनट")। इसी से हम आपको ठीक समय पर WhatsApp करेंगे कि अब निकलिए — यहाँ इंतज़ार करने की ज़रूरत नहीं।',
+    travelOptions: ['मैं अस्पताल में ही हूँ', '15 मिनट', '30 मिनट', '1 घंटा', '2 घंटे', '2 घंटे से ज़्यादा'],
+    invalidTravelTime: 'कृपया नीचे दिए विकल्पों में से चुनें, या समय टाइप करें जैसे "20 मिनट" या "1 घंटा"।',
+    travelSaved: (mins) =>
+      mins === 0
+        ? '👍 ठीक है — आप यहीं हैं।'
+        : `👍 ठीक है — पहुँचने में लगभग ${mins} मिनट। आपकी बारी से ${mins + 10} मिनट पहले हम आपको संदेश भेज देंगे ताकि आप समय पर निकल सकें।`,
+    travelReuse: (mins) =>
+      `🚗 पिछली बार आपने बताया था कि पहुँचने में लगभग ${mins} मिनट लगते हैं। अब भी वही है?\n\n*हाँ* चुनें, या नया समय टाइप करें (जैसे "20 मिनट")।`,
+    travelReuseOptions: ['✅ हाँ, वही है', '✏️ बदल गया है'],
+    travelTooFarToday: (mins) =>
+      `⚠️ आपने बताया कि पहुँचने में करीब ${Math.round(mins / 60)} घंटे लगेंगे — आज की OPD उससे पहले बंद हो सकती है। टोकन बुक कर दिया है, पर निकलने से पहले नीचे दिया समय ज़रूर देख लें।`,
     opdFull:
       '🛑 क्षमा करें, आज इस विभाग के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं, या कोई दूसरी सुविधा चुनें। आज आने की ज़रूरत नहीं — टोकन नहीं मिलेगा।',
     priorityNote: (cat) =>
@@ -447,6 +487,13 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
     if (session.tempData && session.tempData.age) patient.age = session.tempData.age;
     if (session.tempData && session.tempData.gender) patient.gender = session.tempData.gender;
   }
+
+  // Remembered on the PATIENT, not just this token, so the question is asked
+  // once in a lifetime rather than at every booking. A patient who never
+  // answered keeps `null` — that is what turns the departure alert off for them
+  // instead of inventing a time to leave home.
+  const travelMinutes = parseTravelMinutes(session.tempData && session.tempData.travelMinutes);
+  if (travelMinutes !== null) patient.travelMinutes = travelMinutes;
   await patient.save();
 
   const tokenType = session.tempData.tokenType || 'Regular';
@@ -481,7 +528,10 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
     bookingSource: bookingSourceOf(session),
     patient: patient._id,
     doctor: selectedDoc._id,
-    symptoms: session.tempData.symptoms || 'General Checkup'
+    symptoms: session.tempData.symptoms || 'General Checkup',
+    // Fixed for THIS visit: someone who normally travels an hour but is next
+    // door today should be alerted for where they are today.
+    travelMinutes: travelMinutes !== null ? travelMinutes : (patient.travelMinutes ?? null)
   });
   await saveTokenWithRetry(token);
 
@@ -506,9 +556,20 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   const refreshedToken = (await Token.findById(token._id)) || token;
   const trackerLink = trackerUrl(refreshedToken._id);
   const apptTime = formatApptTime(refreshedToken.estimatedWaitTime || 0);
+
+  // The one line that decides whether this patient spends the morning in the
+  // corridor: not when their turn is, but when to LEAVE HOME for it. Only shown
+  // to someone who told us how long they need — for a walk-in or an unanswered
+  // question there is nothing honest to put here.
+  const tokenTravel = parseTravelMinutes(refreshedToken.travelMinutes);
+  const leaveBy = leaveByLabel(refreshedToken.estimatedWaitTime || 0, tokenTravel);
+  const leaveLine = leaveBy
+    ? `\n🚗 Leave home by: ${leaveBy === 'now' ? 'NOW' : leaveBy} (${tokenTravel} min travel + ${PREP_BUFFER_MINUTES} min). We will also WhatsApp you at that moment.\n🚗 घर से निकलें: ${leaveBy === 'now' ? 'अभी' : leaveBy} — उसी समय हम आपको संदेश भी भेजेंगे।\n`
+    : '';
+
   // Crowd-control message: tell the patient roughly WHEN to come and that they do
   // NOT need to stand in line — a WhatsApp ping will call them when their turn nears.
-  const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Your approx. turn: ${apptTime} (~${refreshedToken.estimatedWaitTime || 0} min).\n\n✅ No need to stand in line — wait at home/outside. We will WhatsApp you when your turn is near.\n🔔 घर पर आराम करें, लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम आपको WhatsApp कर देंगे।\n\nTrack live: ${trackerLink}`;
+  const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}. Your approx. turn: ${apptTime} (~${refreshedToken.estimatedWaitTime || 0} min).\n${leaveLine}\n✅ No need to stand in line — wait at home/outside. We will WhatsApp you when your turn is near.\n🔔 घर पर आराम करें, लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम आपको WhatsApp कर देंगे।\n\nTrack live: ${trackerLink}`;
 
   try {
     await sendWhatsAppNotification(patient.phone, bookingMessage);
@@ -576,6 +637,12 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   if (priorityCategory && priorityCategory !== 'None') {
     completeMessages.push({ sender: 'bot', text: text.priorityNote(priorityCategory) });
   }
+  if (leaveBy) {
+    completeMessages.push({
+      sender: 'bot',
+      text: `🚗 ${leaveBy === 'now' ? 'Leave for the hospital NOW' : `Leave home by ${leaveBy}`} — we will WhatsApp you at that moment too.`
+    });
+  }
 
   return {
     messages: completeMessages,
@@ -587,6 +654,39 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
       status: refreshedToken.status || 'Waiting',
       department: selectedDoc.department || 'General Practice'
     }
+  };
+}
+
+/**
+ * The gate in front of every booking: do we know how long this patient needs to
+ * GET here?
+ *
+ * Asked at the moment of booking and nowhere else — this is the only point in
+ * the conversation where the patient has already decided to come, so the answer
+ * is worth a turn and will actually be given. Every departure alert afterwards
+ * is counted back from it.
+ *
+ * Three ways past without asking, all deliberate:
+ *   - An emergency. Nothing may stand between a red-flag symptom and a token.
+ *   - A patient who has answered before. Once in a lifetime, not once a visit.
+ *   - A walk-in, which never reaches this code at all — reception knows.
+ */
+async function askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo }) {
+  const temp = session.tempData || {};
+  const known = parseTravelMinutes(temp.travelMinutes);
+
+  if (temp.tokenType === 'Emergency' || known !== null) {
+    return await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
+  }
+
+  session.tempData = { ...temp, pendingDoctorId: String(selectedDoc._id) };
+  session.currentState = 'AWAITING_TRAVEL_TIME';
+  session.markModified && session.markModified('tempData');
+  await session.save();
+
+  return {
+    messages: [{ sender: 'bot', text: text.askTravelTime }],
+    options: text.travelOptions
   };
 }
 
@@ -1178,6 +1278,8 @@ async function optionsForState(session, text, currentHospId) {
       return text.genderOptions;
     case 'AWAITING_TRIAGE_CONFIRM':
       return text.triageConfirmOptions;
+    case 'AWAITING_TRAVEL_TIME':
+      return text.travelOptions;
     case 'AWAITING_DOCTOR_CHOICE': {
       const doctors = await loadFacilityDoctors(currentHospId);
       return doctors.map((d) => `${d.name} (${d.department})`);
@@ -1326,7 +1428,11 @@ async function afterPhoneKnown({ session, phone, currentHospId, text, lang, sock
       ...session.tempData,
       name: patient.name,
       age: patient.age,
-      gender: patient.gender
+      gender: patient.gender,
+      // Carried forward so the travel question is not asked a second time. It
+      // stays `undefined` for a patient who has never answered, which is what
+      // makes the booking gate ask them.
+      travelMinutes: patient.travelMinutes ?? undefined
     };
     const lead = [
       ...leadMessages,
@@ -1613,6 +1719,45 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     session.markModified && session.markModified('tempData');
     await session.save();
     return { messages: [{ sender: 'bot', text: t0.changeNumberPrompt }], options: [] };
+  }
+
+  // "TIME 20" / "travel 1 hour" — correct a remembered travel time.
+  //
+  // The question is asked once and then reused for years, so there has to be a
+  // way for the patient to say it has changed. Without one, a patient who moved
+  // house keeps being told to leave an hour early forever, and the only person
+  // who could fix it is a receptionist they never speak to.
+  const travelEdit = lowerMsg.match(/^(travel|time|samay|समय|दूरी)\s+(.+)$/);
+  if (travelEdit) {
+    const t0 = dictionary[knownLang || 'en'];
+    const minutes = parseTravelMinutes(travelEdit[2]);
+    if (minutes !== null) {
+      session.tempData = { ...session.tempData, travelMinutes: minutes };
+      session.markModified && session.markModified('tempData');
+      await session.save();
+
+      // Persist against the patient's record when we know who they are, and
+      // against any token they are still waiting on — a change announced while
+      // already in the queue is exactly when it matters most.
+      const known = session.tempData.phone
+        ? await findPatientByPhone(currentHospId, session.tempData.phone)
+        : null;
+      if (known) {
+        known.travelMinutes = minutes;
+        await known.save();
+        try {
+          const live = onlyToday(
+            await Token.find({ hospital: currentHospId, patient: known._id, status: 'Waiting' })
+          );
+          for (const tk of live) {
+            await Token.findByIdAndUpdate(tk._id, { travelMinutes: minutes, departureAlerted: false });
+          }
+        } catch (tErr) {
+          logger.error('Could not apply a travel-time change to live tokens', { err: tErr });
+        }
+      }
+      return { messages: [{ sender: 'bot', text: t0.travelSaved(minutes) }], options: t0.options };
+    }
   }
 
   // Facility Info inquiry trigger
@@ -2220,8 +2365,39 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       };
     }
 
-    // Complete booking via the shared helper (same path as auto-triage).
-    return await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
+    // Complete booking via the shared helper (same path as auto-triage) — after
+    // the one travel-time question, if this patient has not answered it before.
+    return await askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo });
+  }
+
+  // AWAITING_TRAVEL_TIME state — the answer that makes every later alert this
+  // patient's own. The doctor is already chosen and held in tempData; all that
+  // is left is to read a duration out of whatever they replied.
+  if (state === 'AWAITING_TRAVEL_TIME') {
+    const minutes = parseTravelMinutes(cleanMsg);
+    if (minutes === null) {
+      return {
+        messages: [{ sender: 'bot', text: text.invalidTravelTime }],
+        options: text.travelOptions
+      };
+    }
+
+    session.tempData = { ...session.tempData, travelMinutes: minutes };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+
+    const doctors = await loadFacilityDoctors(currentHospId);
+    if (doctors.length === 0) {
+      return { messages: [{ sender: 'bot', text: text.noDoctors }], options: [] };
+    }
+    const pendingId = session.tempData.pendingDoctorId;
+    const selectedDoc = doctors.find((d) => String(d._id) === String(pendingId)) || doctors[0];
+
+    const booked = await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
+    return {
+      ...booked,
+      messages: [{ sender: 'bot', text: text.travelSaved(minutes) }, ...(booked.messages || [])]
+    };
   }
 
   // AWAITING_TRIAGE_CONFIRM state — patient responds to the smart recommendation.
@@ -2246,7 +2422,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     if (isConfirm) {
       const suggestedId = session.tempData && session.tempData.suggestedDoctorId;
       const selectedDoc = doctors.find((d) => String(d._id) === String(suggestedId)) || doctors[0];
-      return await finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo });
+      return await askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo });
     }
 
     if (isChange) {
@@ -2528,9 +2704,21 @@ router.get('/token/:tokenId', async (req, res) => {
     const { delayNotice, todayOpdHours } = require('../utils/shiftHelper');
     const notice = token.doctor ? delayNotice(token.doctor) : null;
 
+    // When to LEAVE HOME, which is the only number a patient who is not here
+    // yet can act on. Sent alongside the wait rather than instead of it: one
+    // answers "how long", the other answers "what do I do now".
+    const tokenTravel = travelMinutesOf(token);
+    const departure = {
+      travelMinutes: tokenTravel,
+      leaveBy: leaveByLabel(token.estimatedWaitTime || 0, tokenTravel),
+      alerted: Boolean(token.departureAlerted),
+      inTransit: isInTransit(token)
+    };
+
     res.json({
       token,
       position,
+      departure,
       delay:
         notice && notice.delayed
           ? {

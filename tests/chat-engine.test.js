@@ -72,6 +72,16 @@ async function say(sessionId, message) {
   check('fever routes to General Medicine', /General Medicine/.test(reply.flat), reply.flat);
 
   reply = await say(session, 'yes');
+  // A first-time patient is asked one more thing before the token is minted:
+  // how long they need to reach us, which is what every later "leave now"
+  // alert is counted back from. See tests/arrival-alerts.test.js.
+  check(
+    'a new patient is asked their travel time',
+    /how long do you need to REACH/i.test(reply.flat),
+    reply.flat
+  );
+
+  reply = await say(session, '30 minutes');
   check('one-tap confirm books the token', /Booking Complete/i.test(reply.flat), reply.flat);
 
   const tokenNumber = (models.Token._rows[0] || {}).tokenNumber;
@@ -211,7 +221,8 @@ async function say(sessionId, message) {
   check("routed to the CHOSEN facility's own doctor", /Neha Rao/.test(reply.flat), reply.flat);
   check('and to the right department', /Dental/.test(reply.flat), reply.flat);
 
-  reply = await waSay(session, 'yes');
+  await waSay(session, 'yes');
+  reply = await waSay(session, '15 minutes'); // travel time, asked once per patient
   check('token booked at the chosen facility', /Booking Complete/i.test(reply.flat), reply.flat);
   const dentalToken = models.Token._rows.find((t) => t.hospital === 'bright-dental');
   check(

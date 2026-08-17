@@ -18,6 +18,45 @@ export const ARRIVAL_ALERT_THRESHOLD = 2;
 // have left the house on the old estimate and been wrong.
 export const WAIT_DRIFT_THRESHOLD = 15;
 
+/**
+ * Minutes added on top of whatever travel time the patient stated, before the
+ * "leave now" message goes out.
+ *
+ * Getting ready, finding the vehicle, parking, walking in from the gate. Ten
+ * minutes is also what a patient standing at the hospital already gets, which is
+ * why the near case and the far case need no separate rule: someone ten minutes
+ * away is told twenty minutes before their turn, someone an hour away is told
+ * an hour and ten minutes before, and both are the same sum.
+ */
+export const PREP_BUFFER_MINUTES = 10;
+
+/**
+ * How often `trackWaitingPatients` is swept, in minutes. Exported because
+ * `index.ts` schedules on it AND the departure check looks this far ahead — a
+ * sweep that only fired on tokens already past their departure time would send
+ * every alert up to one full interval LATE, which for the patient an hour away
+ * is the whole point of the feature missed.
+ *
+ * Erring early is free (they leave a few minutes sooner); erring late costs
+ * them their turn.
+ */
+export const QUEUE_SWEEP_MINUTES = 10;
+
+/**
+ * The longest stated travel time we will act on.
+ *
+ * Beyond this the honest answer is not "we will alert you at 4am" but "you
+ * cannot reach today's OPD" — the booking flow says so at the time of booking
+ * instead of scheduling a departure alert nobody can act on.
+ */
+export const MAX_TRAVEL_MINUTES = 8 * 60;
+
+/** How many times one token may be pushed back before staff must deal with it. */
+export const MAX_DEFERS = 3;
+
+/** Slack after the stated travel time before a patient stops counting as en route. */
+const IN_TRANSIT_GRACE = 10;
+
 /** Guards against two tracker sweeps overlapping. See trackWaitingPatients. */
 let trackerRunning = false;
 
@@ -191,6 +230,390 @@ export function formatApptTime(minsFromNow?: number | string | null): string {
   return `${h}:${m} ${ampm}`;
 }
 
+// ---------------------------------------------------------------------------
+// TRAVEL TIME — the difference between "your turn is near" and "leave now".
+//
+// The arrival alert fires on QUEUE POSITION: you are in the top two, come now.
+// For the patient standing outside that is exactly right, and for the patient
+// two hours away it is useless — by the time they are second in line their turn
+// is twenty minutes off and their journey is a hundred and twenty. They lose
+// the token, and the lesson they take is to come at 6am and wait all day, which
+// is the crowd this system exists to remove.
+//
+// So the patient is asked ONE question when they book — how long do you need to
+// get here — and every departure alert is that number plus a prep buffer,
+// counted back from their own estimated turn. Nothing here guesses: a patient
+// who was never asked keeps the old position-based behaviour exactly.
+// ---------------------------------------------------------------------------
+
+/** Words a patient actually types when they mean "I am already here". */
+const HERE_PATTERNS =
+  /(here|at the hospital|already|outside|reception|counter|यहीं|यहाँ|यहां|पहुँच|पहुंच|अस्पताल में)/i;
+
+/**
+ * Read a stated travel time out of whatever the patient sent.
+ *
+ * Accepts the option buttons, a bare number of minutes, and the forms people
+ * type unprompted — "30 min", "1 hour", "1 ghanta", "aadha ghanta", "2.5 hrs",
+ * "डेढ़ घंटा". Returns null when there is no answer in the text at all, which
+ * the callers treat as "not stated" rather than as zero: zero is a claim (I am
+ * at the gate) and getting that wrong sends someone an alert twenty minutes
+ * before a turn they cannot possibly reach.
+ */
+export function parseTravelMinutes(input: any): number | null {
+  if (input === null || input === undefined) return null;
+
+  if (typeof input === 'number') {
+    if (!isFinite(input) || input < 0) return null;
+    return Math.min(MAX_TRAVEL_MINUTES, Math.round(input));
+  }
+
+  const text = String(input).trim().toLowerCase();
+  if (!text) return null;
+
+  // "I'm already at the hospital" — a real answer, and the answer is zero.
+  if (HERE_PATTERNS.test(text)) return 0;
+
+  // Halves and one-and-a-halves, which are how hours are actually spoken here.
+  if (/(aadha|आधा|आधे|half)/.test(text) && /(hour|hr|ghanta|घंट)/.test(text)) return 30;
+  if (/(dedh|ded|डेढ़|डेढ)/.test(text)) return 90;
+
+  const number = text.match(/\d+(\.\d+)?/);
+  if (!number) return null;
+
+  const value = parseFloat(number[0]);
+  if (!isFinite(value) || value < 0) return null;
+
+  const isHours = /(hour|hrs|hr|ghanta|ghante|घंट|घण्ट)/.test(text);
+  const minutes = Math.round(isHours ? value * 60 : value);
+
+  return Math.min(MAX_TRAVEL_MINUTES, Math.max(0, minutes));
+}
+
+/** The stated travel time on a token, or null when nobody was asked. */
+export function travelMinutesOf(token: any): number | null {
+  if (!token) return null;
+  const value = token.travelMinutes;
+  if (value === null || value === undefined || value === '') return null;
+  const minutes = Number(value);
+  if (!isFinite(minutes) || minutes < 0) return null;
+  return Math.min(MAX_TRAVEL_MINUTES, Math.round(minutes));
+}
+
+/**
+ * The wait at which this patient must set off: their travel time plus the prep
+ * buffer. Null when there is nothing to act on — either nobody was asked, or
+ * they are already at the hospital, in which case the existing "you are next"
+ * ping is the right and only message.
+ */
+export function departureDueMinutes(token: any): number | null {
+  const travel = travelMinutesOf(token);
+  if (travel === null || travel <= 0) return null;
+  return travel + PREP_BUFFER_MINUTES;
+}
+
+/**
+ * Is this alert due on THIS sweep?
+ *
+ * Looks one sweep interval ahead deliberately — see QUEUE_SWEEP_MINUTES. A
+ * patient whose departure moment falls between two sweeps is told at the
+ * earlier one.
+ */
+export function departureDue(
+  token: any,
+  waitMinutes: number,
+  lookahead: number = QUEUE_SWEEP_MINUTES
+): boolean {
+  if (!token || token.departureAlerted) return false;
+  if (token.status && token.status !== 'Waiting') return false;
+  const due = departureDueMinutes(token);
+  if (due === null) return false;
+  return Number(waitMinutes) <= due + lookahead;
+}
+
+/**
+ * The clock time this patient should leave home, as a string they can read.
+ * Returns 'now' once that moment has passed, which is the honest answer for
+ * someone booking from further away than their remaining wait.
+ */
+export function leaveByLabel(waitMinutes: number, travelMinutes: number | null): string {
+  if (travelMinutes === null || travelMinutes <= 0) return '';
+  const lead = Number(waitMinutes) - travelMinutes - PREP_BUFFER_MINUTES;
+  return lead <= 0 ? 'now' : formatApptTime(lead);
+}
+
+/**
+ * Has this patient been told to leave, and could they still plausibly be on the
+ * road?
+ *
+ * The cabin needs this to tell a no-show from a patient who is doing exactly
+ * what we asked. Marking the second one absent — or letting the doctor sit idle
+ * waiting for them — is the failure this whole feature would otherwise create,
+ * because it is the system, not the patient, that chose when they set off.
+ */
+export function isInTransit(token: any, now: Date = new Date()): boolean {
+  if (!token || !token.departureAlerted || !token.departureAlertedAt) return false;
+  const travel = travelMinutesOf(token);
+  if (travel === null || travel <= 0) return false;
+  const arriveBy = new Date(token.departureAlertedAt).getTime() + (travel + IN_TRANSIT_GRACE) * 60000;
+  return now.getTime() < arriveBy;
+}
+
+/**
+ * How far back a no-show should be placed to give them a REAL second chance.
+ *
+ * Three slots is right for someone who stepped out to the chemist. For a patient
+ * we told to leave home fifty minutes ago it is not a second chance at all —
+ * they are placed back in a line that will reach them again before they arrive,
+ * and the same miss repeats until the token is finally cancelled. So the offset
+ * is at least far enough to cover the journey they still have left.
+ */
+export function recallOffsetFor(token: any, paceMinutes: number = 10, now: Date = new Date()): number {
+  const base = 3;
+  if (!isInTransit(token, now)) return base;
+
+  const travel = travelMinutesOf(token) as number;
+  const arriveBy = new Date(token.departureAlertedAt).getTime() + travel * 60000;
+  const remaining = Math.max(0, (arriveBy - now.getTime()) / 60000);
+  const pace = Math.max(PACE_FLOOR, paceMinutes || 10);
+
+  return Math.max(base, Math.ceil(remaining / pace));
+}
+
+/** Bilingual "set off now" notice. The clock times are this patient's own. */
+function departureMessage(opts: {
+  tokenNumber: string;
+  doctorName: string;
+  room: string;
+  waitMinutes: number;
+  travelMinutes: number;
+  sitting: string;
+}): string {
+  const { tokenNumber, doctorName, room, waitMinutes, travelMinutes, sitting } = opts;
+  const turn = formatApptTime(waitMinutes);
+  const sittingEn = sitting ? `\n${doctorName} sits for ${sitting}.` : '';
+  const sittingHi = sitting ? `\n${doctorName}: ${sitting}।` : '';
+
+  return (
+    `🚗 Time to set off — token ${tokenNumber}.\n` +
+    `Your turn with ${doctorName} is about ${turn} (${waitMinutes} min from now), and you told us you need about ${travelMinutes} min to reach.` +
+    `${sittingEn}\nPlease leave now and come straight to ${room}.\n\n` +
+    `🚗 अब निकलने का समय — टोकन ${tokenNumber}।\n` +
+    `${doctorName} के पास आपकी बारी लगभग ${turn} बजे है, और आपने बताया था कि आपको पहुँचने में करीब ${travelMinutes} मिनट लगते हैं।` +
+    `${sittingHi}\nकृपया अभी निकलें और सीधे ${room} पहुँचें।`
+  );
+}
+
+/**
+ * WhatsApp everyone on this cabin's line whose departure moment has arrived.
+ *
+ * Takes an already-populated queue rather than doing its own lookups, so it can
+ * be called from BOTH the ten-minute sweep and every queue advance without
+ * doubling the database work. It is flag-guarded, so calling it from both is
+ * safe — the extra call site exists because a fast-moving cabin can eat ten
+ * minutes of queue between two sweeps, and being alerted late is the one
+ * failure mode this feature cannot have.
+ */
+export async function sendDepartureAlerts(doctor: any, waiting: any[], io?: any): Promise<number> {
+  if (!doctor || !Array.isArray(waiting) || waiting.length === 0) return 0;
+
+  const { sendWhatsAppNotification } = require('./whatsappHelper');
+  const doctorName = doctor.name || 'Your doctor';
+  const room = doctor.currentRoom || 'the cabin';
+  const sitting = describeNextSitting(doctor, new Date());
+  let sent = 0;
+
+  for (const token of waiting) {
+    const wait = Number(token.estimatedWaitTime) || 0;
+    if (!departureDue(token, wait)) continue;
+
+    const patient = token.patient;
+    if (!patient || !patient.phone) continue;
+
+    const travel = travelMinutesOf(token) as number;
+    try {
+      await sendWhatsAppNotification(
+        patient.phone,
+        departureMessage({
+          tokenNumber: token.tokenNumber,
+          doctorName,
+          room,
+          waitMinutes: wait,
+          travelMinutes: travel,
+          sitting
+        })
+      );
+      sent++;
+    } catch (waErr) {
+      // Leave the flag unset so the next sweep tries again — an undelivered
+      // "leave now" is the one message worth retrying.
+      logger.error('Departure alert WhatsApp error', { token: token.tokenNumber, err: waErr });
+      continue;
+    }
+
+    // Mark by id, not on the populated doc, to stay mock-DB safe. The wait is
+    // recorded as "told" as well, because this message quotes it — without that
+    // the drift tracker would immediately follow it with an update saying the
+    // same number.
+    const stamp = { departureAlerted: true, departureAlertedAt: new Date(), lastNotifiedWait: wait };
+    try {
+      await (Token as any).findByIdAndUpdate(token._id, stamp);
+      Object.assign(token, stamp);
+    } catch (uErr) {
+      logger.error('Departure alert flag update error', { err: uErr });
+    }
+
+    if (io) {
+      try {
+        io.to(`patient:${token._id}`).emit('departure-alert', {
+          tokenNumber: token.tokenNumber,
+          estimatedWaitTime: wait,
+          travelMinutes: travel
+        });
+      } catch (_) {}
+    }
+  }
+
+  if (sent > 0) logger.info('[DEPARTURE] Patients told to set off', { doctor: String(doctor._id), sent });
+  return sent;
+}
+
+/**
+ * Move one waiting token back `slots` places, pulling everyone behind it up.
+ *
+ * The queue's answer to a patient who is not at the door when their turn comes:
+ * the alternative is a doctor sitting in an empty room while a full corridor
+ * waits, and a patient who travelled an hour losing their place outright. This
+ * costs the late patient a few minutes and costs the cabin nothing.
+ *
+ * Pure queue surgery — the caller recalculates the estimates and does the
+ * messaging, because doctor and reception announce it differently.
+ */
+export async function deferToken(
+  doctorId: any,
+  tokenId: any,
+  slots: number = 2
+): Promise<{ moved: boolean; from: number; to: number; promoted: any[]; reason?: string }> {
+  const none = { moved: false, from: -1, to: -1, promoted: [] as any[] };
+  try {
+    const queue = await (Queue as any).findOne({ doctor: doctorId });
+    if (!queue || !Array.isArray(queue.activeQueue)) return { ...none, reason: 'no-queue' };
+
+    const from = queue.activeQueue.findIndex(
+      (id: any) => String(id && id._id ? id._id : id) === String(tokenId)
+    );
+    if (from === -1) return { ...none, reason: 'not-in-queue' };
+
+    const step = Math.max(1, Math.round(Number(slots) || 0));
+    const to = Math.min(from + step, queue.activeQueue.length - 1);
+    if (to === from) return { ...none, from, reason: 'already-last' };
+
+    // Who gains from this — the patients between the old and new position all
+    // move up one, and the first of them is now at the front.
+    const promoted = queue.activeQueue.slice(from + 1, to + 1);
+
+    const [entry] = queue.activeQueue.splice(from, 1);
+    queue.activeQueue.splice(to, 0, entry);
+    await queue.save();
+
+    return { moved: true, from, to, promoted };
+  } catch (err) {
+    logger.error('Error deferring a token', { err, tokenId: String(tokenId) });
+    return { ...none, reason: 'error' };
+  }
+}
+
+/**
+ * Push a patient back, pull the queue up, and tell everyone affected — the whole
+ * operation, so the doctor's console and reception cannot do half of it each.
+ *
+ * The deferred patient is told their new time (they are usually on the road, and
+ * "you have lost your slot" would be both wrong and cruel); the patients who
+ * moved up are handled by the ordinary recalculation and the front-of-queue
+ * ping, which is exactly the path they would have taken anyway.
+ *
+ * Refuses past MAX_DEFERS. A token that keeps being pushed back is not a timing
+ * problem any more — somebody has to decide whether that patient is coming at
+ * all, and quietly sliding them down the line all afternoon hides that decision.
+ */
+export async function applyDeferral(
+  doctorId: any,
+  tokenId: any,
+  options: { slots?: number; io?: any; actor?: string } = {}
+): Promise<{ ok: boolean; reason?: string; token?: any; from?: number; to?: number; notified?: number }> {
+  const { slots = 2, io, actor = 'Staff' } = options;
+
+  const token = await (Token as any).findById(tokenId).populate('patient');
+  if (!token) return { ok: false, reason: 'not-found' };
+  if (token.status !== 'Waiting') return { ok: false, reason: 'not-waiting' };
+  if ((token.deferCount || 0) >= MAX_DEFERS) return { ok: false, reason: 'defer-limit', token };
+
+  const result = await deferToken(doctorId, tokenId, slots);
+  if (!result.moved) return { ok: false, reason: result.reason || 'not-moved', token };
+
+  try {
+    await (Token as any).findByIdAndUpdate(token._id, {
+      deferCount: (token.deferCount || 0) + 1,
+      // They will pass the front of the queue again, and when they do the
+      // "you are next" ping has to be able to fire a second time.
+      arrivalAlerted: false
+    });
+  } catch (uErr) {
+    logger.error('Defer bookkeeping error', { err: uErr });
+  }
+
+  await recalculateQueueTimes(doctorId);
+
+  const fresh = (await (Token as any).findById(token._id)) || token;
+  const doctor = await (Doctor as any).findById(doctorId);
+  const room = (doctor && doctor.currentRoom) || 'the cabin';
+  const newTime = formatApptTime(fresh.estimatedWaitTime || 0);
+
+  let notified = 0;
+  if (token.patient && token.patient.phone) {
+    const { sendWhatsAppNotification } = require('./whatsappHelper');
+    const msg =
+      `🔄 Token ${token.tokenNumber}: you were not at ${room} when your turn came, so we have moved you a few places back ` +
+      `rather than cancel you. Your new approximate turn: ${newTime}. Please come straight to ${room}.\n\n` +
+      `🔄 टोकन ${token.tokenNumber}: आपकी बारी पर आप ${room} पर नहीं थे, इसलिए टोकन रद्द करने के बजाय आपको कुछ नंबर पीछे कर दिया गया है। ` +
+      `आपका नया अनुमानित समय: ${newTime}। कृपया सीधे ${room} पहुँचें।`;
+    try {
+      await sendWhatsAppNotification(token.patient.phone, msg);
+      notified = 1;
+      await (Token as any).findByIdAndUpdate(token._id, {
+        lastNotifiedWait: fresh.estimatedWaitTime || 0,
+        lastTrackedAt: new Date()
+      });
+    } catch (waErr) {
+      logger.error('Defer notice WhatsApp error', { token: token.tokenNumber, err: waErr });
+    }
+  }
+
+  // Whoever is now at the front needs to know they are up next.
+  await notifyUpcomingPatients(String(doctorId), io);
+
+  if (io) {
+    try {
+      io.to(`patient:${token._id}`).emit('token-deferred', {
+        tokenNumber: token.tokenNumber,
+        position: (result.to as number) + 1,
+        estimatedWaitTime: fresh.estimatedWaitTime || 0
+      });
+      io.to(`doctor:${doctorId}`).emit('queue-updated');
+      io.to('queue:global').emit('queue-updated', { doctorId });
+    } catch (_) {}
+  }
+
+  logger.info('[DEFER] Token pushed back', {
+    token: token.tokenNumber,
+    from: result.from,
+    to: result.to,
+    by: actor
+  });
+
+  return { ok: true, token: fresh, from: result.from, to: result.to, notified };
+}
+
 /**
  * Rewrite every waiting patient's estimate for one cabin.
  *
@@ -290,10 +713,18 @@ export async function notifyUpcomingPatients(doctorId: string, io?: any): Promis
     const room = (doctor && doctor.currentRoom) || 'the cabin';
     const { sendWhatsAppNotification } = require('./whatsappHelper');
 
+    // Departures first, and on every advance rather than only on the sweep: a
+    // cabin running fast can clear ten minutes of queue between two sweeps, and
+    // the patient an hour away cannot absorb that.
+    await sendDepartureAlerts(doctor, waitingOf(queue), io);
+
     const frontTokens = queue.activeQueue.slice(0, ARRIVAL_ALERT_THRESHOLD);
     for (let i = 0; i < frontTokens.length; i++) {
       const token = frontTokens[i];
       if (!token || token.arrivalAlerted || token.status !== 'Waiting') continue;
+      // Already on the road because we told them to be. "Please reach the cabin
+      // now" to someone forty minutes out is not information, it is alarm.
+      if (isInTransit(token)) continue;
       const patient = token.patient;
       if (!patient || !patient.phone) continue;
 
@@ -506,6 +937,13 @@ export async function trackWaitingPatients(io?: any): Promise<number> {
       // Already resolved by the find above — re-fetching per doctor turned one
       // query into one-per-cabin for no extra information.
       const waiting = waitingOf(queue);
+
+      // "Leave now" outranks "your wait has changed": a patient who has not set
+      // off yet needs the departure message, not a revised clock time they have
+      // no plan to act on. Sending it here also marks the wait as told, so the
+      // drift check below cannot follow it with a second message in the same
+      // sweep saying the same number.
+      notified += await sendDepartureAlerts(doctor, waiting, io);
 
       for (const token of waiting) {
         const current = Number(token.estimatedWaitTime) || 0;

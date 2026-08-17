@@ -7,7 +7,16 @@ const Reminder = require('../models/Reminder');
 const Patient = require('../models/Patient');
 const RefillRequest = require('../models/RefillRequest');
 const { authenticateToken, ensureRole } = require('../middleware/auth');
-const { recalculateQueueTimes, notifyUpcomingPatients, broadcastDelay } = require('../utils/queueHelper');
+const {
+  recalculateQueueTimes,
+  notifyUpcomingPatients,
+  broadcastDelay,
+  applyDeferral,
+  isInTransit,
+  travelMinutesOf,
+  recallOffsetFor,
+  MAX_DEFERS
+} = require('../utils/queueHelper');
 const {
   normalizeShifts,
   shiftsToOpdHours,
@@ -123,8 +132,25 @@ router.get('/my-queue', authenticateToken, ensureDoctor, async (req, res) => {
     const me = await Doctor.findById(doctorId);
     const base = queue && typeof queue.toObject === 'function' ? queue.toObject() : { ...queue };
 
+    // Travel state per waiting token, so the doctor can tell "not here yet" from
+    // "on the road because we told them to be". Derived here rather than in the
+    // browser: `isInTransit` is the same rule the queue itself uses to decide
+    // whether someone is a no-show, and two copies of it would eventually
+    // disagree on screen with what the system actually did.
+    const travel = {};
+    for (const entry of (base && base.activeQueue) || []) {
+      if (!entry || !entry._id) continue;
+      travel[String(entry._id)] = {
+        travelMinutes: travelMinutesOf(entry),
+        inTransit: isInTransit(entry),
+        departureAlerted: Boolean(entry.departureAlerted),
+        deferCount: entry.deferCount || 0
+      };
+    }
+
     res.json({
       ...base,
+      travel,
       schedule: {
         shifts: (me && me.shifts) || [],
         opdDays: (me && me.opdDays) || [],
@@ -410,6 +436,75 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
   }
 });
 
+/**
+ * POST push a waiting patient back a few places so the cabin keeps moving.
+ *
+ * The doctor's own version of reception's button, for the commonest case of
+ * all: the next name is called, nobody answers, and the choice today is to sit
+ * idle or to burn that patient's token. Neither is needed — the patient we told
+ * to leave home forty minutes ago is very likely in the car park.
+ *
+ * `tokenId` is optional; without it the front of the line is pushed back, which
+ * is what the doctor means when they say "next".
+ */
+router.post('/queue/defer', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctorId = req.user.id;
+    const { tokenId, slots } = req.body || {};
+    const step = Math.min(10, Math.max(1, parseInt(slots, 10) || 2));
+
+    const queue = await Queue.findOne({ doctor: doctorId });
+    if (!queue || !Array.isArray(queue.activeQueue) || queue.activeQueue.length === 0) {
+      return res.status(400).json({ message: 'There is nobody waiting in this queue' });
+    }
+
+    const targetId = tokenId || queue.activeQueue[0];
+    const token = await Token.findById(targetId);
+    if (!token) {
+      return res.status(404).json({ message: 'Token not found' });
+    }
+
+    const result = await applyDeferral(doctorId, targetId, {
+      slots: step,
+      io: req.io,
+      actor: req.user.username || 'Doctor'
+    });
+
+    if (!result.ok) {
+      const message =
+        result.reason === 'defer-limit'
+          ? `${token.tokenNumber} has already been pushed back ${MAX_DEFERS} times — mark them absent instead.`
+          : result.reason === 'already-last'
+            ? `${token.tokenNumber} is already last in the queue.`
+            : result.reason === 'not-waiting'
+              ? 'Only a patient still waiting in the line can be pushed back.'
+              : 'Could not push this token back.';
+      return res.status(409).json({ message, reason: result.reason });
+    }
+
+    await logActivity(req.io, {
+      hospital: req.user.hospital || 'general-hospital',
+      type: 'token-deferred',
+      role: 'doctor',
+      actor: req.user.username || 'Doctor',
+      message: `${token.tokenNumber} pushed back to #${(result.to || 0) + 1} — next patient called forward so the cabin is not idle.`,
+      tokenNumber: token.tokenNumber,
+      refId: token._id,
+      severity: 'warning'
+    });
+
+    res.json({
+      message: `${token.tokenNumber} moved to #${(result.to || 0) + 1}. Call the next patient now.`,
+      position: (result.to || 0) + 1,
+      estimatedWaitTime: result.token ? result.token.estimatedWaitTime : null,
+      notified: result.notified || 0
+    });
+  } catch (error: any) {
+    logger.error('Error deferring a waiting patient', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // POST mark active patient as Absent
 router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, res) => {
   try {
@@ -425,10 +520,16 @@ router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, r
     // down the queue and WhatsApp them to come now. Only a repeat no-show is finally
     // marked Absent. This cuts re-registration load on staff and patient hardship.
     const MAX_RECALL = 1;
-    const RECALL_OFFSET = 3; // slots back the recalled patient is placed
 
     const absentTokenId = queue.currentToken;
     const token = await Token.findById(queue.currentToken).populate('patient');
+
+    // Three slots back for someone who stepped out; far enough to cover the
+    // journey for someone we ourselves told to leave home half an hour ago.
+    // Putting a patient who is still on the road back into a line that reaches
+    // them before they arrive is not a second chance, it is the same no-show
+    // scheduled twice.
+    const RECALL_OFFSET = recallOffsetFor(token, req.user.averageCheckupTime || 10);
     let recalled = false;
     let recallPosition = null;
 

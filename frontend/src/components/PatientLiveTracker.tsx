@@ -81,12 +81,19 @@ export default function PatientLiveTracker() {
     // which for a patient sitting still on this page could be several minutes
     // after the WhatsApp telling them the same thing already arrived.
     socket.on('queue-delayed', handleUpdate);
+    // "Set off now", and "you have been moved back a few places". Both change
+    // what this screen should be telling the patient to DO, so both have to
+    // land here as fast as the WhatsApp carrying the same news.
+    socket.on('departure-alert', handleUpdate);
+    socket.on('token-deferred', handleUpdate);
 
     return () => {
       socket.off('queue-updated', handleUpdate);
       socket.off('journey-updated', handleUpdate);
       socket.off('billing-updated', handleUpdate);
       socket.off('queue-delayed', handleUpdate);
+      socket.off('departure-alert', handleUpdate);
+      socket.off('token-deferred', handleUpdate);
     };
   }, [tokenId]);
 
@@ -390,6 +397,39 @@ export default function PatientLiveTracker() {
          * "Please wait in the reception lounge until called" underneath a
          * progress rail that said their visit was complete — three statements on
          * one screen, two of them wrong. */}
+        {/* When to set off.
+         *
+         * The queue position tells a patient how long; it does not tell them
+         * what to do, and for anyone who is not already in the building that is
+         * the only question. Shown above the position because it is the line
+         * they act on — and it disappears once they are inside or done. */}
+        {!visitOver && data?.departure?.leaveBy && (
+          <div
+            className={`mb-4 rounded-2xl p-4 flex items-center space-x-3 text-left border ${
+              data.departure.leaveBy === 'now' || data.departure.alerted
+                ? 'bg-amber-500/10 border-amber-500/40'
+                : 'bg-[var(--bg-color)] border-[var(--border-color)]/50'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[26px] text-amber-600">directions_car</span>
+            <div>
+              <p className="text-[12px] text-[var(--text-secondary)] uppercase font-extrabold">
+                {data.departure.inTransit ? 'You should be on your way' : 'Leave home by'}
+              </p>
+              <p className="text-sm font-extrabold text-[var(--text-color)] mt-0.5">
+                {data.departure.leaveBy === 'now' ? 'Leave now' : data.departure.leaveBy}
+                <span className="font-medium text-[var(--text-secondary)]">
+                  {' '}
+                  · {data.departure.travelMinutes} min journey
+                </span>
+              </p>
+              <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                We WhatsApp you at that moment — no need to wait here.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-4">
           {visitOver ? (
             <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 flex items-center space-x-3 text-left">

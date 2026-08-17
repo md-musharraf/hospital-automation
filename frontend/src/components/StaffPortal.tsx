@@ -79,6 +79,10 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
   const [walkSymptoms, setWalkSymptoms] = useState('');
   const [walkIsEmergency, setWalkIsEmergency] = useState(false);
   const [walkPriority, setWalkPriority] = useState('None');
+  // Minutes this patient needs to REACH the hospital. Blank means the usual
+  // case — they are standing at the counter — and only a filled-in value turns
+  // on the "leave now" alert for a booking taken over the phone.
+  const [walkTravel, setWalkTravel] = useState('');
   const [walkError, setWalkError] = useState('');
   const [walkSuccess, setWalkSuccess] = useState('');
 
@@ -840,6 +844,9 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       if (walkDoctorId) payload.doctorId = walkDoctorId;
       // Only send a priority when reception picked one; else backend auto-detects.
       if (walkPriority && walkPriority !== 'None') payload.priorityCategory = walkPriority;
+      // Only sent when reception actually typed it — an omitted field must not
+      // overwrite what the patient told the chatbot on an earlier visit.
+      if (String(walkTravel).trim() !== '') payload.travelMinutes = Number(walkTravel);
 
       const res = await fetch(`${BACKEND_URL}/api/v1/staff/tokens/walk-in`, {
         method: 'POST',
@@ -870,6 +877,7 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       setWalkSymptoms('');
       setWalkIsEmergency(false);
       setWalkPriority('None');
+      setWalkTravel('');
       setWalkDoctorId('');
       loadData();
     } catch (err) {
@@ -907,6 +915,30 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.message || 'Failed to escalate token to Emergency');
+      }
+      setQueueError('');
+      loadData();
+    } catch (err) {
+      setQueueError(err.message);
+    }
+  };
+
+  // Patient not at the cabin when called. Pushing them back two places keeps the
+  // doctor working and keeps their visit — the alternative on this screen used
+  // to be "Absent", which sends someone who travelled an hour home again.
+  const handleDefer = async (tokenId) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/staff/tokens/${tokenId}/defer`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${staffToken}`
+        },
+        body: JSON.stringify({ slots: 2 })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to push this token back');
       }
       setQueueError('');
       loadData();
@@ -1691,6 +1723,31 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                   </select>
                 </div>
 
+                {/* Only for a booking taken over the phone. Left blank the
+                    patient is treated as standing right here, which is what a
+                    walk-in is. */}
+                <div>
+                  <label className="block text-[var(--text-secondary)] font-semibold mb-1">
+                    Travel time to reach (minutes) — leave blank if they are here
+                  </label>
+                  <select
+                    value={walkTravel}
+                    onChange={(e) => setWalkTravel(e.target.value)}
+                    className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]\60 focus:border-[var(--primary-color)] rounded-xl px-4 py-2 outline-none text-[var(--text-color)] font-bold"
+                  >
+                    <option value="">At the hospital now</option>
+                    <option value="15">15 min away</option>
+                    <option value="30">30 min away</option>
+                    <option value="60">1 hour away</option>
+                    <option value="120">2 hours away</option>
+                    <option value="180">3 hours away</option>
+                  </select>
+                  <p className="text-[12px] text-[var(--text-secondary)] font-medium mt-1">
+                    We WhatsApp them &quot;leave now&quot; this many minutes (+10) before their turn, so they
+                    travel once and wait nowhere.
+                  </p>
+                </div>
+
                 <div className="flex items-center justify-between p-3 bg-[var(--bg-color)] border border-[var(--border-color)]/30 rounded-xl">
                   <div className="flex items-center space-x-2">
                     <span className="material-symbols-outlined text-rose-500 animate-pulse text-[18px]">
@@ -1799,9 +1856,29 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                                   <p className="text-[12px] text-[var(--text-secondary)] mt-0.5 truncate max-w-44 font-semibold">
                                     Sym: {tok.symptoms}
                                   </p>
+                                  {/* Travel state, so reception knows whether a
+                                      missing patient is late or simply not due
+                                      to have arrived yet. */}
+                                  {q.travel?.[tok._id]?.inTransit ? (
+                                    <p className="text-[11px] font-bold text-amber-500 mt-0.5">
+                                      🚗 On the way (~{q.travel[tok._id].travelMinutes}m journey)
+                                    </p>
+                                  ) : q.travel?.[tok._id]?.leaveBy ? (
+                                    <p className="text-[11px] text-[var(--text-secondary)]/70 mt-0.5">
+                                      🏠 {q.travel[tok._id].travelMinutes}m away · leaves{' '}
+                                      {q.travel[tok._id].leaveBy}
+                                    </p>
+                                  ) : null}
                                 </div>
 
                                 <div className="flex items-center space-x-1">
+                                  <button
+                                    onClick={() => handleDefer(tok._id)}
+                                    className="bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-500 font-bold px-2 py-1 rounded transition-all text-[11px]"
+                                    title="Not here yet — push back 2 places so the queue keeps moving"
+                                  >
+                                    Push back
+                                  </button>
                                   {tok.tokenType !== 'Emergency' && (
                                     <button
                                       onClick={() => handleEmergencyOverride(tok._id)}

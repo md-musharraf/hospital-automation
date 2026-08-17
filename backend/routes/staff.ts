@@ -16,7 +16,12 @@ const {
   recalculateQueueTimes,
   formatApptTime,
   insertTokenByPriority,
-  isDoctorFull
+  isDoctorFull,
+  applyDeferral,
+  leaveByLabel,
+  isInTransit,
+  travelMinutesOf,
+  MAX_DEFERS
 } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
@@ -43,7 +48,27 @@ router.get('/queues', authenticateToken, ensureStaff, async (req, res) => {
         path: 'activeQueue',
         populate: { path: 'patient' }
       });
-    res.json(queues);
+
+    // Same travel annotation the doctor's board gets: reception is usually the
+    // one who knows a patient rang to say they are stuck, and they need to see
+    // who was told to set off before deciding whom to push back.
+    res.json(
+      (queues || []).map((q) => {
+        const base = q && typeof q.toObject === 'function' ? q.toObject() : { ...q };
+        const travel = {};
+        for (const entry of base.activeQueue || []) {
+          if (!entry || !entry._id) continue;
+          travel[String(entry._id)] = {
+            travelMinutes: travelMinutesOf(entry),
+            inTransit: isInTransit(entry),
+            departureAlerted: Boolean(entry.departureAlerted),
+            deferCount: entry.deferCount || 0,
+            leaveBy: leaveByLabel(entry.estimatedWaitTime || 0, travelMinutesOf(entry))
+          };
+        }
+        return { ...base, travel };
+      })
+    );
   } catch (error: any) {
     logger.error('Error fetching queues', { err: error });
     res.status(500).json({ message: 'Server error' });
@@ -73,12 +98,23 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       symptoms: field.text({ max: 1000 }),
       doctorId: field.id({ required: false, label: 'Doctor' }),
       tokenType: field.enum(['Regular', 'Emergency', 'Re-visit'], { required: false }),
-      priorityCategory: field.enum(['None', 'Senior', 'Pregnant', 'Disabled'], { required: false })
+      priorityCategory: field.enum(['None', 'Senior', 'Pregnant', 'Disabled'], { required: false }),
+      // Minutes this patient needs to REACH the hospital. Absent means zero,
+      // which is the truth for the walk-in standing at the counter — reception
+      // only fills it in when they are registering someone who is not here yet
+      // (a relative booking on their behalf, a phone-in). Zero switches the
+      // departure alert off and leaves the ordinary "you are next" ping.
+      travelMinutes: field.int({ min: 0, max: 480, required: false, label: 'Travel time' })
     });
     if (!parsed.ok) {
       return res.status(400).json({ message: parsed.error, errors: parsed.errors });
     }
-    const { name, gender, phone, symptoms, doctorId, tokenType, priorityCategory } = parsed.value;
+    const { name, gender, phone, symptoms, doctorId, tokenType, priorityCategory, travelMinutes } =
+      parsed.value;
+    // Only a value reception actually typed becomes the patient's remembered
+    // travel time. The parser fills an omitted field with 0, and letting that
+    // through would silently erase what a patient told the chatbot last week.
+    const travelStated = req.body && req.body.travelMinutes !== undefined && req.body.travelMinutes !== '';
     // Kept under its old name so the ~40 references below it did not all have
     // to change; it is now genuinely an integer rather than parseInt's guess.
     const parsedAge = parsed.value.age;
@@ -99,6 +135,7 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       patient.age = parsedAge;
       patient.gender = gender;
     }
+    if (travelStated) patient.travelMinutes = travelMinutes;
     await patient.save();
 
     // Resolve the doctor. If reception explicitly chose one, honor it (tenant-checked).
@@ -170,7 +207,8 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       bookingSource: 'Reception',
       patient: patient._id,
       doctor: resolvedDoctorId,
-      symptoms
+      symptoms,
+      travelMinutes: travelStated ? travelMinutes : 0
     });
     await saveTokenWithRetry(token);
 
@@ -225,7 +263,13 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       const docName = createdToken.doctor ? createdToken.doctor.name : 'Doctor';
       const roomName = createdToken.doctor ? createdToken.doctor.currentRoom || 'Cabin A' : 'Cabin A';
       const apptTime = formatApptTime(createdToken.estimatedWaitTime || 0);
-      const walkInMsg = `Hello ${createdToken.patient.name}, your token ${createdToken.tokenNumber} is generated for ${docName} in ${roomName}. Your approx. turn: ${apptTime} (~${createdToken.estimatedWaitTime || 0} min).\n\n✅ No need to wait in line — we will WhatsApp you when your turn is near.\n🔔 लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।`;
+      // Reception registered someone who is not at the counter — tell them when
+      // to set off, the same way the chatbot does.
+      const leaveBy = leaveByLabel(createdToken.estimatedWaitTime || 0, travelStated ? travelMinutes : 0);
+      const leaveLine = leaveBy
+        ? `\n🚗 Leave for the hospital by: ${leaveBy === 'now' ? 'NOW' : leaveBy}. We will message you again at that moment.\n🚗 घर से निकलें: ${leaveBy === 'now' ? 'अभी' : leaveBy} — उसी समय हम फिर संदेश भेजेंगे।\n`
+        : '';
+      const walkInMsg = `Hello ${createdToken.patient.name}, your token ${createdToken.tokenNumber} is generated for ${docName} in ${roomName}. Your approx. turn: ${apptTime} (~${createdToken.estimatedWaitTime || 0} min).\n${leaveLine}\n✅ No need to wait in line — we will WhatsApp you when your turn is near.\n🔔 लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।`;
       try {
         whatsapp = await sendWhatsAppNotification(createdToken.patient.phone, walkInMsg);
       } catch (waErr: any) {
@@ -701,6 +745,73 @@ router.put('/patients/:id', authenticateToken, ensureStaff, async (req, res) => 
     res.json({ message: 'Patient details updated successfully', patient });
   } catch (error: any) {
     logger.error('Error updating patient', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * PUT push one waiting token back a few places (reception's "he isn't here yet").
+ *
+ * The counterpart to the departure alert. However well we time "leave now",
+ * traffic exists — and the alternative reception has today is to mark the
+ * patient absent, which costs them the token they travelled for, or to make the
+ * doctor sit in an empty room while a full corridor waits. Neither is necessary:
+ * moving one patient two places down costs them minutes and costs the cabin
+ * nothing, and everybody behind them gains.
+ */
+router.put('/tokens/:tokenId/defer', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+    const staffHosp = req.user.hospital || 'general-hospital';
+    const slots = Math.min(10, Math.max(1, parseInt(req.body && req.body.slots, 10) || 2));
+
+    const token = await Token.findById(tokenId).populate('patient').populate('doctor');
+    if (!token || token.hospital !== staffHosp) {
+      return res.status(404).json({ message: 'Token not found in this hospital tenant' });
+    }
+
+    const doctorId = token.doctor ? token.doctor._id || token.doctor : null;
+    if (!doctorId) {
+      return res.status(400).json({ message: 'This token is not assigned to a doctor' });
+    }
+
+    const result = await applyDeferral(doctorId, tokenId, {
+      slots,
+      io: req.io,
+      actor: req.user.username || 'Reception'
+    });
+
+    if (!result.ok) {
+      const message =
+        result.reason === 'defer-limit'
+          ? `Token ${token.tokenNumber} has already been pushed back ${MAX_DEFERS} times. Mark them absent or reschedule instead.`
+          : result.reason === 'not-waiting'
+            ? 'Only a patient still waiting in the line can be pushed back.'
+            : result.reason === 'already-last'
+              ? `Token ${token.tokenNumber} is already at the back of the queue.`
+              : 'Could not push this token back.';
+      return res.status(409).json({ message, reason: result.reason });
+    }
+
+    await logActivity(req.io, {
+      hospital: staffHosp,
+      type: 'token-deferred',
+      role: 'staff',
+      actor: req.user.username || 'Reception',
+      message: `${token.tokenNumber} pushed back to position #${(result.to || 0) + 1} — the queue keeps moving.`,
+      tokenNumber: token.tokenNumber,
+      refId: token._id,
+      severity: 'warning'
+    });
+
+    res.json({
+      message: `${token.tokenNumber} moved to position #${(result.to || 0) + 1}. The next patient has been called forward.`,
+      position: (result.to || 0) + 1,
+      estimatedWaitTime: result.token ? result.token.estimatedWaitTime : null,
+      notified: result.notified || 0
+    });
+  } catch (error: any) {
+    logger.error('Error deferring token from reception', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });

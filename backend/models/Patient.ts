@@ -25,6 +25,18 @@ const PatientSchema = new mongoose.Schema(
       set: (v: any) => normalizePhone(v)
     },
     hospital: { type: String, required: true, default: 'general-hospital', index: true },
+    // How long this patient says they need to REACH the facility, in minutes.
+    //
+    // Asked once, at their first booking, and reused forever after — a bot that
+    // re-asks five questions every visit is a bot nobody finishes. It is the
+    // patient's own estimate rather than anything derived from a distance,
+    // because distance does not decide travel time here: 20 km on a bike is half
+    // an hour, the same 20 km by bus and on foot is ninety minutes, and no
+    // address the system could store tells the two apart.
+    //
+    // `null` means NOBODY HAS SAID — never guessed, and it turns the departure
+    // alert off for that patient rather than inventing a time to leave home.
+    travelMinutes: { type: Number, default: null },
     visitCount: { type: Number, default: 1 }
   },
   { timestamps: true }

@@ -76,6 +76,38 @@ physical line from dawn — so the OPD hall stays empty and staff don't police a
   enter the near-front. Fully best-effort — a notification failure never blocks the
   doctor's queue action.
 
+#### A3b. Departure alerts — each patient told to leave at THEIR time
+
+Position alone is the wrong trigger for anyone who is not already in the building:
+by the time a patient two hours away is second in line, their turn is twenty
+minutes off. So the patient states one number and every alert is counted back
+from it.
+
+* **One question, at booking:** the chatbot's `AWAITING_TRAVEL_TIME` step asks how
+  long they need to *reach* the hospital (tappable options, free text parsed by
+  `parseTravelMinutes` — "30 min", "1 ghanta", "डेढ़ घंटा", "I'm at the hospital").
+  Stored on `Patient.travelMinutes` and remembered for life; a returning patient is
+  never asked again, and `TIME 20` corrects it. Emergencies skip the question.
+  Reception can set it on a phone-in walk-in; a counter walk-in is 0.
+* **The rule:** alert when `estimatedWaitTime ≤ travelMinutes + PREP_BUFFER_MINUTES`
+  (=10). One hour away → told 70 min before; ten minutes away → told 20 min before.
+  The check looks one `QUEUE_SWEEP_MINUTES` ahead so it can only fire early, never
+  late, and runs from BOTH the ten-minute sweep and every queue advance.
+* **Never guessed:** a patient who was never asked (`null`) keeps the old
+  position-only behaviour. Zero means "already here" and is not a journey.
+* **`Token.departureAlerted` / `departureAlertedAt`:** one ping per token, and the
+  timestamp powers `isInTransit()` — a patient doing exactly what we asked is not
+  told to "reach the cabin now", and their no-show recall is placed far enough back
+  (`recallOffsetFor`) to cover the journey they still have left.
+* **Push back, don't cancel:** `POST /doctor/queue/defer` and
+  `PUT /staff/tokens/:tokenId/defer` move one waiting token down N places and pull
+  the rest up — the cabin never sits idle and the late patient keeps their visit.
+  Capped at `MAX_DEFERS` (3), everyone re-estimated and re-notified. Buttons on the
+  doctor console and the reception queue; both boards show travel/in-transit state.
+* **Patient-facing:** the booking message and the live tracker both carry a
+  "leave home by" clock time, and the tracker reacts to `departure-alert` /
+  `token-deferred` sockets.
+
 ### A4. Vulnerable-group Priority Queue (`Token.priorityCategory`)
 
 Senior citizens (age ≥ 60, auto), pregnant patients (auto from symptoms), and

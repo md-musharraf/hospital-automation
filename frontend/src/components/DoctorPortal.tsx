@@ -305,6 +305,27 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
     }
   };
 
+  // "He isn't here yet" — push one waiting patient back instead of leaving the
+  // cabin idle or burning their token. The patient we told to leave home is
+  // usually still on the road, and this costs them minutes rather than the visit.
+  const handleDefer = async (tokenId) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/defer`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${doctorToken}`
+        },
+        body: JSON.stringify({ tokenId, slots: 2 })
+      });
+      const data = await res.json();
+      if (!res.ok) alert(data.message || 'Could not push this patient back');
+      loadQueue();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleComplete = async (revisitDays = null, medicines = [], advice = '') => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/doctor/queue/complete`, {
@@ -703,8 +724,29 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                     <p className="text-[12px] text-[var(--text-secondary)] font-medium mt-0.5">
                       {tok.patient?.name} ({tok.patient?.age}y)
                     </p>
+                    {/* Where this patient physically is. "Not here" and "on the
+                        road because we told them to leave" look identical from
+                        the cabin, and they call for opposite decisions. */}
+                    {queue?.travel?.[tok._id]?.inTransit ? (
+                      <p className="text-[11px] font-bold text-amber-500 mt-0.5">
+                        🚗 On the way — told to leave, ~{queue.travel[tok._id].travelMinutes}m journey
+                      </p>
+                    ) : queue?.travel?.[tok._id]?.travelMinutes > 0 ? (
+                      <p className="text-[11px] text-[var(--text-secondary)]/70 mt-0.5">
+                        🏠 {queue.travel[tok._id].travelMinutes}m away
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Push back — the cabin keeps moving, the patient keeps their visit. */}
+                    <button
+                      type="button"
+                      onClick={() => handleDefer(tok._id)}
+                      title="Not here yet — push back 2 places and call the next patient"
+                      className="w-7 h-7 rounded-lg bg-[var(--bg-color)] border border-[var(--border-color)]/40 flex items-center justify-center text-[var(--text-secondary)] hover:text-amber-500 hover:border-amber-500/40 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">move_down</span>
+                    </button>
                     {/* Read the record before they walk in, not after. */}
                     {tok.patient?._id && (
                       <button

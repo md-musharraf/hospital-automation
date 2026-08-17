@@ -127,6 +127,26 @@ const TokenSchema = new mongoose.Schema(
     // been sent, so a patient is pinged exactly once as they approach the front of
     // the queue (lets them wait at home instead of crowding the OPD hall).
     arrivalAlerted: { type: Boolean, default: false },
+    // What this patient told us at booking about how long they need to REACH the
+    // facility. Copied from their record so it is fixed for this visit — someone
+    // who normally travels an hour but is at a relative's house down the road
+    // today should not be pulled out of bed an hour early.
+    //
+    // 0 means "already here" (a walk-in registered at the counter); null means
+    // nobody was asked, which leaves this token on the old position-based alert
+    // only.
+    travelMinutes: { type: Number, default: null },
+    // Set once the "leave for the hospital NOW" WhatsApp has gone out, with the
+    // instant it went. The flag stops the sweep repeating itself; the timestamp
+    // is what lets the cabin tell a patient who is ON THE ROAD from one who
+    // simply never set off — the first must not be marked absent, they were told
+    // to arrive at a time that has not come yet.
+    departureAlerted: { type: Boolean, default: false },
+    departureAlertedAt: { type: Date, default: null },
+    // How many times staff pushed this token back to let the queue keep moving.
+    // Capped, so a patient who is repeatedly not there cannot be deferred to the
+    // end of the day one slot at a time with nobody noticing.
+    deferCount: { type: Number, default: 0 },
     // The wait this patient was last TOLD on WhatsApp, and when. The queue
     // tracker compares against these instead of against the previous estimate,
     // so a patient is messaged when the answer they are holding has gone stale —
