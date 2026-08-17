@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { BACKEND_URL, socket } from '../App';
+import { openStoredDocument } from '../lib/storedDocument';
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -26,6 +27,24 @@ export default function PatientLiveTracker() {
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
+  // Separate from `error`, which takes over the whole page: a document that will
+  // not open is a note beside the button, not the end of the visit tracker.
+  const [notice, setNotice] = useState('');
+
+  /**
+   * Open a stored document, and tell the patient when it cannot be opened.
+   *
+   * They are the one person in this system with no counter to walk up to and no
+   * colleague to ask, so a button that silently does nothing leaves them with no
+   * next step at all.
+   */
+  const openDocument = (value, fileName, label) => {
+    if (openStoredDocument(value, fileName)) {
+      setNotice('');
+      return;
+    }
+    setNotice(`${label} could not be opened here. Please ask the counter to send it again on WhatsApp.`);
+  };
 
   const loadTracker = async () => {
     try {
@@ -243,6 +262,21 @@ export default function PatientLiveTracker() {
           </span>
         </div>
 
+        {/* A document that would not open. Not fatal to the page, so it sits
+            here as a strip rather than replacing the tracker. */}
+        {notice && (
+          <div className="mb-4 rounded-xl px-4 py-3 text-[13px] font-bold flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400">
+            <span className="material-symbols-outlined text-[18px]">warning</span>
+            <span className="flex-1 text-left">{notice}</span>
+            <button
+              onClick={() => setNotice('')}
+              className="text-[12px] font-black opacity-60 hover:opacity-100"
+            >
+              OK
+            </button>
+          </div>
+        )}
+
         {/* Big Ticket Token Box */}
         <div className="bg-gradient-to-br from-[var(--primary-color)] to-[var(--primary-container)] text-white rounded-2xl p-6 shadow-md relative overflow-hidden border border-white/10 text-center mb-6">
           <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
@@ -367,15 +401,23 @@ export default function PatientLiveTracker() {
                           </p>
                         </div>
                         {t.reportPdf ? (
-                          <a
-                            href={t.reportPdf}
-                            target="_blank"
-                            rel="noreferrer"
+                          // A BUTTON, not an <a href>. When the facility has no
+                          // cloud storage the report is stored as a base64 data
+                          // URI, and every browser refuses top-level navigation
+                          // to one — so this rendered a "Download PDF" link that
+                          // did precisely nothing, with no error and no tab, for
+                          // exactly the patients who cannot walk to a counter to
+                          // ask why. See lib/storedDocument.
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openDocument(t.reportPdf, t.reportFileName, `Your ${t.testName} report`)
+                            }
                             className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white text-[12px] font-bold rounded-lg shadow-sm flex items-center space-x-1"
                           >
                             <span className="material-symbols-outlined text-[14px]">picture_as_pdf</span>
                             <span>Download PDF</span>
-                          </a>
+                          </button>
                         ) : (
                           <span className="text-[11px] text-emerald-600 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">
                             Done
@@ -528,15 +570,19 @@ export default function PatientLiveTracker() {
 
               {invoice.pdfUrl && (
                 <div className="pt-2 border-t border-[var(--border-color)]/30 flex justify-end">
-                  <a
-                    href={invoice.pdfUrl}
-                    target="_blank"
-                    rel="noreferrer"
+                  {/* Same trap as the lab report above: `pdfUrl` is a cloud link
+                      or the whole bill inlined as a data URI, and only the first
+                      works in an href. */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openDocument(invoice.pdfUrl, `${invoice.invoiceNumber || 'bill'}.pdf`, 'Your bill')
+                    }
                     className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl text-[12px] flex items-center gap-1.5 shadow-sm transition-all"
                   >
                     <span className="material-symbols-outlined text-[15px]">download</span>
                     <span>Download Official PDF Bill</span>
-                  </a>
+                  </button>
                 </div>
               )}
             </div>

@@ -84,6 +84,20 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       [keyOf(tokenId, testName)]: { ...(prev[keyOf(tokenId, testName)] || {}), [field]: value }
     }));
 
+  /**
+   * Open a filed report, and say so when there is nothing readable behind it.
+   *
+   * The bench is the one place this can still be put right, so a "View filed
+   * report" button that does nothing when pressed is worse here than anywhere
+   * else on the system — it is the last chance to notice before the doctor does.
+   */
+  const viewFiledReport = (test) => {
+    if (openStoredDocument(test?.reportPdf, test?.reportFileName)) return;
+    setError(
+      `${test?.testName || 'This test'}: no readable PDF is filed against it. Attach the report again — the doctor cannot open it either.`
+    );
+  };
+
   const handleCollect = async (tokenId, testName) => {
     try {
       await api.post(`/lab/tests/${tokenId}/collect`, { testName });
@@ -143,9 +157,21 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       refresh();
       return true;
     } catch (err: any) {
-      // The file itself is safe in cloud storage and on the worksheet; only the
-      // notification failed, so say which half went wrong.
-      setError(`Report uploaded, but the patient could not be notified: ${err.message}`);
+      // This used to read "Report uploaded, but the patient could not be
+      // notified" for EVERY failure, which is the reassuring half of a story
+      // that is often the other half. When this call fails the report is not
+      // filed AT ALL — it exists only in this browser tab. The commonest cause
+      // is exactly the one that gives no other warning: with cloud storage
+      // unconfigured the PDF is posted back inline, and a scan over the 1 MB
+      // body limit is rejected before the route runs. The bench read the
+      // soothing message, moved on, and the doctor opened a test with no
+      // document behind it.
+      const isRemote = /^https?:\/\//i.test(url);
+      setError(
+        isRemote
+          ? `${testName}: the file is in cloud storage, but it could not be filed against this patient — ${err.message}. Press "Send to Doctor & Patient" to try again.`
+          : `${testName}: the report was NOT saved — ${err.message}. Cloud storage is off, so the PDF had to be stored inline and this one is too large. Ask your admin to configure ImageKit, or attach a smaller scan.`
+      );
       return false;
     }
   };
@@ -273,6 +299,52 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
   };
 
   /**
+   * Send the patient their copy from the worksheet, without filing the test.
+   *
+   * The bench's two recipients are independent and were not offered as such: the
+   * only patient-facing button lived under "Filed reports", so reaching it meant
+   * first completing the test and handing it to the doctor. A bench that wants
+   * to send the report now and keep the worksheet open — the report is ready,
+   * the doctor is mid-consultation, the patient is standing at the counter
+   * asking — had no way to do it.
+   *
+   * Generates the PDF first when there is not one yet, for the same reason the
+   * combined button does: a patient told their result is ready, with nothing to
+   * open, comes back to this counter.
+   */
+  const handleSendToPatient = async (tokenId: string, test: any) => {
+    const key = keyOf(tokenId, test.testName);
+    const entry = results[key] || {};
+
+    setError('');
+    setSendState({ key, stage: 'working', message: 'Sending to the patient…' });
+
+    try {
+      if (!entry.reportPdf && !test.reportPdf) {
+        setSendState({ key, stage: 'working', message: 'Generating the PDF…' });
+        await handleAutoGeneratePdf(tokenId, test.testName);
+      }
+
+      const data = await api.post(`/lab/tests/${tokenId}/report/resend`, { testName: test.testName });
+      const outcome = !data.hasPdfLink
+        ? `${test.testName}: sent to the patient as text — no PDF is filed against this test.`
+        : data.direct
+          ? `${test.testName}: the patient has been sent their PDF report.`
+          : `${test.testName}: sent — cloud storage is off, so they got their report page rather than the file.`;
+
+      setSendState({ key, stage: data.hasPdfLink ? 'ok' : 'partial', message: outcome });
+      setFlash(outcome);
+      refresh();
+    } catch (err: any) {
+      // Meta rejecting the message is routine here, and the bench is the only
+      // person positioned to hand over a printout instead — so this fails loudly.
+      const failure = `${test.testName}: the patient could NOT be messaged — ${err.message || 'send failed'}. Hand them a printout.`;
+      setSendState({ key, stage: 'error', message: failure });
+      setError(failure);
+    }
+  };
+
+  /**
    * The one button the bench actually needs: file the report, tell the doctor,
    * send the patient their copy.
    *
@@ -300,9 +372,14 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
       }
 
       setSendState({ key, stage: 'working', message: 'Sending…' });
-      // `reportPdf` is deliberately not resent: the upload above already filed
-      // it server-side, and this state may not have caught up yet. The server
-      // keeps whatever it holds when the field is empty.
+      // Normally `reportPdf` is not resent — the upload above already filed it
+      // server-side and the server keeps what it holds when the field is empty.
+      // But when the server has NO document and this browser does, that upload
+      // failed, and staying silent about the copy in hand would file a completed
+      // test with nothing attached. So this is the recovery path, and it is the
+      // only case in which the local copy is pushed.
+      const recovery = !test.reportPdf && entry.reportPdf ? entry.reportPdf : '';
+
       const data = await api.post(`/lab/tests/${tokenId}/complete`, {
         testName: test.testName,
         resultValue:
@@ -310,7 +387,8 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         unit: entry.unit || '',
         normalRange: entry.normalRange || '',
         abnormal: Boolean(entry.abnormal),
-        remarks: entry.remarks || 'Completed successfully.'
+        remarks: entry.remarks || 'Completed successfully.',
+        ...(recovery ? { reportPdf: recovery, reportFileName: entry.reportFileName || '' } : {})
       });
 
       const outcome = data.patientNotified
@@ -696,7 +774,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                           {test.reportPdf && !entry.reportPdf && (
                             <button
                               type="button"
-                              onClick={() => openStoredDocument(test.reportPdf, test.reportFileName)}
+                              onClick={() => viewFiledReport(test)}
                               className="text-[12px] font-extrabold text-sky-600 bg-sky-500/10 px-2.5 py-1 rounded-lg border border-sky-500/20 underline"
                             >
                               📄 View filed report
@@ -719,6 +797,24 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                             className="px-4 py-2 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white text-[13px] font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap"
                           >
                             Send to doctor
+                          </button>
+                          {/* Its counterpart. The two recipients are separate
+                              decisions, so they are separate buttons — the bench
+                              can hand the patient their copy at the counter
+                              without first completing the test out from under
+                              the worksheet. */}
+                          <button
+                            type="button"
+                            onClick={() => handleSendToPatient(selectedToken._id, test)}
+                            disabled={
+                              sendState.key === keyOf(selectedToken._id, test.testName) &&
+                              sendState.stage === 'working'
+                            }
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-[13px] font-bold rounded-lg shadow-sm transition-all active:scale-95 duration-100 whitespace-nowrap flex items-center gap-1.5"
+                            title="WhatsApp this report to the patient now"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">forward_to_inbox</span>
+                            <span>Send to patient</span>
                           </button>
                         </div>
 
@@ -808,7 +904,7 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                           {t.reportPdf ? (
                             <button
                               type="button"
-                              onClick={() => openStoredDocument(t.reportPdf, t.reportFileName)}
+                              onClick={() => viewFiledReport(t)}
                               className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg text-[12px] flex items-center gap-1 shadow-sm transition-all"
                             >
                               <span className="material-symbols-outlined text-[14px]">download</span>

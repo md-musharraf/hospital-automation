@@ -48,37 +48,90 @@ function dataUriToBlob(value: string): Blob | null {
 }
 
 /**
- * Show a stored document in a new tab. Returns false when there was nothing to
- * open or the browser blocked the tab, so the caller can say so rather than
- * leaving the user pressing a button that appears to do nothing.
+ * Open a URL in a new tab, by clicking a link rather than calling window.open.
+ *
+ * `window.open(url, '_blank', 'noopener,…')` RETURNS NULL BY SPECIFICATION —
+ * whether or not the tab opened. So the old code could never tell a blocked
+ * popup from a successful one, and got it wrong in both directions: a cloud
+ * report opened fine and was reported as a failure, while an inlined one opened
+ * a tab AND fired the "popup was blocked" download fallback, handing the user a
+ * file they had not asked for on every single view.
+ *
+ * A synthetic anchor click inside the user's own gesture is not treated as a
+ * popup at all, so it is not blocked, and `rel` keeps the opener isolation that
+ * `noopener` was there to provide. No `download` attribute: this is the VIEW
+ * path, and `download` would send a PDF the doctor wants to read on screen
+ * straight to the downloads folder instead.
+ */
+function openInNewTab(url: string): void {
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+/**
+ * Show a stored document in a new tab.
+ *
+ * Returns false only when there is genuinely nothing to show — nothing stored,
+ * or a data URI that will not decode. Those are the two cases a caller must
+ * report, because they are the two where the user presses a button and nothing
+ * can possibly happen; every caller should surface them rather than leaving a
+ * dead button on screen.
  */
 export function openStoredDocument(value?: string | null, fileName?: string): boolean {
   if (!hasStoredDocument(value)) return false;
   const stored = String(value).trim();
 
   if (isRemoteDocument(stored)) {
-    return Boolean(window.open(stored, '_blank', 'noopener,noreferrer'));
+    openInNewTab(stored);
+    return true;
   }
 
   const blob = dataUriToBlob(stored);
   if (!blob) return false;
 
   const url = URL.createObjectURL(blob);
-  const opened = window.open(url, '_blank', 'noopener,noreferrer');
-
-  if (!opened) {
-    // Popup blocked — fall back to a click-driven download, which is allowed
-    // because we are still inside the user's own gesture.
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName || 'report.pdf';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  }
+  openInNewTab(url);
 
   // Long enough for the new tab to have read it; revoking immediately races the
   // load and produces a blank viewer.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return true;
+}
+
+/**
+ * Save a stored document to disk. The deliberate counterpart to viewing it —
+ * here the `download` attribute is the point, and it also gives the file a real
+ * clinical name instead of the storage key or "download.pdf".
+ */
+export function downloadStoredDocument(value?: string | null, fileName?: string): boolean {
+  if (!hasStoredDocument(value)) return false;
+  const stored = String(value).trim();
+  const name = fileName || 'report.pdf';
+
+  // A cross-origin URL ignores `download` — the browser navigates instead — so
+  // there is nothing to gain by treating the cloud case differently here.
+  if (isRemoteDocument(stored)) {
+    openInNewTab(stored);
+    return true;
+  }
+
+  const blob = dataUriToBlob(stored);
+  if (!blob) return false;
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return true;
 }

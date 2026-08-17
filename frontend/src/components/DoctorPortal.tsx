@@ -235,6 +235,25 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
     return () => clearTimeout(t);
   }, [resultAlert]);
 
+  /**
+   * Open a filed lab report, and SAY SO when there is nothing to open.
+   *
+   * Every one of these buttons used to call `openStoredDocument` and throw the
+   * answer away. That matters because a report can be missing from the token
+   * while the bench believes it is filed: when cloud storage is unconfigured the
+   * PDF is posted back inline, and a scan over the 1 MB body limit is rejected
+   * before the route ever runs — the lab is told only that "the patient could
+   * not be notified", so nobody learns the document itself never landed. The
+   * doctor then presses a button that cannot do anything, and has no way to tell
+   * that from a browser problem at their end.
+   */
+  const viewReport = (test) => {
+    if (openStoredDocument(test?.reportPdf, test?.reportFileName)) return;
+    setResultAlert(
+      `${test?.testName || 'This test'}: the report could not be opened — no readable PDF is filed against it. Ask the lab to attach it again.`
+    );
+  };
+
   const handleUpdateAvailability = async (status) => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/doctor/availability`, {
@@ -610,7 +629,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                           <button
                             key={`pdf-${t.testName}`}
                             type="button"
-                            onClick={() => openStoredDocument(t.reportPdf, t.reportFileName)}
+                            onClick={() => viewReport(t)}
                             className="text-[11px] font-extrabold text-teal-600 bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20 hover:bg-teal-500 hover:text-white transition-all"
                           >
                             📄 {t.testName}
@@ -795,7 +814,9 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
         {resultAlert && (
           <div
             className={`rounded-xl px-4 py-3 text-[13px] font-bold flex items-start gap-2 ${
-              resultAlert.includes('ABNORMAL') || resultAlert.includes('could not supply')
+              resultAlert.includes('ABNORMAL') ||
+              resultAlert.includes('could not supply') ||
+              resultAlert.includes('could not be opened')
                 ? 'bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400'
                 : 'bg-sky-500/10 border border-sky-500/30 text-sky-700 dark:text-sky-400'
             }`}
@@ -1036,7 +1057,7 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                                 {t.reportPdf && (
                                   <button
                                     type="button"
-                                    onClick={() => openStoredDocument(t.reportPdf, t.reportFileName)}
+                                    onClick={() => viewReport(t)}
                                     className="text-[11px] font-extrabold text-teal-600 bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20 underline hover:bg-teal-500 hover:text-white transition-all"
                                   >
                                     📄 View PDF Report

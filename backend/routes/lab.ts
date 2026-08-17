@@ -549,6 +549,33 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
       }
     }
 
+    // `reportPdf` may arrive here as well as on /report — the bench's combined
+    // "send to doctor & patient" pushes its local copy when the earlier attach
+    // failed. It has to clear the SAME bar it would have cleared there: an
+    // unchecked value would let an arbitrary string, or a scan large enough to
+    // walk the token toward Mongo's 16 MB ceiling, in through the side door.
+    const attached = req.body.reportPdf;
+    if (attached !== undefined && attached !== null && attached !== '') {
+      if (typeof attached !== 'string') {
+        return res.status(400).json({ message: 'reportPdf must be a string.' });
+      }
+      if (!isShareableLink(attached) && !/^data:application\/pdf[;,]/i.test(attached)) {
+        return res.status(400).json({ message: 'reportPdf must be an https link or a PDF data URI.' });
+      }
+      if (!isShareableLink(attached) && attached.length > MAX_INLINE_REPORT_CHARS) {
+        return res.status(413).json({
+          message:
+            'That report is too large to store inline. Configure cloud storage (ImageKit) so reports upload as links, or attach a smaller PDF.'
+        });
+      }
+    }
+    if (
+      req.body.reportFileName &&
+      (typeof req.body.reportFileName !== 'string' || req.body.reportFileName.length > 200)
+    ) {
+      return res.status(400).json({ message: 'reportFileName must be a string up to 200 characters' });
+    }
+
     const hospital = facilityOf(req);
     // Load WITHOUT populate: saving a populated document writes the nested
     // objects back in place of the ObjectIds, which then breaks every later
