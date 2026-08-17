@@ -7,6 +7,7 @@ import HelpPanel from './HelpPanel';
 import EmptyState from './EmptyState';
 import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
 import { generateLabReportPdfBlob, downloadPdfBlob, uploadPdfBlobToCloud } from '../lib/pdfGenerator';
+import { openStoredDocument } from '../lib/storedDocument';
 import { BACKEND_URL } from '../App';
 
 export function LabDashboard({ labToken, labUser, onLogout }) {
@@ -95,17 +96,27 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
    * one-object upload, uploads the file directly to cloud storage, and stores the resulting URL
    * on the test. The fallback inlines the file as a base64 data URI if cloud storage is unconfigured.
    */
-  const inlineAsDataUri = (tokenId, testName, file) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setField(tokenId, testName, 'reportPdf', e.target.result);
-      setField(tokenId, testName, 'reportFileName', file.name);
-      if (!results[keyOf(tokenId, testName)]?.resultValue) {
-        setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
-      }
-    };
-    reader.readAsDataURL(file);
-  };
+  const inlineAsDataUri = (tokenId, testName, file) =>
+    new Promise<void>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const dataUri = e.target.result as string;
+        setField(tokenId, testName, 'reportPdf', dataUri);
+        setField(tokenId, testName, 'reportFileName', file.name);
+        if (!results[keyOf(tokenId, testName)]?.resultValue) {
+          setField(tokenId, testName, 'resultValue', 'PDF Report Attached');
+        }
+        // File it on the server even though it is not a cloud object. The
+        // report exists, so the patient should be told now — a facility with no
+        // ImageKit keys used to keep its reports in the browser's memory until
+        // somebody remembered to press "Send to doctor", which meant the whole
+        // publish-on-upload behaviour quietly did not apply to them.
+        await publishReport(tokenId, testName, dataUri, file.name);
+        resolve();
+      };
+      reader.onerror = () => resolve();
+      reader.readAsDataURL(file);
+    });
 
   /**
    * Attach the uploaded PDF to the test on the server, which is what sends it
@@ -161,10 +172,10 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         return;
       }
 
-      // Fallback: save inline as data URI if cloud keys unconfigured
-      inlineAsDataUri(tokenId, testName, file);
+      // Fallback: store inline as a data URI if cloud keys are unconfigured
+      await inlineAsDataUri(tokenId, testName, file);
     } catch (err: any) {
-      inlineAsDataUri(tokenId, testName, file);
+      await inlineAsDataUri(tokenId, testName, file);
     } finally {
       setUploading('');
     }
@@ -209,9 +220,11 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         return;
       }
 
-      // Fallback: download locally if cloud storage unconfigured
+      // Cloud storage is unconfigured. File the report anyway — inlined — so
+      // the patient still gets it, and keep the local copy for the bench's
+      // own records.
       downloadPdfBlob(blob, fileName);
-      setFlash(`Generated & downloaded ${fileName} locally.`);
+      await inlineAsDataUri(tokenId, testName, new File([blob], fileName, { type: 'application/pdf' }));
     } catch (err: any) {
       setError(err.message || 'Could not generate report PDF.');
     } finally {
@@ -235,7 +248,11 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
     try {
       const data = await api.post(`/lab/tests/${tok._id}/report/resend`, { testName: test.testName });
       setFlash(
-        data.hasPdfLink ? data.message : `${data.message} No PDF was attached — the result was sent as text.`
+        !data.hasPdfLink
+          ? `${data.message} No PDF is filed for this test — the result was sent as text.`
+          : data.direct
+            ? data.message
+            : `${data.message} Cloud storage is off, so they were sent their report page rather than the file.`
       );
     } catch (err: any) {
       setError(err.message || 'The report could not be sent.');
@@ -258,11 +275,18 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
         reportFileName: entry.reportFileName || ''
       });
       // Tell the bench what just happened downstream — the doctor has already
-      // been notified and the patient has been told to walk back.
+      // been notified, and whether the patient's own copy actually left. The
+      // second half matters: a WhatsApp that Meta rejects is the difference
+      // between a patient who has their report and one who walks back to this
+      // counter to ask for it, and the bench is the only person positioned to
+      // hand them a printout instead.
+      const patientLine = data.patientNotified
+        ? ' The patient has been sent their copy on WhatsApp.'
+        : ' ⚠️ The patient could NOT be messaged — hand them a printout or use Resend.';
       setFlash(
-        data.allComplete
+        (data.allComplete
           ? 'All reports for this patient are done — the doctor has been notified and the patient told to return.'
-          : `${testName} result sent to the doctor.`
+          : `${testName} result sent to the doctor.`) + patientLine
       );
       refresh();
     } catch (err) {
@@ -599,14 +623,13 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
                           )}
 
                           {test.reportPdf && !entry.reportPdf && (
-                            <a
-                              href={test.reportPdf}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => openStoredDocument(test.reportPdf, test.reportFileName)}
                               className="text-[12px] font-extrabold text-sky-600 bg-sky-500/10 px-2.5 py-1 rounded-lg border border-sky-500/20 underline"
                             >
-                              📄 View Cloud Report
-                            </a>
+                              📄 View filed report
+                            </button>
                           )}
                         </div>
 
@@ -663,15 +686,14 @@ export function LabDashboard({ labToken, labUser, onLogout }) {
 
                         <div className="flex items-center gap-2 shrink-0">
                           {t.reportPdf ? (
-                            <a
-                              href={t.reportPdf}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => openStoredDocument(t.reportPdf, t.reportFileName)}
                               className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg text-[12px] flex items-center gap-1 shadow-sm transition-all"
                             >
                               <span className="material-symbols-outlined text-[14px]">download</span>
                               <span>PDF</span>
-                            </a>
+                            </button>
                           ) : (
                             <button
                               type="button"

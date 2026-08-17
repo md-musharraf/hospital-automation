@@ -87,13 +87,15 @@ const TokenSchema = new mongoose.Schema(
         remarks: { type: String },
         reportPdf: { type: String }, // Base64 PDF Data URI or Document Link
         reportFileName: { type: String },
-        // When the patient was WhatsApped this report's link.
+        // When the patient was WhatsApped this report, and WHICH document.
         //
-        // The report is sent the moment the lab attaches the PDF, and again
-        // nothing when the test is later marked complete — without this the
-        // patient gets the same document twice for one test, which reads as a
-        // second, different result. Stores the URL that was sent, so replacing a
-        // wrong report with a corrected one DOES notify again.
+        // The report goes out the moment the lab attaches the PDF; without a
+        // record of what was sent, re-saving an unchanged worksheet would send
+        // the same document again and read to the patient as a second, different
+        // result. Holds a signature rather than a bare URL: the cloud URL when
+        // there is one, otherwise `inline:<filename>:<length>` — because an
+        // inlined report has no URL to compare and still has to be told apart
+        // from a corrected re-upload, which DOES notify again.
         reportSharedAt: { type: Date },
         reportSharedUrl: { type: String },
         requestedBy: { type: String },

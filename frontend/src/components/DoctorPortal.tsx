@@ -7,6 +7,8 @@ import useLiveRefresh from '../hooks/useLiveRefresh';
 import HelpPanel from './HelpPanel';
 import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
 import useFacilityBranding from '../hooks/useFacilityBranding';
+import { openStoredDocument } from '../lib/storedDocument';
+import PatientProfileModal from './PatientProfileModal';
 
 export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
   const branding = useFacilityBranding(doctorUser?.hospital);
@@ -35,6 +37,10 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
   const [docStats, setDocStats] = useState(null);
   const [stockInfo, setStockInfo] = useState([]);
   const [resultAlert, setResultAlert] = useState('');
+  // Whose full record is open. Set from the cabin, the waiting list or the
+  // reports panel — anywhere a patient's name is on screen is somewhere a
+  // doctor may want the rest of it.
+  const [profilePatientId, setProfilePatientId] = useState('');
 
   // Facility + own-doctor rooms, with an automatic re-register on reconnect.
   useFacilitySocket('doctor', doctorUser?.hospital || 'general-hospital', doctorUser?.id || doctorUser?._id);
@@ -573,12 +579,44 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                       </p>
                     ))}
                   </div>
-                  <button
-                    onClick={() => markResultReviewed(r._id)}
-                    className="mt-1.5 w-full py-1 rounded-lg bg-[var(--primary-color)] text-[var(--primary-text)] text-[13px] font-bold hover:opacity-90 transition-all"
-                  >
-                    ✓ Mark reviewed
-                  </button>
+                  {/* The PDF itself, not just the value. A number without the
+                      report is not enough to act on an abnormal result. */}
+                  {(r.labTests || []).some((t) => t.reportPdf) && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {(r.labTests || [])
+                        .filter((t) => t.reportPdf)
+                        .map((t) => (
+                          <button
+                            key={`pdf-${t.testName}`}
+                            type="button"
+                            onClick={() => openStoredDocument(t.reportPdf, t.reportFileName)}
+                            className="text-[11px] font-extrabold text-teal-600 bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20 hover:bg-teal-500 hover:text-white transition-all"
+                          >
+                            📄 {t.testName}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                  <div className="mt-1.5 flex gap-1.5">
+                    <button
+                      onClick={() => markResultReviewed(r._id)}
+                      className="flex-1 py-1 rounded-lg bg-[var(--primary-color)] text-[var(--primary-text)] text-[13px] font-bold hover:opacity-90 transition-all"
+                    >
+                      ✓ Mark reviewed
+                    </button>
+                    {r.patient?._id && (
+                      <button
+                        type="button"
+                        onClick={() => setProfilePatientId(r.patient._id)}
+                        title="Open this patient's full record"
+                        className="px-2 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)]/40 text-[var(--text-secondary)] hover:text-[var(--primary-color)] transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[15px] align-middle">
+                          folder_shared
+                        </span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -666,9 +704,22 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                       {tok.patient?.name} ({tok.patient?.age}y)
                     </p>
                   </div>
-                  <span className="text-[12px] font-bold text-[var(--primary-color)]">
-                    {tok.estimatedWaitTime}m
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Read the record before they walk in, not after. */}
+                    {tok.patient?._id && (
+                      <button
+                        type="button"
+                        onClick={() => setProfilePatientId(tok.patient._id)}
+                        title={`Open ${tok.patient?.name || 'this patient'}'s full record`}
+                        className="w-7 h-7 rounded-lg bg-[var(--bg-color)] border border-[var(--border-color)]/40 flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--primary-color)] hover:border-[var(--primary-color)]/40 transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[15px]">folder_shared</span>
+                      </button>
+                    )}
+                    <span className="text-[12px] font-bold text-[var(--primary-color)]">
+                      {tok.estimatedWaitTime}m
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -735,10 +786,27 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                       {queue?.currentToken ? queue.currentToken.patient?.name : 'No Active Patient'}
                     </h2>
                     {queue?.currentToken && (
-                      <p className="text-[13px] text-[var(--text-secondary)] font-medium mt-1">
-                        Age: {queue.currentToken.patient?.age} | Gender: {queue.currentToken.patient?.gender}{' '}
-                        | Phone: {queue.currentToken.patient?.phone}
-                      </p>
+                      <>
+                        <p className="text-[13px] text-[var(--text-secondary)] font-medium mt-1">
+                          Age: {queue.currentToken.patient?.age} | Gender:{' '}
+                          {queue.currentToken.patient?.gender} | Phone: {queue.currentToken.patient?.phone}
+                        </p>
+                        {/* Everything this facility knows about the person in
+                            the chair: past visits, prescriptions and every lab
+                            report with its PDF. Previously the cabin could only
+                            show the current visit, so a doctor comparing a
+                            result against last month's had to ask reception. */}
+                        {queue.currentToken.patient?._id && (
+                          <button
+                            type="button"
+                            onClick={() => setProfilePatientId(queue.currentToken.patient._id)}
+                            className="mt-2 px-3 py-1.5 rounded-lg bg-[var(--primary-color)]/10 border border-[var(--primary-color)]/30 text-[var(--primary-color)] text-[12px] font-extrabold flex items-center gap-1.5 hover:bg-[var(--primary-color)] hover:text-white transition-all"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">folder_shared</span>
+                            <span>Full record — history &amp; all lab reports</span>
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
 
@@ -924,14 +992,13 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                                       : 'Awaiting sample'}
                                 </span>
                                 {t.reportPdf && (
-                                  <a
-                                    href={t.reportPdf}
-                                    target="_blank"
-                                    rel="noreferrer"
+                                  <button
+                                    type="button"
+                                    onClick={() => openStoredDocument(t.reportPdf, t.reportFileName)}
                                     className="text-[11px] font-extrabold text-teal-600 bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20 underline hover:bg-teal-500 hover:text-white transition-all"
                                   >
                                     📄 View PDF Report
-                                  </a>
+                                  </button>
                                 )}
                               </div>
                             </div>
@@ -1130,6 +1197,16 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
           </div>
         )}
       </div>
+
+      {/* One patient's whole record — opened from the cabin, the waiting list
+          or a report that has just landed. */}
+      {profilePatientId && (
+        <PatientProfileModal
+          patientId={profilePatientId}
+          authToken={doctorToken}
+          onClose={() => setProfilePatientId('')}
+        />
+      )}
 
       {/* Complete Checkup & Re-visit Reminder Modal Overlay */}
       {showCompleteModal && (

@@ -1388,20 +1388,169 @@ router.get('/stats', authenticateToken, ensureDoctor, async (req, res) => {
   }
 });
 
+/**
+ * This facility's tokens for one patient.
+ *
+ * Matched in JS rather than with `{ patient: id }`, for the same reason
+ * `/lab-results` matches its doctor that way: several routes populate a token
+ * before saving it, which writes the whole patient object back in place of the
+ * ObjectId. A plain equality query then misses exactly the visits that have
+ * been through a cabin — which is every visit worth reading. That is why the
+ * history panel so often said "no past checkups" for a patient who plainly had
+ * them.
+ */
+async function visitsOfPatient(hospital, patientId) {
+  const tokens = (await Token.find({ hospital }).populate('doctor', 'name department currentRoom')) || [];
+  return tokens.filter((t) => String((t.patient && t.patient._id) || t.patient) === String(patientId));
+}
+
 // GET patient visit history
 router.get('/patients/:patientId/history', authenticateToken, ensureDoctor, async (req, res) => {
   try {
-    const { patientId } = req.params;
-    const history = await Token.find({
-      patient: patientId,
-      status: 'Completed',
-      hospital: req.user.hospital || 'general-hospital'
-    })
-      .populate('doctor', 'name department')
-      .sort({ completedAt: -1 });
+    const hospital = req.user.hospital || 'general-hospital';
+    const history = (await visitsOfPatient(hospital, req.params.patientId))
+      .filter((t) => t.status === 'Completed')
+      .sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
     res.json(history);
   } catch (err: any) {
     logger.error('Error fetching patient history', { err: err });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/v1/doctor/patients/:patientId/profile — one patient, whole record.
+ *
+ * The cabin used to show a doctor the visit in front of them and a short list
+ * of past visits filtered to `status: 'Completed'`. That is the wrong record
+ * twice over. A visit where the patient was sent to the lab and never came
+ * back is exactly the one a doctor needs to see, and it never appeared. Nor did
+ * the reports: `labTests` came back with the visit but nothing collected them
+ * into "every test this person has ever had here", which is the view that
+ * answers "was their sugar this high last time?".
+ *
+ * So this returns the dossier rather than a list: the person, what they have
+ * been treated for, every prescription, and every report with a link — from any
+ * doctor at this facility, because a patient who saw the ENT last month is
+ * still the same patient.
+ *
+ * Tenant-scoped on the patient AND on every visit. A doctor may open any of
+ * their own facility's patients — they share a corridor and refer to each other
+ * constantly — and none of anybody else's.
+ */
+router.get('/patients/:patientId/profile', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const patient = await Patient.findById(req.params.patientId);
+    if (!patient) return res.status(404).json({ message: 'Patient not found' });
+    if (patient.hospital !== hospital) {
+      return res.status(403).json({ message: 'This patient belongs to another facility.' });
+    }
+
+    const visits = await visitsOfPatient(hospital, patient._id);
+
+    // Newest first, on the date the visit actually happened.
+    const ordered = (visits || []).sort(
+      (a, b) =>
+        new Date(b.completedAt || b.createdAt || 0).getTime() -
+        new Date(a.completedAt || a.createdAt || 0).getTime()
+    );
+
+    const timeline = ordered.map((t) => ({
+      _id: t._id,
+      tokenNumber: t.tokenNumber,
+      status: t.status,
+      tokenType: t.tokenType,
+      journeyStage: t.journeyStage,
+      symptoms: t.symptoms,
+      bookingSource: t.bookingSource,
+      createdAt: t.createdAt,
+      completedAt: t.completedAt,
+      doctor: t.doctor ? { name: t.doctor.name, department: t.doctor.department } : null,
+      prescription: t.prescription || null,
+      labTests: t.labTests || []
+    }));
+
+    // Every report this person has, flattened out of the visits and carrying
+    // the visit it belongs to — the doctor is asking about a trend, not about
+    // one appointment.
+    const reports = [];
+    for (const visit of ordered) {
+      for (const test of visit.labTests || []) {
+        reports.push({
+          tokenId: visit._id,
+          tokenNumber: visit.tokenNumber,
+          orderedOn: visit.createdAt,
+          testName: test.testName,
+          status: test.status,
+          urgency: test.urgency,
+          resultValue: test.resultValue,
+          unit: test.unit,
+          normalRange: test.normalRange,
+          abnormal: Boolean(test.abnormal),
+          remarks: test.remarks,
+          reportPdf: test.reportPdf || '',
+          reportFileName: test.reportFileName || '',
+          completedAt: test.completedAt,
+          completedBy: test.completedBy,
+          sharedWithPatientAt: test.reportSharedAt || null
+        });
+      }
+    }
+    reports.sort(
+      (a, b) =>
+        new Date(b.completedAt || b.orderedOn || 0).getTime() -
+        new Date(a.completedAt || a.orderedOn || 0).getTime()
+    );
+
+    // Medicines this patient has been on, most recently prescribed first. A
+    // doctor writing a new course reads this before the visit list.
+    const medicineSeen = new Map();
+    for (const visit of ordered) {
+      for (const med of (visit.prescription && visit.prescription.medicines) || []) {
+        if (!med || !med.name) continue;
+        const key = String(med.name).toLowerCase().trim();
+        if (medicineSeen.has(key)) continue;
+        medicineSeen.set(key, {
+          name: med.name,
+          dosage: med.dosage,
+          duration: med.duration,
+          lastPrescribed: visit.completedAt || visit.createdAt,
+          by: visit.doctor ? visit.doctor.name : ''
+        });
+      }
+    }
+
+    const completedVisits = ordered.filter((t) => t.status === 'Completed');
+
+    res.json({
+      patient: {
+        _id: patient._id,
+        name: patient.name,
+        age: patient.age,
+        gender: patient.gender,
+        phone: patient.phone,
+        registeredOn: patient.createdAt,
+        visitCount: patient.visitCount || ordered.length
+      },
+      summary: {
+        totalVisits: ordered.length,
+        completedVisits: completedVisits.length,
+        firstVisit: ordered.length ? ordered[ordered.length - 1].createdAt : null,
+        lastVisit: completedVisits.length ? completedVisits[0].completedAt : null,
+        openVisits: ordered.filter((t) => t.status !== 'Completed' && t.status !== 'Absent').length,
+        missedVisits: ordered.filter((t) => t.status === 'Absent').length,
+        totalReports: reports.length,
+        // The count a doctor scans for first.
+        abnormalReports: reports.filter((r) => r.abnormal).length,
+        pendingReports: reports.filter((r) => r.status !== 'Completed').length
+      },
+      visits: timeline,
+      reports,
+      medicines: Array.from(medicineSeen.values())
+    });
+  } catch (err: any) {
+    logger.error('Error building patient profile', { err: err });
     res.status(500).json({ message: 'Server error' });
   }
 });

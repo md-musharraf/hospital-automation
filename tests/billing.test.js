@@ -261,5 +261,52 @@ const { getBillingConfig, priceOf, recalculateInvoice, DEFAULT_SERVICES } = requ
 
   check('Walk-in bill needs no token', walkIn.token === null && walkIn.totalAmount === 200);
 
+  // Test 8: the bill follows the facility's name.
+  //
+  // The letterhead was copied onto the rate card the first time billing was
+  // opened and then never looked at again, so a facility that corrected its own
+  // name went on printing the old one on every invoice — with no field on any
+  // screen that explained where it came from.
+  section('The invoice letterhead follows a facility rename');
+
+  const sunriseRow = models.Hospital._rows.find((h) => h.id === 'sunrise-clinic');
+  sunriseRow.name = 'Sunrise Superspeciality Hospital';
+  sunriseRow.address = '44 Bailey Road, Patna';
+
+  const renamed = await getBillingConfig('sunrise-clinic');
+  check(
+    'A renamed facility bills under its new name',
+    renamed.displayName === 'Sunrise Superspeciality Hospital',
+    renamed.displayName
+  );
+  check('…and its new address', renamed.address === '44 Bailey Road, Patna', renamed.address);
+  check('The letterhead is still marked as inherited', renamed.letterheadSource === 'facility');
+
+  // A billing name reception typed on purpose — a trust's legal name, say —
+  // must survive a rename, or the feature above quietly overwrites a decision.
+  renamed.displayName = 'Sunrise Healthcare Trust (Unit II)';
+  renamed.letterheadSource = 'custom';
+  await renamed.save();
+
+  sunriseRow.name = 'Sunrise Multi-Speciality Hospital';
+  const custom = await getBillingConfig('sunrise-clinic');
+  check(
+    'A custom billing name is never overwritten by a rename',
+    custom.displayName === 'Sunrise Healthcare Trust (Unit II)',
+    custom.displayName
+  );
+
+  // Clearing it is the way back to following the facility.
+  custom.displayName = '';
+  custom.letterheadSource = 'facility';
+  await custom.save();
+
+  const reverted = await getBillingConfig('sunrise-clinic');
+  check(
+    'Clearing the custom name hands the letterhead back to the facility',
+    reverted.displayName === 'Sunrise Multi-Speciality Hospital',
+    reverted.displayName
+  );
+
   report();
 })();

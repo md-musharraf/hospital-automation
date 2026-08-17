@@ -30,6 +30,92 @@ function isShareableLink(value?: string | null): boolean {
 /** Ceiling for a report inlined as a data URI, in characters (~600 KB of base64). */
 const MAX_INLINE_REPORT_CHARS = 800_000;
 
+/**
+ * What "the patient has already been sent THIS document" means.
+ *
+ * For a cloud report it is the URL, so replacing a wrong report with a
+ * corrected one is a different value and does notify again. An inlined report
+ * has no URL to compare, so it is identified by its file name and size —
+ * different enough that a re-upload of a corrected PDF re-notifies, stable
+ * enough that saving the same worksheet twice does not.
+ */
+function shareSignature(reportPdf?: string | null, reportFileName?: string | null): string {
+  const value = String(reportPdf || '');
+  if (!value) return '';
+  if (isShareableLink(value)) return value;
+  return `inline:${String(reportFileName || 'report.pdf')}:${value.length}`;
+}
+
+/**
+ * Put a copy of the report in the patient's hand, whatever form it is stored in.
+ *
+ * The rule this enforces: filing a report IS publishing it. The patient should
+ * never have to walk back to a counter to ask whether their result exists, and
+ * they should never be handed a link that does not open.
+ *
+ * A cloud report is sent as a direct download link. An INLINED one — the
+ * fallback when cloud storage is unconfigured — is sent as a link to the
+ * patient's own report page instead. It has to be: the stored value is a
+ * base64 data URI holding the whole PDF, and pasting one into a message body
+ * would push several hundred kilobytes of text at a phone. Before this, that
+ * case sent the patient nothing at all, so an entire facility running without
+ * ImageKit keys silently had no report delivery — the feature looked fine in
+ * testing and did nothing in the field.
+ *
+ * Returns whether a message actually left, which every caller reports back:
+ * `sendWhatsAppNotification` RESOLVES on a Meta rejection rather than throwing,
+ * so an optimistic "sent" would mark the patient as told and suppress the retry
+ * forever. See utils/whatsappHelper.
+ */
+async function shareReportWithPatient(options: {
+  token: any;
+  test: any;
+  patient: any;
+  doctor: any;
+  /** Overrides the result line, e.g. the freshly entered value on completion. */
+  resultLine?: string;
+  /** Appended after the links — "all your reports are ready, go back to Dr X". */
+  closing?: string;
+}): Promise<{ sent: boolean; link: string; direct: boolean; reason?: string }> {
+  const { token, test, patient, doctor, resultLine = '', closing = '' } = options;
+
+  if (!patient || !patient.phone) return { sent: false, link: '', direct: false, reason: 'no_phone' };
+  if (!test || !test.reportPdf) return { sent: false, link: '', direct: false, reason: 'no_report' };
+
+  const direct = isShareableLink(test.reportPdf);
+  const pageLink = prescriptionUrl(token._id);
+  const link = direct ? test.reportPdf : pageLink;
+  const doctorName = doctor ? doctor.name : 'your doctor';
+  const room = doctor && doctor.currentRoom ? ` (${doctor.currentRoom})` : '';
+
+  const message =
+    `Hello ${patient.name}, your lab report is ready.\n` +
+    `🧪 Test: ${test.testName}\n` +
+    (resultLine ? `📊 Result: ${resultLine}\n` : '') +
+    (test.abnormal ? `⚠️ This value is outside the normal range.\n` : '') +
+    (direct
+      ? `\n📄 Download your official PDF report:\n${link}\n`
+      : `\n📄 Open your report here:\n${link}\n`) +
+    (direct ? `\nAll your reports: ${pageLink}\n` : '') +
+    (closing ||
+      `\n➡️ Please show this report to ${doctorName}${room}. No need to take a new token.\n` +
+        `➡️ कृपया यह रिपोर्ट डॉक्टर को दिखाएँ। नया टोकन लेने की ज़रूरत नहीं।`);
+
+  try {
+    const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+    const result = await sendWhatsAppNotification(patient.phone, message);
+    const sent = Boolean(result && result.status === 'sent');
+    if (sent) {
+      test.reportSharedAt = new Date();
+      test.reportSharedUrl = shareSignature(test.reportPdf, test.reportFileName);
+    }
+    return { sent, link, direct, ...(sent ? {} : { reason: (result && result.error) || 'delivery_failed' }) };
+  } catch (err) {
+    logger.error('Lab report share WhatsApp failed', { err, tokenId: String(token._id) });
+    return { sent: false, link, direct, reason: 'delivery_failed' };
+  }
+}
+
 /** The facility's letterhead name, so a report message is not branded with a slug. */
 async function facilityDisplayName(hospital: string): Promise<string> {
   try {
@@ -264,37 +350,23 @@ router.post('/tests/:tokenId/report', authenticateToken, ensureLab, async (req, 
     // reading "Pending" with a PDF hanging off it.
     if (test.status === 'Pending') test.status = 'Collected';
 
-    // Send only when this is a link the patient can actually open, and only
-    // when it is not the same document they were already sent.
-    const alreadySent = shareable && test.reportSharedUrl === reportPdf;
+    // Not the same document they were already sent — a re-save of an unchanged
+    // worksheet must not message twice, but a corrected report must.
+    const alreadySent =
+      Boolean(test.reportSharedUrl) &&
+      test.reportSharedUrl === shareSignature(reportPdf, reportFileName || test.reportFileName);
     let notified = false;
+    let shareFailure = '';
 
-    if (notify !== false && shareable && !alreadySent && tokenPatient && tokenPatient.phone) {
-      try {
-        const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
-        const doctorName = tokenDoctor ? tokenDoctor.name : 'your doctor';
-        const message =
-          `Hello ${tokenPatient.name}, your lab report is ready.\n` +
-          `🧪 Test: ${test.testName}\n` +
-          `📄 Download your official PDF report:\n${reportPdf}\n\n` +
-          `➡️ Please show this report to ${doctorName}${tokenDoctor && tokenDoctor.currentRoom ? ` (${tokenDoctor.currentRoom})` : ''}. No need to take a new token.\n` +
-          `➡️ कृपया यह रिपोर्ट डॉक्टर को दिखाएँ। नया टोकन लेने की ज़रूरत नहीं।\n\n` +
-          `View all your reports: ${prescriptionUrl(token._id)}`;
-
-        const result = await sendWhatsAppNotification(tokenPatient.phone, message);
-        // The helper resolves rather than throwing when Meta rejects the send
-        // (an expired or blocked token returns `status: 'failed'`), so the
-        // timestamp is stamped only on a delivery that actually went out.
-        // Recording a failed send as shared would permanently suppress the
-        // retry and the patient would never receive the report.
-        notified = result && result.status === 'sent';
-        if (notified) {
-          test.reportSharedAt = new Date();
-          test.reportSharedUrl = reportPdf;
-        }
-      } catch (waErr) {
-        logger.error('Lab report share WhatsApp failed', { err: waErr, tokenId: String(token._id) });
-      }
+    if (notify !== false && !alreadySent) {
+      const share = await shareReportWithPatient({
+        token,
+        test,
+        patient: tokenPatient,
+        doctor: tokenDoctor
+      });
+      notified = share.sent;
+      if (!share.sent && share.reason) shareFailure = share.reason;
     }
 
     token.markModified && token.markModified('labTests');
@@ -328,12 +400,15 @@ router.post('/tests/:tokenId/report', authenticateToken, ensureLab, async (req, 
 
     res.json({
       message: notified
-        ? `Report attached and sent to ${tokenPatient.name} on WhatsApp.`
+        ? `Report attached and sent to ${tokenPatient ? tokenPatient.name : 'the patient'} on WhatsApp.` +
+          (shareable
+            ? ''
+            : ' Cloud storage is off, so they were sent their report page rather than the file.')
         : alreadySent
           ? 'Report attached. The patient already has this document.'
-          : shareable
-            ? 'Report attached. The patient could not be messaged.'
-            : 'Report stored locally. Cloud storage is not configured, so no link was sent.',
+          : shareFailure === 'no_phone'
+            ? 'Report attached. This patient has no phone number on file, so nothing could be sent.'
+            : 'Report attached, but WhatsApp did not accept the message. Use Resend once it is working.',
       notified,
       shareable,
       token
@@ -379,7 +454,12 @@ router.post('/tests/:tokenId/report/resend', authenticateToken, ensureLab, async
       return res.status(400).json({ message: 'This patient has no phone number on file.' });
     }
 
-    const link = isShareableLink(test.reportPdf) ? test.reportPdf : '';
+    // A direct download when the report lives in cloud storage; otherwise the
+    // patient's report page, which serves the inlined PDF. Either way there is
+    // always a link — a "here is your report again" message with nothing to
+    // open is the reason the patient asked twice in the first place.
+    const direct = isShareableLink(test.reportPdf) ? test.reportPdf : '';
+    const link = direct || prescriptionUrl(token._id);
     const resultLine = test.resultValue
       ? `${test.resultValue}${test.unit ? ' ' + test.unit : ''}${test.normalRange ? ` (normal ${test.normalRange})` : ''}`
       : test.remarks || 'Completed';
@@ -389,8 +469,9 @@ router.post('/tests/:tokenId/report/resend', authenticateToken, ensureLab, async
       `Hello ${tokenPatient.name}, here is your lab report again.\n\n` +
       `Test: ${test.testName}\n` +
       `Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range.' : ''}\n` +
-      (link ? `\n📄 Download your official PDF report:\n${link}\n` : '') +
-      `\nView online: ${prescriptionUrl(token._id)}\n` +
+      (direct
+        ? `\n📄 Download your official PDF report:\n${direct}\n\nView online: ${prescriptionUrl(token._id)}\n`
+        : `\n📄 Open your report here:\n${link}\n`) +
       `Please show this to ${tokenDoctor ? tokenDoctor.name : 'your doctor'}. 🙏`;
 
     const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
@@ -412,14 +493,28 @@ router.post('/tests/:tokenId/report/resend', authenticateToken, ensureLab, async
       return res.status(502).json({
         message: `WhatsApp did not accept the message${result && result.error ? ` — ${result.error}` : ''}.`,
         sent: false,
-        hasPdfLink: Boolean(link)
+        hasPdfLink: Boolean(test.reportPdf)
       });
+    }
+
+    // Record what they now hold, so an attach of this same file does not send a
+    // third copy behind the resend.
+    if (test.reportPdf) {
+      test.reportSharedAt = new Date();
+      test.reportSharedUrl = shareSignature(test.reportPdf, test.reportFileName);
+      token.markModified && token.markModified('labTests');
+      try {
+        await token.save();
+      } catch (saveErr) {
+        logger.error('Could not record the report resend', { err: saveErr });
+      }
     }
 
     res.json({
       message: `Report resent to ${tokenPatient.name} on WhatsApp.`,
       sent: true,
-      hasPdfLink: Boolean(link)
+      hasPdfLink: Boolean(test.reportPdf),
+      direct: Boolean(direct)
     });
   } catch (err: any) {
     logger.error('Error resending lab report', { err: err });
@@ -564,38 +659,64 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
       logger.error('Push notification failed on lab complete', { err: err });
     }
 
-    // Trigger WhatsApp notification to patient
+    // The patient gets their copy at the same moment the doctor does.
+    //
+    // "Send to doctor" is the button the bench actually presses, and it used to
+    // be the only step in the flow that could leave the patient with nothing
+    // openable: the PDF line was dropped whenever the report was stored inline,
+    // which is every facility running without cloud storage keys. Now the
+    // report always goes out — the file itself when it is a link, otherwise the
+    // patient's own report page, which serves the same document.
+    const doctorName = tokenDoctor ? tokenDoctor.name : 'your doctor';
+    const room = tokenDoctor && tokenDoctor.currentRoom ? ` (${tokenDoctor.currentRoom})` : '';
+    const backToDoctor = everythingDone
+      ? `\n➡️ All your reports are ready — please go back to ${doctorName}${room}. No need to take a new token.\n➡️ आपकी सभी रिपोर्ट तैयार हैं — कृपया सीधे डॉक्टर के पास जाएँ। नया टोकन लेने की ज़रूरत नहीं।`
+      : '';
+
+    let patientNotified = false;
     if (tokenPatient && tokenPatient.phone) {
-      try {
-        const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
-        const doctorName = tokenDoctor ? tokenDoctor.name : 'your doctor';
-        const backToDoctor = everythingDone
-          ? `\n\n➡️ All your reports are ready — please go back to ${doctorName}${tokenDoctor && tokenDoctor.currentRoom ? ` (${tokenDoctor.currentRoom})` : ''}. No need to take a new token.\n➡️ आपकी सभी रिपोर्ट तैयार हैं — कृपया सीधे डॉक्टर के पास जाएँ। नया टोकन लेने की ज़रूरत नहीं।`
-          : '';
-        // Never inline the stored value blindly: it may be a base64 data URI
-        // holding the whole PDF, and the link is also skipped when this exact
-        // document was already sent at upload time, so one test produces one
-        // copy of the report and not two.
-        const alreadyShared = test.reportSharedUrl && test.reportSharedUrl === test.reportPdf;
-        const pdfLine =
-          isShareableLink(test.reportPdf) && !alreadyShared
-            ? `\n📄 Download Official PDF Report: ${test.reportPdf}`
-            : '';
-        const alertMsg =
-          `Hello ${tokenPatient.name}, your lab report for "${testName}" is ready.\n` +
-          `🧪 Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range — please show it to your doctor.' : ''}` +
-          pdfLine +
-          `\nView online: ${prescriptionUrl(token._id)}` +
-          backToDoctor;
-        await sendWhatsAppNotification(tokenPatient.phone, alertMsg);
-      } catch (waErr) {
-        logger.error('Lab WhatsApp notify failed', { err: waErr });
+      if (test.reportPdf) {
+        const share = await shareReportWithPatient({
+          token,
+          test,
+          patient: tokenPatient,
+          doctor: tokenDoctor,
+          resultLine,
+          ...(backToDoctor ? { closing: backToDoctor } : {})
+        });
+        patientNotified = share.sent;
+        // The stamp above lives on the sub-document; persist it so a later
+        // attach of the same file does not send this all over again.
+        if (share.sent) {
+          token.markModified && token.markModified('labTests');
+          try {
+            await token.save();
+          } catch (saveErr) {
+            logger.error('Could not record that the report was shared', { err: saveErr });
+          }
+        }
+      } else {
+        // No document filed at all — the result is the whole report. Still
+        // worth a message: the value and where to take it.
+        try {
+          const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+          const alertMsg =
+            `Hello ${tokenPatient.name}, your lab report for "${testName}" is ready.\n` +
+            `🧪 Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range — please show it to your doctor.' : ''}` +
+            `\nView online: ${prescriptionUrl(token._id)}\n` +
+            backToDoctor;
+          const result = await sendWhatsAppNotification(tokenPatient.phone, alertMsg);
+          patientNotified = Boolean(result && result.status === 'sent');
+        } catch (waErr) {
+          logger.error('Lab WhatsApp notify failed', { err: waErr });
+        }
       }
     }
 
     res.json({
       message: `Test "${testName}" completed successfully.`,
       allComplete: everythingDone,
+      patientNotified,
       token
     });
   } catch (err: any) {

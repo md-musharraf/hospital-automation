@@ -1117,6 +1117,10 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
       return res.status(404).json({ message: 'Hospital not found' });
     }
 
+    // What the letterhead currently inherits, so we can tell afterwards whether
+    // this edit changed anything a printed bill carries.
+    const letterheadBefore = `${hospital.name}|${hospital.address || ''}|${hospital.phone || ''}`;
+
     // Update properties if provided
     if (name !== undefined) hospital.name = name;
     if (slug !== undefined) hospital.slug = slug;
@@ -1163,6 +1167,34 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     }
 
     await hospital.save();
+
+    // A rename reaches the bills through the rate card, which re-derives an
+    // inherited letterhead the next time it is read (see utils/billingConfig).
+    // Reading it here is what makes that happen NOW rather than whenever
+    // somebody next opens billing — and the event is what stops a reception
+    // desk that already had the screen open from printing the old name for the
+    // rest of the shift.
+    if (`${hospital.name}|${hospital.address || ''}|${hospital.phone || ''}` !== letterheadBefore) {
+      try {
+        const { getBillingConfig } = require('../utils/billingConfig');
+        const config = await getBillingConfig(id);
+        if (req.io) {
+          req.io.to(`hospital:${id}`).emit('billing-config-updated', { hospital: id });
+        }
+        logger.info('[SUPER-ADMIN] Facility renamed — billing letterhead reconciled', {
+          hospital: id,
+          letterhead: config && config.displayName,
+          source: config && config.letterheadSource
+        });
+      } catch (err: any) {
+        // The facility edit itself succeeded; the letterhead will still catch up
+        // on the next billing read.
+        logger.error('Could not reconcile the billing letterhead after a rename', {
+          err: err.message,
+          hospital: id
+        });
+      }
+    }
 
     res.json({ message: 'Hospital profile updated successfully!', hospital });
   } catch (error) {

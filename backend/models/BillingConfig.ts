@@ -46,6 +46,19 @@ const BillingConfigSchema = new mongoose.Schema(
     hospital: { type: String, required: true, unique: true, index: true },
 
     // Letterhead — what the patient sees on the printed/PDF bill.
+    //
+    // Where the letterhead COMES FROM, which is the difference between a bill
+    // that follows a rename and one that does not. `facility` means these three
+    // fields are a copy of the Hospital record and are re-read from it on every
+    // load, so renaming the facility renames the bill. `custom` means reception
+    // typed something they meant — a trust's legal billing name that is not the
+    // signboard name — and nothing may overwrite it.
+    //
+    // Without this, the name was copied once when the rate card was first
+    // opened and then never looked at again: a facility that corrected its own
+    // name kept printing the old one on every invoice, forever, with no field
+    // on any screen that explained why.
+    letterheadSource: { type: String, enum: ['facility', 'custom'], default: 'facility' },
     displayName: { type: String, default: '' },
     address: { type: String, default: '' },
     // Canonicalized, but an empty value stays empty — this is optional

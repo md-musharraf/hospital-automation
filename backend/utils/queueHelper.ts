@@ -22,6 +22,46 @@ export const WAIT_DRIFT_THRESHOLD = 15;
 let trackerRunning = false;
 
 /**
+ * The least we will ever tell someone who is behind an occupied cabin.
+ *
+ * A consultation that has already run past the average is not about to end this
+ * second, and "0 min" for a patient who cannot possibly be called yet is the
+ * single answer that destroys trust in every other number on the screen.
+ */
+export const MIN_CABIN_REMAINDER = 2;
+
+/** Consultations needed before today's measured pace is worth listening to. */
+const MIN_PACE_SAMPLES = 3;
+
+/** How many recent consultations the measured pace is drawn from. */
+const PACE_WINDOW = 8;
+
+/** Consultation lengths outside this band are data, not medicine. */
+const PACE_FLOOR = 2;
+const PACE_CEILING = 120;
+
+/**
+ * What the queue knows about how fast this cabin is moving right now.
+ *
+ * Both numbers are optional and both default to "assume nothing", so a caller
+ * that has not looked them up gets exactly the old arithmetic.
+ */
+export interface WaitContext {
+  /** Minutes left on the consultation happening right now. 0 when the cabin is empty. */
+  inCabinRemaining?: number;
+  /** Minutes per patient this doctor is actually taking today, when measured. */
+  paceMinutes?: number;
+  /** Evaluation instant. */
+  now?: Date;
+}
+
+/** Accept the legacy 4th argument (a bare Date) as well as a context object. */
+function asContext(input: WaitContext | Date | undefined): WaitContext {
+  if (!input) return {};
+  return input instanceof Date ? { now: input } : input;
+}
+
+/**
  * How long until this patient is seen, counting from when the doctor will
  * actually be in the room.
  *
@@ -30,16 +70,113 @@ let trackerRunning = false;
  * most of the day: at 2pm, between a 10–1 and a 5–8 OPD, the queue is empty and
  * the old sum answered "0 minutes" — the number in the bug report — for a cabin
  * nobody would enter for three hours.
+ *
+ * It also assumed the cabin was empty. `position` counts the people in front of
+ * you IN THE LINE, and the person actually inside the room is not in the line —
+ * so the patient at the front was told "0 min" while somebody else's
+ * consultation was still running. The remainder of that consultation is
+ * `inCabinRemaining`, and it is added only while the doctor is sitting, because
+ * a cabin that has not opened yet has nobody in it to finish with.
  */
 export function estimateWaitMinutes(
   doctor: any,
   position: number,
   buffer: number = 0,
-  now: Date = new Date()
+  context: WaitContext | Date = {}
 ): number {
-  const avg = (doctor && doctor.averageCheckupTime) || 10;
+  const ctx = asContext(context);
+  const now = ctx.now || new Date();
+  const avg = ctx.paceMinutes || (doctor && doctor.averageCheckupTime) || 10;
   const lead = shiftLeadMinutes(doctor, now);
-  return Math.max(0, lead + position * avg + (buffer || 0));
+  // Waiting for the doors to open subsumes waiting for the current patient.
+  const cabin = lead > 0 ? 0 : Math.max(0, ctx.inCabinRemaining || 0);
+  return Math.max(0, lead + cabin + position * avg + (buffer || 0));
+}
+
+/**
+ * Minutes per patient this doctor is REALLY taking today.
+ *
+ * `averageCheckupTime` is a number somebody typed once during onboarding. A
+ * doctor configured at 10 minutes who is spending 18 leaves the fifth patient
+ * in line holding an estimate that is forty minutes short, and they find that
+ * out by sitting in the corridor — which is the exact behaviour this product
+ * exists to remove.
+ *
+ * Measured from called → completed on today's finished consultations. The
+ * configured figure is not discarded: it is blended in, weighted down as
+ * evidence accumulates, so the first slow patient of the morning does not
+ * rewrite the whole board and a cabin with no history behaves as it always did.
+ */
+export function paceFromTokens(tokens: any[], doctorId: any, configured: number = 10): number {
+  const fallback = Math.max(1, configured || 10);
+  const wanted = String((doctorId && (doctorId._id || doctorId)) || '');
+  const start = startOfToday().getTime();
+
+  const durations = (tokens || [])
+    .filter(
+      (t: any) =>
+        t &&
+        t.status === 'Completed' &&
+        t.calledAt &&
+        t.completedAt &&
+        String((t.doctor && t.doctor._id) || t.doctor || '') === wanted &&
+        new Date(t.completedAt).getTime() >= start
+    )
+    .sort((a: any, b: any) => new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime())
+    .map((t: any) => (new Date(t.completedAt).getTime() - new Date(t.calledAt).getTime()) / 60000)
+    // A consultation that reads as negative, instant or half a day long is a
+    // clock or a forgotten "complete" button, not a measurement.
+    .filter((mins: number) => mins >= PACE_FLOOR && mins <= PACE_CEILING)
+    .slice(-PACE_WINDOW);
+
+  if (durations.length < MIN_PACE_SAMPLES) return fallback;
+
+  const measured = durations.reduce((a: number, b: number) => a + b, 0) / durations.length;
+  // 3 samples → measured counts for 3/8ths; a full window → 3/4.
+  const weight = Math.min(durations.length, PACE_WINDOW - 2) / PACE_WINDOW;
+  const blended = measured * weight + fallback * (1 - weight);
+
+  return Math.min(PACE_CEILING, Math.max(PACE_FLOOR, Math.round(blended)));
+}
+
+export async function measuredPaceMinutes(doctorId: any, configured: number = 10): Promise<number> {
+  try {
+    const finished = (await (Token as any).find({ doctor: doctorId, status: 'Completed' })) || [];
+    return paceFromTokens(finished, doctorId, configured);
+  } catch (err) {
+    logger.error('Could not measure consultation pace', { err, doctorId: String(doctorId) });
+    return Math.max(1, configured || 10);
+  }
+}
+
+/**
+ * Minutes left on the consultation currently under way, from an already-loaded
+ * token. Returns 0 when the cabin is empty.
+ */
+export function cabinRemainingFrom(currentToken: any, pace: number, now: Date = new Date()): number {
+  if (!currentToken) return 0;
+  if (currentToken.status && currentToken.status !== 'Active' && currentToken.status !== 'Called') return 0;
+
+  const calledAt = currentToken.calledAt ? new Date(currentToken.calledAt).getTime() : 0;
+  if (!calledAt) return Math.max(MIN_CABIN_REMAINDER, Math.round(pace));
+
+  const elapsed = (now.getTime() - calledAt) / 60000;
+  return Math.max(MIN_CABIN_REMAINDER, Math.round(pace - elapsed));
+}
+
+/** Same, for a queue whose `currentToken` is still just an id. */
+export async function cabinRemainingFor(queue: any, pace: number, now: Date = new Date()): Promise<number> {
+  if (!queue || !queue.currentToken) return 0;
+  try {
+    const current =
+      typeof queue.currentToken === 'object' && queue.currentToken.status !== undefined
+        ? queue.currentToken
+        : await (Token as any).findById(queue.currentToken);
+    return cabinRemainingFrom(current, pace, now);
+  } catch (err) {
+    logger.error('Could not read the in-cabin token for a wait estimate', { err });
+    return 0;
+  }
 }
 
 // Format "minutes from now" into a friendly local clock time like "11:15 AM" so a
@@ -54,6 +191,19 @@ export function formatApptTime(minsFromNow?: number | string | null): string {
   return `${h}:${m} ${ampm}`;
 }
 
+/**
+ * Rewrite every waiting patient's estimate for one cabin.
+ *
+ * Three things decide the answer and all three are read here rather than
+ * assumed: how far off the doctor's sitting is, how long the consultation
+ * already under way still has to run, and how many minutes this doctor is
+ * actually spending per patient today.
+ *
+ * A token that is no longer waiting — called away, marked absent, completed but
+ * still referenced — does not occupy a place in the line. Counting it pushed
+ * everybody behind it back by a whole consultation each, so the queue quoted a
+ * longer wait than it would ever serve.
+ */
 export async function recalculateQueueTimes(doctorId: string): Promise<void> {
   try {
     const queue = await (Queue as any).findOne({ doctor: doctorId }).populate('activeQueue');
@@ -61,27 +211,67 @@ export async function recalculateQueueTimes(doctorId: string): Promise<void> {
 
     const doctor = await (Doctor as any).findById(doctorId);
     const buffer = queue.bufferDelay || 0;
+    const now = new Date();
+
+    const pace = await measuredPaceMinutes(doctorId, (doctor && doctor.averageCheckupTime) || 10);
+    const inCabinRemaining = await cabinRemainingFor(queue, pace, now);
+    const context: WaitContext = { paceMinutes: pace, inCabinRemaining, now };
 
     let pos = 0;
     for (let i = 0; i < queue.activeQueue.length; i++) {
-      const token = queue.activeQueue[i];
-      if (token && typeof token.save === 'function') {
-        token.estimatedWaitTime = estimateWaitMinutes(doctor, pos, buffer);
-        await token.save();
-        pos++;
-      } else if (token && (token._id || typeof token === 'string')) {
-        const tokenId = token._id || token;
-        const realToken = await (Token as any).findById(tokenId);
-        if (realToken) {
-          realToken.estimatedWaitTime = estimateWaitMinutes(doctor, pos, buffer);
-          await realToken.save();
-          pos++;
+      const entry = queue.activeQueue[i];
+      if (!entry) continue;
+
+      let token = typeof entry.save === 'function' ? entry : null;
+      if (!token) {
+        try {
+          token = await (Token as any).findById(entry._id || entry);
+        } catch (_) {
+          token = null;
         }
       }
+      if (!token) continue;
+
+      // Still listed, but not in the line any more.
+      if (token.status && token.status !== 'Waiting') continue;
+
+      token.estimatedWaitTime = estimateWaitMinutes(doctor, pos, buffer, context);
+      await token.save();
+      pos++;
     }
   } catch (err) {
     logger.error('Error in recalculateQueueTimes', { err });
   }
+}
+
+/**
+ * The wait a patient joining this doctor's line RIGHT NOW would be quoted.
+ *
+ * The one place every "how long will it take" answer outside the queue itself
+ * should come from — the chatbot's booking confirmation, reception's walk-in
+ * screen, the triage router's choice of cabin. They each used to do their own
+ * `waiting × averageCheckupTime`, which is how the same doctor could be
+ * advertised at three different waits on three screens at the same moment.
+ */
+export async function projectedWaitMinutes(
+  doctor: any,
+  queue: any,
+  positionsAhead?: number,
+  now: Date = new Date()
+): Promise<number> {
+  const doctorId = (doctor && (doctor._id || doctor.id)) || doctor;
+  const pace = await measuredPaceMinutes(doctorId, (doctor && doctor.averageCheckupTime) || 10);
+  const inCabinRemaining = await cabinRemainingFor(queue, pace, now);
+  const ahead =
+    typeof positionsAhead === 'number'
+      ? positionsAhead
+      : (queue && Array.isArray(queue.activeQueue) && queue.activeQueue.length) || 0;
+
+  return estimateWaitMinutes(doctor, ahead, (queue && queue.bufferDelay) || 0, {
+    paceMinutes: pace,
+    inCabinRemaining,
+    now
+  });
 }
 
 // Smart Arrival Alerts — the crowd reducer. After the queue advances, WhatsApp the

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { BACKEND_URL } from '../App';
+import { openStoredDocument } from '../lib/storedDocument';
 
 export default function DigitalPrescriptionViewer() {
   const { tokenId } = useParams();
@@ -200,15 +201,14 @@ export default function DigitalPrescriptionViewer() {
                     </span>
 
                     {test.reportPdf && (
-                      <a
-                        href={test.reportPdf}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => openStoredDocument(test.reportPdf, test.reportFileName)}
                         className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 shadow-sm transition-all"
                       >
                         <span className="material-symbols-outlined text-[13px]">download</span>
                         <span>Download PDF</span>
-                      </a>
+                      </button>
                     )}
                   </div>
                 </div>

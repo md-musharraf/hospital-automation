@@ -159,6 +159,10 @@ router.put('/config', authenticateToken, ensureStaff, async (req, res) => {
     }
     if (config.taxPercent > 100) config.taxPercent = 100;
 
+    // What the invoice was headed with before this edit. Compared below to tell
+    // "reception meant this name" apart from "reception submitted the form".
+    const previousName = String(config.displayName || '').trim();
+
     const textFields = [
       'displayName',
       'address',
@@ -174,14 +178,35 @@ router.put('/config', authenticateToken, ensureStaff, async (req, res) => {
       }
     }
 
+    // Typing a DIFFERENT name here means "bill under this name whatever the
+    // facility record says" — a trust's legal billing name, say — and from now
+    // on renaming the facility must not overwrite it. Clearing the field is the
+    // way back: it hands the letterhead to the facility profile again, which is
+    // where the name a patient recognises actually lives.
+    //
+    // Resubmitting the name the form was already showing is not a decision. The
+    // rate card sends every field on every save, so treating that as a custom
+    // letterhead would have frozen the invoice name the first time anybody
+    // edited the tax percentage — which is the exact bug this is fixing.
+    if (typeof req.body.displayName === 'string') {
+      const typed = req.body.displayName.trim();
+      if (!typed) config.letterheadSource = 'facility';
+      else if (typed !== previousName) config.letterheadSource = 'custom';
+    }
+
     config.updatedBy = req.user.username || 'Reception';
     await config.save();
+
+    // Reading it back through the resolver re-fills a letterhead that was just
+    // handed back to the facility, so the response carries the name the next
+    // bill will actually print rather than the blank the form submitted.
+    const resolved = config.letterheadSource === 'custom' ? config : await getBillingConfig(hospital);
 
     if (req.io) {
       req.io.to(`hospital:${hospital}`).emit('billing-config-updated', { hospital });
     }
 
-    res.json({ message: 'Billing rate card updated', config });
+    res.json({ message: 'Billing rate card updated', config: resolved });
   } catch (error) {
     logger.error('Error updating billing config', { err: error });
     res.status(500).json({ message: 'Server error' });

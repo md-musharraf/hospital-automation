@@ -31,7 +31,10 @@ const {
 const {
   estimateWaitMinutes,
   broadcastDelay,
-  trackWaitingPatients
+  trackWaitingPatients,
+  cabinRemainingFrom,
+  paceFromTokens,
+  recalculateQueueTimes
 } = require('../backend/dist/utils/queueHelper');
 
 /** A fixed Wednesday, so a weekday-scoped shift is not at the mercy of the calendar. */
@@ -388,6 +391,136 @@ const TWO_SITTINGS = [
   await trackWaitingPatients();
   check('A never-notified patient is seeded, not messaged', outbound.length === 0, outbound.length);
   check('…and is seeded from the current estimate', row('T-9').lastNotifiedWait === 60, row('T-9'));
+
+  section('The person already in the room counts');
+
+  // `position` is how many people are ahead of you IN THE LINE. The patient
+  // being seen right now is not in the line, so quoting position 0 as "0 min"
+  // told the patient at the front they were due immediately while somebody
+  // else's consultation was still running.
+  const sitting = { averageCheckupTime: 10, shifts: TWO_SITTINGS };
+
+  check(
+    'A consultation just started leaves the front of the queue its remainder',
+    cabinRemainingFrom({ status: 'Active', calledAt: on(11, 0) }, 10, on(11, 2)) === 8,
+    cabinRemainingFrom({ status: 'Active', calledAt: on(11, 0) }, 10, on(11, 2))
+  );
+  check(
+    'A consultation running over still never reads as zero',
+    cabinRemainingFrom({ status: 'Active', calledAt: on(11, 0) }, 10, on(11, 40)) === 2,
+    cabinRemainingFrom({ status: 'Active', calledAt: on(11, 0) }, 10, on(11, 40))
+  );
+  check('An empty cabin adds nothing', cabinRemainingFrom(null, 10, on(11)) === 0);
+  check(
+    'A token that has been completed is not still in the room',
+    cabinRemainingFrom({ status: 'Completed', calledAt: on(11, 0) }, 10, on(11, 2)) === 0
+  );
+
+  check(
+    'The front of the queue is quoted the rest of the current consultation',
+    estimateWaitMinutes(sitting, 0, 0, { now: on(11), inCabinRemaining: 6 }) === 6,
+    estimateWaitMinutes(sitting, 0, 0, { now: on(11), inCabinRemaining: 6 })
+  );
+  check(
+    'Third in line waits for the room plus the two ahead',
+    estimateWaitMinutes(sitting, 2, 0, { now: on(11), inCabinRemaining: 6 }) === 26,
+    estimateWaitMinutes(sitting, 2, 0, { now: on(11), inCabinRemaining: 6 })
+  );
+  check(
+    'Waiting for the doors to open subsumes waiting for the current patient',
+    estimateWaitMinutes(sitting, 0, 0, { now: on(14), inCabinRemaining: 6 }) === 180,
+    estimateWaitMinutes(sitting, 0, 0, { now: on(14), inCabinRemaining: 6 })
+  );
+  check(
+    'A measured pace replaces the configured average',
+    estimateWaitMinutes(sitting, 3, 0, { now: on(11), paceMinutes: 18 }) === 54,
+    estimateWaitMinutes(sitting, 3, 0, { now: on(11), paceMinutes: 18 })
+  );
+
+  section('The pace the cabin is really keeping');
+
+  const paced = { _id: 'doc-paced', averageCheckupTime: 10 };
+  const consult = (from, to) => ({
+    doctor: 'doc-paced',
+    status: 'Completed',
+    calledAt: new Date(Date.now() - from * 60000),
+    completedAt: new Date(Date.now() - to * 60000)
+  });
+
+  check(
+    'One slow patient does not rewrite the board',
+    paceFromTokens([consult(60, 30)], paced._id, 10) === 10,
+    paceFromTokens([consult(60, 30)], paced._id, 10)
+  );
+
+  // Three consultations of 20 minutes each against a configured 10: the
+  // measured figure is weighted in rather than swapped in wholesale.
+  const slowDay = [consult(180, 160), consult(150, 130), consult(120, 100)];
+  const blended = paceFromTokens(slowDay, paced._id, 10);
+  check(
+    'A cabin running at twice its configured pace is quoted slower',
+    blended > 10 && blended < 20,
+    blended
+  );
+  check(
+    'A consultation nobody pressed complete on is not a measurement',
+    paceFromTokens([consult(600, 60), consult(600, 61), consult(600, 62)], paced._id, 10) === 10,
+    paceFromTokens([consult(600, 60), consult(600, 61), consult(600, 62)], paced._id, 10)
+  );
+  check(
+    "Another doctor's day says nothing about this one",
+    paceFromTokens(slowDay, 'someone-else', 10) === 10
+  );
+
+  section('A queue recalculation counts only the people still in it');
+
+  const paceDoc = await new models.Doctor({
+    name: 'Dr Neelam Rao',
+    hospital: 'ashoka-life-care-hospital',
+    currentRoom: 'Cabin 4',
+    averageCheckupTime: 10
+    // No shifts: always sitting, so the arithmetic under test is not mixed up
+    // with lead time.
+  }).save();
+
+  const inCabin = await new models.Token({
+    tokenNumber: 'R-0',
+    patient: waiting1._id,
+    doctor: paceDoc._id,
+    hospital: 'ashoka-life-care-hospital',
+    status: 'Active',
+    calledAt: new Date(Date.now() - 4 * 60000)
+  }).save();
+
+  const mkWaiting = (n, status) =>
+    new models.Token({
+      tokenNumber: n,
+      patient: waiting2._id,
+      doctor: paceDoc._id,
+      hospital: 'ashoka-life-care-hospital',
+      status
+    }).save();
+
+  const r1 = await mkWaiting('R-1', 'Waiting');
+  const rGone = await mkWaiting('R-2', 'Absent');
+  const r3 = await mkWaiting('R-3', 'Waiting');
+
+  await new models.Queue({
+    doctor: paceDoc._id,
+    currentToken: inCabin._id,
+    activeQueue: [r1._id, rGone._id, r3._id]
+  }).save();
+
+  await recalculateQueueTimes(String(paceDoc._id));
+
+  // 10-minute average, 4 minutes already spent in the room => 6 left.
+  check('The front of the queue waits out the cabin', row('R-1').estimatedWaitTime === 6, row('R-1'));
+  check(
+    'A patient marked absent does not push the queue back a whole consultation',
+    row('R-3').estimatedWaitTime === 16,
+    row('R-3')
+  );
+  check('…and is not quoted a wait of its own', !row('R-2').estimatedWaitTime, row('R-2'));
 
   report();
 })();

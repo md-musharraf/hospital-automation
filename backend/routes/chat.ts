@@ -11,7 +11,10 @@ const {
   formatApptTime,
   insertTokenByPriority,
   isDoctorFull,
-  estimateWaitMinutes
+  estimateWaitMinutes,
+  projectedWaitMinutes,
+  paceFromTokens,
+  cabinRemainingFrom
 } = require('../utils/queueHelper');
 const {
   sendWhatsAppNotification,
@@ -955,10 +958,12 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
     // load balancing before confirming.
     const sQueue = await Queue.findOne({ doctor: suggested._id });
     const sLen = (sQueue && sQueue.activeQueue && sQueue.activeQueue.length) || 0;
-    // Shift-aware: an empty queue is not "no wait" if the doctor's next sitting
-    // is at five. That mismatch is what told a patient "Approx. wait: 0 min"
-    // for a cabin that would be empty for hours.
-    const sWait = estimateWaitMinutes(suggested, sLen, (sQueue && sQueue.bufferDelay) || 0);
+    // Shift-aware, cabin-aware and paced on what this doctor is actually
+    // managing today. An empty queue is not "no wait" if the next sitting is at
+    // five — that mismatch is what told a patient "Approx. wait: 0 min" for a
+    // cabin that would be empty for hours — and it is not "no wait" either
+    // while somebody is still inside the room.
+    const sWait = await projectedWaitMinutes(suggested, sQueue, sLen);
     const shownDept = matchedDepartment ? triage.department : suggested.department || triage.department;
 
     session.tempData.suggestedDoctorId = String(suggested._id);
@@ -2689,8 +2694,16 @@ router.get('/hospital/:hospitalId/landing', async (req, res) => {
     // because a queue lookup did.
     let withQueues = doctors;
     try {
-      const queues = await Queue.find({ doctor: { $in: doctors.map((d) => d._id) } });
+      // One tokens read for the whole page rather than two per doctor: this is a
+      // public marketing page and it is polled by anyone who opens it, so the
+      // live numbers have to be cheap or they are not worth having.
+      const [queues, todaysTokens] = await Promise.all([
+        Queue.find({ doctor: { $in: doctors.map((d) => d._id) } }),
+        Token.find({ hospital: hospitalId })
+      ]);
       const queueBy = new Map<string, any>(queues.map((q) => [String(q.doctor), q]));
+      const tokenById = new Map<string, any>((todaysTokens || []).map((t) => [String(t._id), t]));
+
       withQueues = doctors.map((d) => {
         const obj = typeof d.toObject === 'function' ? d.toObject() : { ...d };
         const q = queueBy.get(String(d._id));
@@ -2700,9 +2713,12 @@ router.get('/hospital/:hospitalId/landing', async (req, res) => {
         // estimate in the product that never learned about sittings: four people
         // queued for a doctor whose OPD starts at five read as "~40 min" at 2pm.
         // Only the server knows the schedule, so only the server should answer.
-        obj.estimatedWait = q
-          ? estimateWaitMinutes(d, obj.waiting || 0, q.bufferDelay || 0)
-          : estimateWaitMinutes(d, 0, 0);
+        const pace = paceFromTokens(todaysTokens || [], d._id, d.averageCheckupTime || 10);
+        const inCabin = q && q.currentToken ? tokenById.get(String(q.currentToken)) : null;
+        obj.estimatedWait = estimateWaitMinutes(d, obj.waiting || 0, (q && q.bufferDelay) || 0, {
+          paceMinutes: pace,
+          inCabinRemaining: cabinRemainingFrom(inCabin, pace)
+        });
         return obj;
       });
     } catch (queueErr) {

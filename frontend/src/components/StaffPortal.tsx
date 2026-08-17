@@ -3672,7 +3672,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
-                  { key: 'displayName', label: 'Name on Invoice' },
+                  {
+                    key: 'displayName',
+                    label: 'Name on Invoice',
+                    // Where the name comes from, said plainly. Left blank the
+                    // bill follows the facility profile, so correcting the
+                    // hospital's name corrects every future bill; typed in, it
+                    // is a billing name that a rename must not overwrite.
+                    hint:
+                      billingConfig?.letterheadSource === 'custom'
+                        ? 'Custom — a facility rename will not change this. Clear the field to follow the facility name again.'
+                        : `Following the facility profile (${billingConfig?.displayName || staffUser?.hospital}). Type a name here only if you bill under a different one.`
+                  },
                   { key: 'phone', label: 'Contact Phone' },
                   { key: 'address', label: 'Address on Invoice' },
                   { key: 'gstin', label: 'GSTIN / Tax ID' },
@@ -3687,6 +3698,11 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
                       onChange={(e) => setRateForm({ ...rateForm, [field.key]: e.target.value })}
                       className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-xl p-2.5 font-bold text-[var(--text-color)]"
                     />
+                    {field.hint && (
+                      <p className="text-[11px] text-[var(--text-secondary)] font-medium mt-1 leading-snug">
+                        {field.hint}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>

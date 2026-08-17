@@ -403,7 +403,8 @@ fields a patient actually reads before booking:
 
 ### 9. BillingConfig (`BillingConfigSchema`)
 * **One per hospital** — that facility's billing environment. Nothing here is shared between tenants.
-* Fields: `hospital` (unique), letterhead (`displayName`, `address`, `phone`, `gstin`, `footerNote`), `currencySymbol`, `invoicePrefix`, `taxPercent`, default rates (`consultationFee`, `labTestPrice`, `urgentLabTestPrice`, `defaultMedicinePrice`, `registrationFee`), `services[]` (category, name, price, active), `updatedBy`.
+* Fields: `hospital` (unique), letterhead (`letterheadSource`, `displayName`, `address`, `phone`, `gstin`, `footerNote`), `currencySymbol`, `invoicePrefix`, `taxPercent`, default rates (`consultationFee`, `labTestPrice`, `urgentLabTestPrice`, `defaultMedicinePrice`, `registrationFee`), `services[]` (category, name, price, active), `updatedBy`.
+* `letterheadSource` decides where the printed name comes from. `facility` (the default) means `displayName`/`address`/`phone` are a copy of the Hospital record and are re-derived from it on every read, so renaming the facility renames every future bill. `custom` means reception typed a billing name of their own and no rename may overwrite it; clearing the field hands the letterhead back to the facility profile.
 
 ---
 

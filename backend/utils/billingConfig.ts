@@ -98,28 +98,42 @@ export async function getBillingConfig(hospital?: string | null): Promise<any> {
 
   let config = await (BillingConfig as any).findOne({ hospital: tenant });
   if (config) {
-    // Back-fill a letterhead that was never filled in.
+    // Keep an INHERITED letterhead in step with the facility record.
     //
-    // The seeding below has always copied the facility's name onto the rate
-    // card, but rate cards created before it did — and any created while the
-    // Hospital lookup failed — carry an empty `displayName`. Every printed bill
-    // from those facilities then had no facility on it, because the PDF has
-    // nothing else to fall back to but the tenant slug. Repairing it on read
-    // fixes the existing rows without a migration, and costs one extra query
-    // only for the facilities that are actually broken.
-    if (!String(config.displayName || '').trim()) {
+    // The name was copied onto the rate card once, when it was first opened,
+    // and then never looked at again. So a facility that corrected its own name
+    // — a typo at registration, a rebrand, a trust changing hands — went on
+    // printing the old name on every invoice and every WhatsApp receipt, with
+    // no field on any screen that explained where it was coming from.
+    //
+    // Re-deriving on read rather than migrating means it is right for rows
+    // written before this existed too, and it costs one extra query only for
+    // facilities that have not customised their letterhead. A `custom`
+    // letterhead is never touched: reception typing a legal billing name that
+    // differs from the signboard name is a deliberate act, not drift.
+    const inherited = (config.letterheadSource || 'facility') !== 'custom';
+    if (inherited) {
       const facility = await readFacility();
       if (facility && facility.name) {
-        config.displayName = facility.name;
-        if (!String(config.address || '').trim()) config.address = facility.address || '';
-        if (!String(config.phone || '').trim()) config.phone = facility.phone || '';
-        try {
-          await config.save();
-          logger.info('Back-filled billing letterhead from facility profile', { hospital: tenant });
-        } catch (err) {
-          // A bill printed with the right name beats a failed request; the
-          // in-memory value is already correct for this response.
-          logger.error('Could not persist back-filled billing letterhead', { err, hospital: tenant });
+        const changed =
+          config.displayName !== facility.name ||
+          config.address !== (facility.address || '') ||
+          config.phone !== (facility.phone || '');
+
+        if (changed) {
+          config.displayName = facility.name;
+          config.address = facility.address || '';
+          config.phone = facility.phone || '';
+          try {
+            await config.save();
+            logger.info('Refreshed inherited billing letterhead from facility profile', {
+              hospital: tenant
+            });
+          } catch (err) {
+            // A bill printed with the right name beats a failed request; the
+            // in-memory value is already correct for this response.
+            logger.error('Could not persist refreshed billing letterhead', { err, hospital: tenant });
+          }
         }
       }
     }
@@ -131,6 +145,7 @@ export async function getBillingConfig(hospital?: string | null): Promise<any> {
   config = new (BillingConfig as any)({
     hospital: tenant,
     ...DEFAULT_CONFIG,
+    letterheadSource: 'facility',
     displayName: (facility && facility.name) || tenant,
     address: (facility && facility.address) || '',
     phone: (facility && facility.phone) || '',

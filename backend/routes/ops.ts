@@ -22,7 +22,7 @@ const { stageMessage } = require('../utils/journeyHelper');
 const { onlyToday, minutesSince } = require('../utils/dates');
 const { toId, sameId } = require('../utils/ids');
 const { facilityOf, facilityDoctors } = require('../utils/tenancy');
-const { estimateWaitMinutes } = require('../utils/queueHelper');
+const { estimateWaitMinutes, paceFromTokens, cabinRemainingFrom } = require('../utils/queueHelper');
 const { sittingStatus, delayNotice, todayOpdHours } = require('../utils/shiftHelper');
 
 /** This facility's tokens, created today. */
@@ -71,12 +71,19 @@ router.get(
     const queues = (await Queue.find({ doctor: { $in: doctors.map((d) => d._id) } })) || [];
     const queueByDoctor = new Map(queues.map((q) => [toId(q.doctor), q]));
 
+    // Today's tokens are already loaded, so the two facts that make a wait
+    // estimate honest — how fast this doctor is really going, and how much of
+    // the consultation in the room is left — cost no extra query here.
+    const tokenById = new Map(tokens.map((t) => [String(t._id), t]));
+
     // Per-doctor live load, so reception can steer the next walk-in to whoever
     // is actually free instead of guessing.
     const doctorLoad = doctors
       .map((doctor) => {
         const queue: any = queueByDoctor.get(toId(doctor));
         const waiting = (queue && queue.activeQueue && queue.activeQueue.length) || 0;
+        const pace = paceFromTokens(tokens, doctor._id, doctor.averageCheckupTime || 10);
+        const inCabin = queue && queue.currentToken ? tokenById.get(String(toId(queue.currentToken))) : null;
         return {
           _id: doctor._id,
           name: doctor.name,
@@ -89,8 +96,16 @@ router.get(
           // Left as raw queue-length maths, this board contradicted them: at 2pm
           // the doctor whose next sitting is at five showed "0 min, free", so
           // the one surface a human steers walk-ins from recommended the one
-          // cabin guaranteed not to open.
-          estimatedWait: estimateWaitMinutes(doctor, waiting, (queue && queue.bufferDelay) || 0),
+          // cabin guaranteed not to open. It also read an occupied cabin with
+          // nobody queued as "free now", which is only true for the patient
+          // already inside it.
+          estimatedWait: estimateWaitMinutes(doctor, waiting, (queue && queue.bufferDelay) || 0, {
+            paceMinutes: pace,
+            inCabinRemaining: cabinRemainingFrom(inCabin, pace)
+          }),
+          // What the cabin is really averaging today, so reception can see WHY a
+          // queue of four is quoting fifty minutes.
+          paceMinutes: pace,
           sitting: sittingStatus(doctor),
           // Today's announced delay, so the floor board and the waiting-room
           // screen carry the same revised start the patient was WhatsApped.
