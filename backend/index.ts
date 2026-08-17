@@ -282,6 +282,28 @@ cron.schedule(
   { timezone: FACILITY_TIMEZONE }
 );
 
+// Licence renewal reminders — 30/15/7/3/1 days out, then daily through the grace
+// period. Deliberately in the morning and NOT at midnight: the person who can
+// authorise a renewal reads their phone during office hours, and a notice that
+// arrives at 2am is a notice discovered after the shutdown it was warning about.
+//
+// The reminder is a courtesy, not the enforcement. Expiry is evaluated from the
+// clock on every request (middleware/license.ts), so a facility is never blocked
+// or unblocked by whether this job happened to run.
+cron.schedule(
+  '30 9 * * *',
+  async () => {
+    try {
+      const { runLicenseSweep } = require('./utils/licenseHelper');
+      const { sent } = await runLicenseSweep();
+      if (sent > 0) logger.info('[LICENCE] Renewal reminders dispatched', { sent });
+    } catch (error) {
+      logger.error('[LICENCE] Reminder sweep failed', { err: error.message });
+    }
+  },
+  { timezone: FACILITY_TIMEZONE }
+);
+
 // Keep waiting patients' estimates honest.
 //
 // The arrival alert fires once, when someone reaches the front. Everything

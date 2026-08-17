@@ -206,5 +206,29 @@ router.get(
   })
 );
 
+/**
+ * GET this facility's own subscription state.
+ *
+ * The one licensing endpoint a tenant may read, and it stays reachable when
+ * everything else is refused (see the ALWAYS_OPEN list in middleware/license.ts)
+ * — a console that cannot ask why it is blocked can only show a spinner.
+ *
+ * Read-only by design. A facility can see its term; only the platform owner can
+ * change it.
+ */
+router.get(
+  '/license',
+  authenticateToken,
+  asyncHandler(async (req, res) => {
+    const Hospital = require('../models/Hospital');
+    const { licenseState } = require('../utils/licenseHelper');
+
+    const facility = await Hospital.findOne({ id: facilityOf(req) });
+    if (!facility) throw new HttpError(404, 'Facility not found');
+
+    res.json(licenseState(facility));
+  })
+);
+
 export default router;
 module.exports = router;

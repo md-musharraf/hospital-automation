@@ -110,6 +110,8 @@ const dictionary = {
     travelReuseOptions: ['✅ Yes, same as before', '✏️ It has changed'],
     travelTooFarToday: (mins) =>
       `⚠️ You said about ${Math.round(mins / 60)} hour(s) to reach — today's OPD is likely to close before you can get here. I have still booked your token, but please check the timing below before setting off.`,
+    facilityUnavailable:
+      '🛑 This facility is not accepting online bookings at the moment. Please call them directly or visit the reception desk.\n🛑 यह सुविधा अभी ऑनलाइन बुकिंग नहीं ले रही है। कृपया सीधे फ़ोन करें या रिसेप्शन पर संपर्क करें।',
     opdFull:
       "🛑 Sorry, today's OPD token limit for this department is full. Please come tomorrow morning, or choose another facility. No need to travel today — you would not get a token.\n🛑 क्षमा करें, आज के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं — आज आने की ज़रूरत नहीं।",
     priorityNote: (cat) =>
@@ -248,6 +250,8 @@ const dictionary = {
     travelReuseOptions: ['✅ हाँ, वही है', '✏️ बदल गया है'],
     travelTooFarToday: (mins) =>
       `⚠️ आपने बताया कि पहुँचने में करीब ${Math.round(mins / 60)} घंटे लगेंगे — आज की OPD उससे पहले बंद हो सकती है। टोकन बुक कर दिया है, पर निकलने से पहले नीचे दिया समय ज़रूर देख लें।`,
+    facilityUnavailable:
+      '🛑 यह सुविधा अभी ऑनलाइन बुकिंग नहीं ले रही है। कृपया सीधे फ़ोन करें या रिसेप्शन पर संपर्क करें।',
     opdFull:
       '🛑 क्षमा करें, आज इस विभाग के OPD टोकन full हो चुके हैं। कृपया कल सुबह आएं, या कोई दूसरी सुविधा चुनें। आज आने की ज़रूरत नहीं — टोकन नहीं मिलेगा।',
     priorityNote: (cat) =>
@@ -468,6 +472,18 @@ function bookingSourceOf(session) {
 // the chosen doctor's queue (Emergency jumps to the front), recalculates waits,
 // notifies via WhatsApp, and returns the completed-booking chat payload.
 async function finalizeBooking({ session, selectedDoc, currentHospId, text, socketIo }) {
+  // A facility whose subscription has lapsed cannot take new bookings.
+  //
+  // Checked here rather than at the top of the conversation on purpose: a
+  // patient who already holds a token can still look up their queue position and
+  // read their reports. Switching off the FACILITY must not strand the patients
+  // already inside its day.
+  const { licenseFor } = require('../middleware/license');
+  const licence = await licenseFor(currentHospId);
+  if (licence.blocked) {
+    return { messages: [{ sender: 'bot', text: text.facilityUnavailable }], options: text.options };
+  }
+
   const phone = (session.tempData && session.tempData.phone) || `+1 555-${session.sessionId.slice(-4)}`;
   // Match on every spelling of the number, not just an exact string compare —
   // otherwise a patient who registered as "+91 98765 43210" and comes back as
@@ -1021,6 +1037,21 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
   session.tempData = { ...session.tempData, symptoms };
   if (session.tempData.pendingSymptoms) delete session.tempData.pendingSymptoms;
 
+  // Said here as well as at the booking itself, because this is the first moment
+  // the answer is known. `finalizeBooking` is the gate that actually refuses;
+  // this is so a patient is not walked through a doctor recommendation and two
+  // more questions before being told the facility cannot take them.
+  const { licenseFor } = require('../middleware/license');
+  if ((await licenseFor(currentHospId)).blocked) {
+    session.currentState = 'COMPLETED';
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    return {
+      messages: [...preMessages, { sender: 'bot', text: text.facilityUnavailable }],
+      options: text.options
+    };
+  }
+
   const doctors = await loadFacilityDoctors(currentHospId);
   if (doctors.length === 0) {
     session.markModified && session.markModified('tempData');
@@ -1489,6 +1520,23 @@ async function beginFlow({
   leadMessages = []
 }: any) {
   const tokenType = intent === 'emergency' ? 'Emergency' : intent === 'revisit' ? 'Re-visit' : 'Regular';
+
+  // The earliest honest moment to say no.
+  //
+  // A facility whose subscription has lapsed cannot take a booking or a refill,
+  // and the patient should hear that before typing a phone number, a name, an
+  // age and a set of symptoms. `finalizeBooking` still refuses independently —
+  // this is courtesy, that is the gate. Status lookups are untouched: a patient
+  // holding a token today can still follow it.
+  const { licenseFor } = require('../middleware/license');
+  if (intent !== 'status' && (await licenseFor(currentHospId)).blocked) {
+    session.currentState = 'COMPLETED';
+    await session.save();
+    return {
+      messages: [...leadMessages, { sender: 'bot', text: text.facilityUnavailable }],
+      options: text.options
+    };
+  }
 
   session.tempData = { ...session.tempData, refillMode: intent === 'refill' };
   if (intent !== 'refill') session.tempData.tokenType = tokenType;

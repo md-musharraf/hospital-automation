@@ -40,7 +40,19 @@ export const authenticateToken: RequestHandler = (req: any, res: Response, next:
     }
     // A facility session: { role: 'facility', hospital, name, scopes }.
     req.user = user;
-    next();
+
+    // The one choke point where a lapsed subscription switches the consoles off.
+    //
+    // Here rather than on each router because every protected route in the app
+    // already passes through this function, and a licence guard is only as good
+    // as the route nobody forgot to add it to. Required lazily so this module
+    // stays importable by anything that only wants JWT_SECRET.
+    const { refuseIfUnlicensed } = require('./license');
+    refuseIfUnlicensed(req, res)
+      .then((refused: boolean) => {
+        if (!refused) next();
+      })
+      .catch(() => next());
   });
 };
 

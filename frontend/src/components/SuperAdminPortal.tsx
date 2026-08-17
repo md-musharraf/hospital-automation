@@ -20,6 +20,215 @@ import ImageUploadField, { UploadCredentialsProvider } from './ImageUploadField'
 import { EmailInput } from './fields/NormalizedInput';
 
 /**
+ * Every facility's subscription on one screen, worst first.
+ *
+ * The server does the sorting and the state maths — this panel deliberately
+ * computes nothing about expiry itself. A screen that decided independently
+ * whether a facility was expired would eventually disagree with the middleware
+ * that actually blocks it, and the owner would be looking at a green row for a
+ * hospital whose reception cannot open a token.
+ */
+function LicensePanel({ adminSecret }) {
+  const [data, setData] = useState({ facilities: [], plans: {}, graceDays: 7 });
+  const [busy, setBusy] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+
+  const headers = { 'Content-Type': 'application/json', 'X-Admin-Secret': adminSecret };
+
+  const load = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/licenses`, {
+        headers: { 'X-Admin-Secret': adminSecret }
+      });
+      const json = await res.json();
+      if (res.ok) setData(json);
+      else setError(json.message || 'Could not load licences');
+    } catch (err) {
+      setError('Could not reach the server');
+    }
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminSecret]);
+
+  const grant = async (id, plan) => {
+    setBusy(id);
+    setError('');
+    setNote('');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/hospital/${id}/license`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ plan })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || 'Could not grant that term');
+      setNote(json.message);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const setStatus = async (id, suspend) => {
+    setBusy(id);
+    setError('');
+    setNote('');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/hospital/${id}/license/status`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ suspend })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message || 'Could not change that facility');
+      setNote(json.message);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const remindNow = async () => {
+    setBusy('sweep');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/super-admin/licenses/remind`, {
+        method: 'POST',
+        headers
+      });
+      const json = await res.json();
+      setNote(json.message || 'Reminders sent');
+    } catch (err) {
+      setError('Could not send reminders');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const TONE = {
+    expired: 'bg-rose-500/10 border-rose-500/40 text-rose-500',
+    suspended: 'bg-rose-500/10 border-rose-500/40 text-rose-500',
+    grace: 'bg-orange-500/10 border-orange-500/40 text-orange-500',
+    expiring: 'bg-amber-500/10 border-amber-500/40 text-amber-600',
+    active: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600',
+    none: 'bg-[var(--border-color)]/20 border-[var(--border-color)]/40 text-[var(--text-secondary)]'
+  };
+
+  const LABEL = {
+    expired: 'SERVICES OFF',
+    suspended: 'SUSPENDED',
+    grace: 'IN GRACE',
+    expiring: 'ENDING SOON',
+    active: 'ACTIVE',
+    none: 'NO LICENCE SET'
+  };
+
+  const planKeys = Object.keys(data.plans || {});
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-lg font-black text-[var(--text-color)]">Facility licences</h3>
+          <p className="text-[13px] font-semibold text-[var(--text-secondary)] mt-1 max-w-2xl">
+            A term runs out, the consoles keep working for {data.graceDays} more days with a warning on every
+            screen, and only then do they stop. Renewing extends from the current expiry, so renewing early
+            never costs a facility the days it already paid for.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={remindNow}
+          disabled={busy === 'sweep'}
+          className="px-3 py-2 rounded-xl bg-[var(--card-bg)] border border-[var(--border-color)]/40 text-[12px] font-black text-[var(--text-color)] hover:border-[var(--primary-color)] disabled:opacity-50"
+        >
+          Send renewal reminders now
+        </button>
+      </div>
+
+      {error && (
+        <div className="px-3.5 py-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-500 text-[13px] font-bold">
+          {error}
+        </div>
+      )}
+      {note && (
+        <div className="px-3.5 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-[13px] font-bold">
+          {note}
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {(data.facilities || []).map((f) => (
+          <div
+            key={f.id}
+            className="p-4 rounded-2xl bg-[var(--card-bg)] border border-[var(--border-color)]/30 space-y-3"
+          >
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-black text-[var(--text-color)]">{f.name}</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full border text-[10px] font-black tracking-wider ${TONE[f.stage]}`}
+                  >
+                    {LABEL[f.stage]}
+                  </span>
+                </div>
+                <p className="text-[12px] font-semibold text-[var(--text-secondary)] mt-0.5">
+                  {f.city} · {f.type} · {f.planLabel || 'no plan'}
+                  {f.expiresAt ? ` · until ${new Date(f.expiresAt).toLocaleDateString()}` : ''}
+                </p>
+                <p className="text-[12px] text-[var(--text-secondary)] mt-1">{f.message}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStatus(f.id, f.stage !== 'suspended')}
+                disabled={busy === f.id}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-black border transition-all disabled:opacity-50 ${
+                  f.stage === 'suspended'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600'
+                    : 'bg-rose-500/10 border-rose-500/30 text-rose-500'
+                }`}
+              >
+                {f.stage === 'suspended' ? 'Restore' : 'Suspend'}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
+                Grant / extend:
+              </span>
+              {planKeys.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => grant(f.id, key)}
+                  disabled={busy === f.id}
+                  className="px-3 py-1.5 rounded-lg bg-[var(--bg-color)] border border-[var(--border-color)]/40 text-[12px] font-black text-[var(--text-color)] hover:border-[var(--primary-color)] hover:text-[var(--primary-color)] transition-all disabled:opacity-50"
+                >
+                  {data.plans[key].label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        {(data.facilities || []).length === 0 && (
+          <p className="text-[13px] font-semibold text-[var(--text-secondary)] italic">
+            No facilities registered yet.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
  * What each kind of facility IS, and which login accounts it needs.
  *
  * `requires` / `offers` mirror FACILITY_TYPE_RULES in backend/routes/auth.js and
@@ -1350,6 +1559,20 @@ export default function SuperAdminPortal() {
               }`}
             >
               Edit Facilities
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('licenses');
+                setError('');
+                setSuccessMsg('');
+              }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all ${
+                activeTab === 'licenses'
+                  ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-md'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-color)] hover:bg-[var(--border-color)]/20'
+              }`}
+            >
+              Licences
             </button>
             <button
               onClick={() => {
@@ -3574,6 +3797,8 @@ export default function SuperAdminPortal() {
                   </button>
                 </div>
               </form>
+            ) : activeTab === 'licenses' ? (
+              <LicensePanel adminSecret={adminSecret} />
             ) : activeTab === 'whatsapp' ? (
               <WhatsAppTester
                 initialPhone={editWhatsapp || '+14155238886'}

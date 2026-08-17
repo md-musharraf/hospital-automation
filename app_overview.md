@@ -133,6 +133,41 @@ to reception — they're **auto-recalled** a few slots down the queue and WhatsA
 Absent. Cuts re-registration load on staff and hardship for patients who briefly
 stepped away.
 
+### A6b. Facility Licensing (`Hospital.license`, `utils/licenseHelper.js`)
+
+The subscription a facility runs on, and what happens when it lapses.
+
+* **Plans:** `1m`, `6m`, `12m`, `24m` (sold as "2 years"), plus a `TRIAL_DAYS` (=14)
+  trial every new facility is registered with. Terms are counted in **calendar
+  months, clamped to month end** — a licence sold on the 31st ends on the 28th, not
+  the 3rd.
+* **Nothing stores "expired".** `licenseState(hospital, now)` computes the stage from
+  `expiresAt` on every read: `none | active | expiring | grace | expired | suspended`.
+  A stored status is only as fresh as the last job that ran, and the day that job
+  does not run the platform is wrong about every tenant at once.
+* **Grace, then off.** On the expiry date everything still works and every console
+  carries a red banner; `GRACE_DAYS` (=7) later the consoles stop. Cutting a live OPD
+  dead at midnight turns a billing event into a clinical one — reception cannot admit
+  the patient in front of them and nobody in the building can pay anything.
+* **One enforcement point:** `middleware/license.js` is called from inside
+  `authenticateToken`, so every console route in the app is covered and no route can
+  be forgotten. A blocked facility gets **402** with the reason. Login, `/ops/license`
+  and the whole super-admin console stay open — a facility that cannot sign in cannot
+  be told why nothing works, and the owner must always be able to reach a locked
+  tenant. Lookup failures let the request THROUGH; an unrelated database hiccup must
+  not shut down hospitals that have paid. Cached 60s, invalidated the instant a term
+  is granted.
+* **The public chatbot too:** a lapsed facility refuses new bookings and refills at
+  the first turn (`beginFlow`), while token lookups keep working — switching off a
+  facility must not strand the patients already inside its day.
+* **Alerts:** a 9:30am sweep messages the facility at **30/15/7/3/1 days**, then daily
+  through grace, bilingually — once per threshold (`license.lastRemindedDay`), so a
+  daily job never becomes daily spam.
+* **Owner console → Licences tab:** every facility ranked worst-first, one-tap grant
+  of any plan, suspend/restore, and "send reminders now". Renewing **extends from the
+  current expiry**, so renewing early never costs a facility days it already paid for.
+  `license.history` keeps every term ever granted.
+
 ### A7. WhatsApp Medicine Refill (`RefillRequest`)
 
 Chronic patients (BP / sugar / thyroid) repeat their prescription **without an OPD

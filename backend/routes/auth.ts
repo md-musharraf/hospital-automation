@@ -30,6 +30,15 @@ const {
   legacyModulesFrom,
   defaultCoverFor
 } = require('../utils/facilityProfile');
+const {
+  licenseState,
+  renewLicense,
+  trialLicense,
+  PLANS,
+  PLAN_KEYS,
+  GRACE_DAYS
+} = require('../utils/licenseHelper');
+const { invalidateLicense } = require('../middleware/license');
 const { safeCompare, isProduction } = require('../utils/env');
 const { normalizeEmail } = require('@careeai/shared');
 const logger = require('../utils/logger');
@@ -126,10 +135,16 @@ router.post('/facility/login', loginLimiter, async (req, res) => {
 
     const token = jwt.sign(facilityTokenClaims(facility), JWT_SECRET, { expiresIn: '12h' });
 
+    // Sign-in works even for a lapsed facility, and carries the reason with it.
+    // A hospital that cannot log in cannot be told why nothing works, and the
+    // renewal notice lives on the other side of this door.
+    const licence = licenseState(facility);
+
     res.json({
       token,
       user: facilitySession(facility),
-      doctors: await doctorRoster(facility.id)
+      doctors: await doctorRoster(facility.id),
+      license: licence
     });
   } catch (error) {
     logger.error('[AUTH] Facility login failed', { err: error.message });
@@ -238,7 +253,11 @@ router.post('/login', loginLimiter, async (req, res) => {
         personEmail: found.person.email,
         actingDoctor: claims.actingDoctor || null
       },
-      doctors: found.scope === 'doctor' ? await doctorRoster(facility.id) : []
+      doctors: found.scope === 'doctor' ? await doctorRoster(facility.id) : [],
+      // Same as the facility door: a person signs in and is told where their
+      // facility's subscription stands, rather than meeting it as a 402 on the
+      // first thing they try to do.
+      license: licenseState(facility)
     });
   } catch (error) {
     logger.error('[AUTH] Personal login failed', { err: error.message });
@@ -286,7 +305,11 @@ router.get('/me', authenticateToken, async (req, res) => {
       user,
       // The cabin roster is only meaningful to a session that may pick one. A
       // doctor signed in as themselves already has their cabin in the token.
-      doctors: !isPerson || req.user.role === 'doctor' ? await doctorRoster(facility.id) : []
+      doctors: !isPerson || req.user.role === 'doctor' ? await doctorRoster(facility.id) : [],
+      // Re-read on every console load, so a banner that says "3 days left"
+      // becomes "renewed until March" the moment the owner acts — without
+      // anybody signing out.
+      license: licenseState(facility)
     });
   } catch (error) {
     logger.error('[AUTH] Session read failed', { err: error.message });
@@ -700,7 +723,14 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       customServices: customServices || [],
       features: features || [],
       modules,
-      landing
+      landing,
+      // Every facility is born with a term. A plan named at registration is
+      // honoured; otherwise a trial runs, because onboarding a hospital into an
+      // immediately-blocked state is nobody's intention and "we'll set the
+      // licence tomorrow" is how a live tenant gets stranded on a Sunday.
+      license: PLAN_KEYS.includes(b.plan)
+        ? renewLicense({}, b.plan, { by: 'onboarding', note: 'Plan chosen at registration' })
+        : trialLicense()
     });
     await newHospital.save();
 
@@ -1253,6 +1283,148 @@ router.get('/super-admin/hospitals', verifyAdminSecret, async (req, res) => {
   } catch (error) {
     console.error('Super admin hospital list error:', error);
     res.status(500).json({ message: 'Server error fetching facilities' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// LICENSING — the platform owner's view of who has paid, and until when.
+//
+// Every one of these is behind the admin secret rather than a facility session,
+// deliberately: a tenant must never be able to extend its own term, and the
+// owner must always be able to reach a facility that its own licence has locked
+// out (see middleware/license.ts, which this console never passes through).
+// ---------------------------------------------------------------------------
+
+/** GET every facility's licence, computed fresh, worst first. */
+router.get('/super-admin/licenses', verifyAdminSecret, async (req, res) => {
+  try {
+    const hospitals = await Hospital.find({});
+    const rows = hospitals.map((h) => {
+      const state = licenseState(h);
+      return {
+        id: h.id,
+        name: h.name,
+        city: h.city,
+        type: h.type,
+        stage: state.stage,
+        plan: state.plan,
+        planLabel: state.planLabel,
+        expiresAt: state.expiresAt,
+        daysLeft: state.daysLeft,
+        graceLeft: state.graceLeft,
+        blocked: state.blocked,
+        message: state.message,
+        notifyPhone: (h.license && h.license.notifyPhone) || h.phone || '',
+        lastRenewal: (h.license && (h.license.history || []).slice(-1)[0]) || null
+      };
+    });
+
+    // The facilities that need attention float to the top: blocked first, then
+    // whatever is closest to expiry. An owner opening this screen is looking for
+    // a problem, not browsing an alphabetical list.
+    const rank = { expired: 0, suspended: 0, grace: 1, expiring: 2, active: 3, none: 4 };
+    rows.sort((a, b) => {
+      const byStage = (rank[a.stage] ?? 5) - (rank[b.stage] ?? 5);
+      if (byStage !== 0) return byStage;
+      return (a.daysLeft ?? 99999) - (b.daysLeft ?? 99999);
+    });
+
+    res.json({ plans: PLANS, graceDays: GRACE_DAYS, facilities: rows });
+  } catch (error) {
+    logger.error('[LICENCE] Could not list licences', { err: error.message });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * PUT grant or extend a facility's term.
+ *
+ * Extends from the current expiry when it is still in the future, so renewing
+ * early never costs the customer the days they already paid for — see
+ * `renewLicense`. Also lifts a suspension, because granting a term IS the
+ * decision to let them back in.
+ */
+router.put('/super-admin/hospital/:id/license', verifyAdminSecret, async (req, res) => {
+  try {
+    const { plan, note, notifyPhone } = req.body || {};
+    if (!PLAN_KEYS.includes(plan) && plan !== 'trial') {
+      return res.status(400).json({
+        message: `Choose a plan: ${PLAN_KEYS.join(', ')} (or "trial").`,
+        plans: PLANS
+      });
+    }
+
+    const facility = await Hospital.findOne({ id: req.params.id });
+    if (!facility) return res.status(404).json({ message: 'Facility not found' });
+
+    const next = renewLicense(facility, plan, { by: 'owner console', note: note || '' });
+    if (typeof notifyPhone === 'string' && notifyPhone.trim()) next.notifyPhone = notifyPhone.trim();
+
+    facility.license = next;
+    facility.markModified && facility.markModified('license');
+    await facility.save();
+    // The console the receptionist is staring at must recover on their next
+    // click, not in a minute's time.
+    invalidateLicense(facility.id);
+
+    const state = licenseState(facility);
+    logger.info('[LICENCE] Term granted', { hospital: facility.id, plan, expiresAt: next.expiresAt });
+
+    res.json({
+      message: `${facility.name}: ${PLANS[plan] ? PLANS[plan].label : 'trial'} granted — active until ${state.expiresAt?.toLocaleDateString()}.`,
+      license: state
+    });
+  } catch (error) {
+    logger.error('[LICENCE] Could not grant a term', { err: error.message });
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * PUT suspend or restore a facility by hand.
+ *
+ * Beats the dates in both directions: a facility suspended for non-payment does
+ * not come back because its term happens to have days left, and restoring one
+ * does not silently extend the term it already bought.
+ */
+router.put('/super-admin/hospital/:id/license/status', verifyAdminSecret, async (req, res) => {
+  try {
+    const suspend = Boolean(req.body && req.body.suspend);
+
+    const facility = await Hospital.findOne({ id: req.params.id });
+    if (!facility) return res.status(404).json({ message: 'Facility not found' });
+
+    facility.license = { ...(facility.license || {}), status: suspend ? 'Suspended' : 'Active' };
+    facility.markModified && facility.markModified('license');
+    await facility.save();
+    invalidateLicense(facility.id);
+
+    logger.warn('[LICENCE] Facility status changed by owner', {
+      hospital: facility.id,
+      status: suspend ? 'Suspended' : 'Active'
+    });
+
+    res.json({
+      message: suspend
+        ? `${facility.name} is suspended — its consoles are now closed.`
+        : `${facility.name} is active again.`,
+      license: licenseState(facility)
+    });
+  } catch (error) {
+    logger.error('[LICENCE] Could not change facility status', { err: error.message });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/** POST run the renewal-reminder sweep now, instead of waiting for 9:30am. */
+router.post('/super-admin/licenses/remind', verifyAdminSecret, async (req, res) => {
+  try {
+    const { runLicenseSweep } = require('../utils/licenseHelper');
+    const result = await runLicenseSweep();
+    res.json({ message: `Renewal reminders sent: ${result.sent} (skipped ${result.skipped}).`, ...result });
+  } catch (error) {
+    logger.error('[LICENCE] Manual sweep failed', { err: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

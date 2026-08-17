@@ -125,6 +125,111 @@ function CabinPicker({ doctors, onPick, busy, error }) {
   );
 }
 
+/**
+ * This facility's subscription, re-read from the server.
+ *
+ * Asked of the API rather than trusted from the login payload: the sign-in
+ * response is a snapshot from whenever the shift started, and a console left
+ * open across a renewal — or across an expiry — would keep showing the state the
+ * morning began with. `/ops/license` is deliberately reachable even when
+ * everything else is refused, so this keeps working on a blocked facility, which
+ * is precisely when its answer matters.
+ */
+function useLicense(token) {
+  const [license, setLicense] = useState(null);
+
+  useEffect(() => {
+    if (!token) return undefined;
+    let live = true;
+
+    const read = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/v1/ops/license`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const data = await res.json();
+        if (live && data && data.stage) setLicense(data);
+      } catch (err) {
+        // A network blip must not blank the console or invent an expiry. The
+        // last known state stands until the next poll succeeds.
+        console.error('Could not read the facility licence:', err);
+      }
+    };
+
+    read();
+    const timer = setInterval(read, 5 * 60 * 1000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [token]);
+
+  return license;
+}
+
+/**
+ * What a facility sees once its term has run out.
+ *
+ * A whole screen, not a toast: every console behind it would answer 402 to the
+ * first thing anybody clicked, and a reception desk deserves to be told why
+ * rather than to discover it one failed action at a time. It names the date and
+ * says who can fix it, because the person reading this cannot.
+ */
+function LicenseBlocked({ license, onLogout }) {
+  return (
+    <div className="flex-1 flex items-center justify-center p-6 bg-[var(--bg-color)]">
+      <div className="max-w-lg text-center">
+        <span className="w-16 h-16 rounded-2xl bg-rose-500/12 text-rose-500 flex items-center justify-center mx-auto">
+          <Icon name="lock" className="text-[32px]" />
+        </span>
+        <h2 className="mt-4 text-[21px] font-black text-[var(--text-color)]">
+          {license.stage === 'suspended' ? 'This account is suspended' : 'Subscription expired'}
+        </h2>
+        <p className="mt-2 text-[14px] font-semibold text-[var(--text-secondary)]">{license.message}</p>
+        {license.expiresAt && (
+          <p className="mt-3 text-[13px] font-bold text-[var(--text-secondary)]">
+            {/* A suspended facility's term is usually still running — calling
+                that date "expired" would be telling them the wrong reason. */}
+            Plan: {license.planLabel || license.plan || '—'} ·{' '}
+            {license.stage === 'suspended' ? 'Term runs to' : 'Expired'}{' '}
+            {new Date(license.expiresAt).toLocaleDateString()}
+          </p>
+        )}
+        <p className="mt-4 text-[13px] font-semibold text-[var(--text-secondary)]">
+          Contact the platform owner to renew. Everything — patients, tokens, bills, reports — is safe and
+          comes back exactly as it was the moment the licence is restored.
+        </p>
+        <button
+          type="button"
+          onClick={onLogout}
+          className="mt-6 px-4 py-2.5 rounded-xl bg-[var(--primary-color)] text-white font-black text-[14px]"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The warning strip: counts down before expiry, turns red inside the grace period. */
+function LicenseBanner({ license }) {
+  if (!license || (license.stage !== 'expiring' && license.stage !== 'grace')) return null;
+  const urgent = license.stage === 'grace';
+
+  return (
+    <div
+      className={`px-4 py-2 flex items-center gap-2 text-[13px] font-bold border-b ${
+        urgent
+          ? 'bg-rose-500/12 border-rose-500/30 text-rose-600 dark:text-rose-400'
+          : 'bg-amber-500/12 border-amber-500/30 text-amber-700 dark:text-amber-400'
+      }`}
+    >
+      <Icon name={urgent ? 'warning' : 'schedule'} className="text-[18px] shrink-0" />
+      <span className="min-w-0">{license.message}</span>
+    </div>
+  );
+}
+
 export default function FacilityConsole({ token, facility, doctors, onLogout }) {
   // Only the shared facility credential opens the whole building. A personal
   // sign-in carries the person's single scope and gets that one room.
@@ -156,6 +261,7 @@ export default function FacilityConsole({ token, facility, doctors, onLogout }) 
   const [cabinBusy, setCabinBusy] = useState(false);
   const [cabinError, setCabinError] = useState('');
   const branding = useFacilityBranding(facility?.id);
+  const license = useLicense(token);
 
   // If the facility's modules changed since sign-in, the room we are standing in
   // may no longer exist. Fall back rather than render a room the API will refuse.
@@ -268,9 +374,19 @@ export default function FacilityConsole({ token, facility, doctors, onLogout }) 
     );
   }
 
+  // Checked here, in front of every room, rather than inside each one: all five
+  // consoles sit behind the same subscription, and the API refuses them all
+  // identically. One gate is also one place to be wrong.
+  if (license && license.blocked) {
+    return <LicenseBlocked license={license} onLogout={onLogout} />;
+  }
+
   return (
     <FacilitySessionContext.Provider value={session}>
-      <Suspense fallback={<RoomFallback />}>{room}</Suspense>
+      <div className="flex-1 flex flex-col min-h-0">
+        <LicenseBanner license={license} />
+        <Suspense fallback={<RoomFallback />}>{room}</Suspense>
+      </div>
     </FacilitySessionContext.Provider>
   );
 }

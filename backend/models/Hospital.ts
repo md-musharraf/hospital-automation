@@ -79,7 +79,48 @@ const HospitalSchema = new mongoose.Schema(
     // as `modules`. Everything optional — utils/facilityProfile.buildLandingPage()
     // fills every gap from the template so a facility that typed nothing still
     // gets a complete page.
-    landing: { type: mongoose.Schema.Types.Mixed, default: {} }
+    landing: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+    // The subscription this facility runs on.
+    //
+    // Declared rather than Mixed, unlike `modules` and `landing`: those two grow
+    // a key every time somebody adds a feature, whereas what was bought — a
+    // plan, a start, an end — is a closed set that has not changed since
+    // invoices were invented.
+    //
+    // Note what is NOT here: any stored notion of "expired". The state is
+    // computed from `expiresAt` on every read (utils/licenseHelper.ts), because
+    // a stored status is only as fresh as the last job that ran, and the day
+    // that job does not run the platform is wrong about every tenant at once.
+    //
+    // A facility with no `expiresAt` is grandfathered, not expired — every
+    // tenant onboarded before licensing existed has one, and reading a missing
+    // date as "ran out in 1970" would switch off the whole platform on deploy.
+    license: {
+      plan: { type: String, default: '' }, // '', 'trial', '1m', '6m', '12m', '24m'
+      startedAt: { type: Date, default: null },
+      expiresAt: { type: Date, default: null },
+      // Only ever 'Active' or 'Suspended' — a hand switch the owner controls,
+      // which beats the dates in both directions.
+      status: { type: String, enum: ['Active', 'Suspended'], default: 'Active' },
+      // Which renewal threshold has already been messaged (30, 15, 7, 3, 1, then
+      // 0 and negatives once expired), so a reminder is sent once and not daily.
+      lastRemindedDay: { type: Number, default: null },
+      // Where renewal notices go. Falls back to the facility's public phone.
+      notifyPhone: { type: String, default: '' },
+      // Every term ever granted. The first question after a disputed shutdown is
+      // "when did we last renew them?", and it should not need a support ticket.
+      history: [
+        {
+          plan: { type: String },
+          months: { type: Number },
+          at: { type: Date },
+          expiresAt: { type: Date },
+          by: { type: String },
+          note: { type: String }
+        }
+      ]
+    }
   },
   { timestamps: true }
 );
