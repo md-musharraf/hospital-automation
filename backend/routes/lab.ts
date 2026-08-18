@@ -62,10 +62,15 @@ function shareSignature(reportPdf?: string | null, reportFileName?: string | nul
  * ImageKit keys silently had no report delivery — the feature looked fine in
  * testing and did nothing in the field.
  *
- * Returns whether a message actually left, which every caller reports back:
- * `sendWhatsAppNotification` RESOLVES on a Meta rejection rather than throwing,
- * so an optimistic "sent" would mark the patient as told and suppress the retry
- * forever. See utils/whatsappHelper.
+ * Delivery goes through `utils/patientNotify`, which publishes the report to the
+ * patient's tracker and their device BEFORE trying WhatsApp, and queues a failed
+ * text for automatic retry. That is what makes the rule above hold on the days
+ * Meta is rejecting everything — previously a bench could file a report, be told
+ * the patient was not notified, and there was nowhere the patient could go to
+ * find it.
+ *
+ * Two different answers come back, and callers should report both. `sent` is
+ * WhatsApp alone; `recorded` is whether the patient can see the report at all.
  */
 async function shareReportWithPatient(options: {
   token: any;
@@ -76,10 +81,22 @@ async function shareReportWithPatient(options: {
   resultLine?: string;
   /** Appended after the links — "all your reports are ready, go back to Dr X". */
   closing?: string;
-}): Promise<{ sent: boolean; link: string; direct: boolean; reason?: string }> {
-  const { token, test, patient, doctor, resultLine = '', closing = '' } = options;
+  /** Socket server, so a tracker that is open right now sees the report land. */
+  io?: any;
+}): Promise<{
+  sent: boolean;
+  link: string;
+  direct: boolean;
+  /** The report is on the patient's tracker and was pushed to their device. */
+  recorded?: boolean;
+  /** WhatsApp failed but is queued for another automatic attempt. */
+  willRetry?: boolean;
+  reason?: string;
+}> {
+  const { token, test, patient, doctor, resultLine = '', closing = '', io = null } = options;
 
-  if (!patient || !patient.phone) return { sent: false, link: '', direct: false, reason: 'no_phone' };
+  // No phone is no longer the end of the road: the report still gets published to
+  // the patient's tracker below, which is the one place they can always reach.
   if (!test || !test.reportPdf) return { sent: false, link: '', direct: false, reason: 'no_report' };
 
   const direct = isShareableLink(test.reportPdf);
@@ -89,7 +106,7 @@ async function shareReportWithPatient(options: {
   const room = doctor && doctor.currentRoom ? ` (${doctor.currentRoom})` : '';
 
   const message =
-    `Hello ${patient.name}, your lab report is ready.\n` +
+    `Hello ${(patient && patient.name) || 'there'}, your lab report is ready.\n` +
     `🧪 Test: ${test.testName}\n` +
     (resultLine ? `📊 Result: ${resultLine}\n` : '') +
     (test.abnormal ? `⚠️ This value is outside the normal range.\n` : '') +
@@ -102,17 +119,53 @@ async function shareReportWithPatient(options: {
         `➡️ कृपया यह रिपोर्ट डॉक्टर को दिखाएँ। नया टोकन लेने की ज़रूरत नहीं।`);
 
   try {
-    const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
-    const result = await sendWhatsAppNotification(patient.phone, message);
-    const sent = Boolean(result && result.status === 'sent');
-    if (sent) {
+    const { notifyPatient } = require('../utils/patientNotify');
+    const outcome = await notifyPatient({
+      io,
+      token,
+      patient,
+      kind: 'report',
+      title: test.abnormal ? `${test.testName} result — needs attention` : `${test.testName} report ready`,
+      body:
+        (resultLine ? `Result: ${resultLine}. ` : '') +
+        (test.abnormal ? 'This value is outside the normal range. ' : '') +
+        `Show it to ${doctorName}${room} — no new token needed.`,
+      message,
+      // `link` is the patient's own report page when the PDF is stored inline,
+      // so it is only ever an https URL — a data URI would be the whole document.
+      link,
+      linkLabel: direct ? 'Download report (PDF)' : 'Open your report',
+      // The document, not the send. A corrected re-upload has a different
+      // signature and does announce itself again; re-saving the same worksheet
+      // does not.
+      dedupeKey: `report:${test.testName}:${shareSignature(test.reportPdf, test.reportFileName)}`,
+      // Every caller holds this token and saves it moments later. Saving here
+      // too would leave the second write working from a stale copy.
+      deferSave: true
+    });
+
+    // Stamped on PUBLICATION, not on the WhatsApp alone.
+    //
+    // The patient can now see this report on their tracker whatever Meta did,
+    // and a rejected text is queued for automatic retry — so treating "WhatsApp
+    // failed" as "never shared" would make the next attach announce the same
+    // document a second time on top of that retry.
+    if (outcome.recorded) {
       test.reportSharedAt = new Date();
       test.reportSharedUrl = shareSignature(test.reportPdf, test.reportFileName);
     }
-    return { sent, link, direct, ...(sent ? {} : { reason: (result && result.error) || 'delivery_failed' }) };
+
+    return {
+      sent: outcome.sent,
+      link,
+      direct,
+      recorded: Boolean(outcome.recorded),
+      willRetry: Boolean(outcome.willRetry),
+      ...(outcome.sent ? {} : { reason: outcome.reason || 'delivery_failed' })
+    };
   } catch (err) {
-    logger.error('Lab report share WhatsApp failed', { err, tokenId: String(token._id) });
-    return { sent: false, link, direct, reason: 'delivery_failed' };
+    logger.error('Lab report share failed', { err, tokenId: String(token._id) });
+    return { sent: false, link, direct, recorded: false, reason: 'delivery_failed' };
   }
 }
 
@@ -356,16 +409,22 @@ router.post('/tests/:tokenId/report', authenticateToken, ensureLab, async (req, 
       Boolean(test.reportSharedUrl) &&
       test.reportSharedUrl === shareSignature(reportPdf, reportFileName || test.reportFileName);
     let notified = false;
+    // The report reached the patient's tracker and device, whatever WhatsApp did.
+    let published = false;
+    let retrying = false;
     let shareFailure = '';
 
     if (notify !== false && !alreadySent) {
       const share = await shareReportWithPatient({
+        io: req.io,
         token,
         test,
         patient: tokenPatient,
         doctor: tokenDoctor
       });
       notified = share.sent;
+      published = Boolean(share.recorded);
+      retrying = Boolean(share.willRetry);
       if (!share.sent && share.reason) shareFailure = share.reason;
     }
 
@@ -392,13 +451,21 @@ router.post('/tests/:tokenId/report', authenticateToken, ensureLab, async (req, 
       actor: req.user.username || 'Lab',
       message:
         `Report PDF attached for ${test.testName} (${token.tokenNumber})` +
-        (notified ? ' and sent to the patient on WhatsApp.' : '.'),
+        (notified
+          ? ' and sent to the patient on WhatsApp.'
+          : published
+            ? ' and published to the patient’s tracker; WhatsApp is still pending.'
+            : '.'),
       tokenNumber: token.tokenNumber,
       refId: token._id,
       severity: 'success'
     });
 
     res.json({
+      // Three outcomes, not two, and the bench acts differently on each. The
+      // middle one — WhatsApp refused but the patient HAS the report on their
+      // tracker and their phone, and the text is queued — used to read as a flat
+      // failure and sent people chasing a resend that was already happening.
       message: notified
         ? `Report attached and sent to ${tokenPatient ? tokenPatient.name : 'the patient'} on WhatsApp.` +
           (shareable
@@ -407,9 +474,14 @@ router.post('/tests/:tokenId/report', authenticateToken, ensureLab, async (req, 
         : alreadySent
           ? 'Report attached. The patient already has this document.'
           : shareFailure === 'no_phone'
-            ? 'Report attached. This patient has no phone number on file, so nothing could be sent.'
-            : 'Report attached, but WhatsApp did not accept the message. Use Resend once it is working.',
+            ? 'Report attached and published to the patient’s tracker. They have no phone number on file, so no WhatsApp could be sent.'
+            : published
+              ? 'Report attached and published to the patient’s tracker and device. WhatsApp did not accept it' +
+                (retrying ? ' — we will keep retrying automatically.' : '; please call them.')
+              : 'Report attached, but it could not be published to the patient. Use Resend.',
       notified,
+      published,
+      retrying,
       shareable,
       token
     });
@@ -451,7 +523,10 @@ router.post('/tests/:tokenId/report/resend', authenticateToken, ensureLab, async
       token.doctor ? Doctor.findById(toId(token.doctor)) : null
     ]);
     if (!tokenPatient || !tokenPatient.phone) {
-      return res.status(400).json({ message: 'This patient has no phone number on file.' });
+      return res.status(400).json({
+        message:
+          'This patient has no phone number on file. Their report is already on their tracker — add a number to send it on WhatsApp.'
+      });
     }
 
     // A direct download when the report lives in cloud storage; otherwise the
@@ -474,9 +549,25 @@ router.post('/tests/:tokenId/report/resend', authenticateToken, ensureLab, async
         : `\n📄 Open your report here:\n${link}\n`) +
       `Please show this to ${tokenDoctor ? tokenDoctor.name : 'your doctor'}. 🙏`;
 
-    const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
-    const result = await sendWhatsAppNotification(tokenPatient.phone, message);
-    const sent = result && result.status === 'sent';
+    // Through the same path as the original share, so a resend also refreshes the
+    // patient's tracker card and joins the automatic retry queue if Meta refuses
+    // it. `dedupeKey` matches the attach, so this updates that one card rather
+    // than adding a second "your report is ready" beneath it.
+    const { notifyPatient } = require('../utils/patientNotify');
+    const outcome = await notifyPatient({
+      io: req.io,
+      token,
+      patient: tokenPatient,
+      kind: 'report',
+      title: `${test.testName} report ready`,
+      body: `Result: ${resultLine}. Sent again at your request.`,
+      message,
+      link,
+      linkLabel: direct ? 'Download report (PDF)' : 'Open your report',
+      dedupeKey: `report:${test.testName}:${shareSignature(test.reportPdf, test.reportFileName)}`,
+      deferSave: true
+    });
+    const sent = outcome.sent;
 
     await logActivity(req.io, {
       hospital,
@@ -489,25 +580,36 @@ router.post('/tests/:tokenId/report/resend', authenticateToken, ensureLab, async
       severity: sent ? 'success' : 'warning'
     });
 
-    if (!sent) {
-      return res.status(502).json({
-        message: `WhatsApp did not accept the message${result && result.error ? ` — ${result.error}` : ''}.`,
-        sent: false,
-        hasPdfLink: Boolean(test.reportPdf)
-      });
-    }
-
     // Record what they now hold, so an attach of this same file does not send a
-    // third copy behind the resend.
-    if (test.reportPdf) {
+    // third copy behind the resend. Saved whether or not WhatsApp accepted it:
+    // `notifyPatient` deferred its own save, and the queued retry lives on this
+    // same document — dropping the write would drop the retry with it.
+    if (test.reportPdf && outcome.recorded) {
       test.reportSharedAt = new Date();
       test.reportSharedUrl = shareSignature(test.reportPdf, test.reportFileName);
+    }
+    if (outcome.recorded) {
       token.markModified && token.markModified('labTests');
       try {
         await token.save();
       } catch (saveErr) {
         logger.error('Could not record the report resend', { err: saveErr });
       }
+    }
+
+    if (!sent) {
+      return res.status(502).json({
+        message:
+          'WhatsApp did not accept the message.' +
+          (outcome.recorded
+            ? ' The report IS on the patient’s tracker' +
+              (outcome.willRetry ? ', and we will keep retrying the message.' : '; please call them.')
+            : ''),
+        sent: false,
+        recorded: Boolean(outcome.recorded),
+        retrying: Boolean(outcome.willRetry),
+        hasPdfLink: Boolean(test.reportPdf)
+      });
     }
 
     res.json({
@@ -701,9 +803,13 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
       : '';
 
     let patientNotified = false;
-    if (tokenPatient && tokenPatient.phone) {
+    let patientPublished = false;
+    // No longer gated on a phone number. A patient without one still has a
+    // tracker, and that is now where the report lands first.
+    {
       if (test.reportPdf) {
         const share = await shareReportWithPatient({
+          io,
           token,
           test,
           patient: tokenPatient,
@@ -712,9 +818,11 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
           ...(backToDoctor ? { closing: backToDoctor } : {})
         });
         patientNotified = share.sent;
-        // The stamp above lives on the sub-document; persist it so a later
-        // attach of the same file does not send this all over again.
-        if (share.sent) {
+        patientPublished = Boolean(share.recorded);
+        // The alert and the share stamp both live on this document and
+        // `shareReportWithPatient` deliberately does not save it. Persist once,
+        // here, so a later attach of the same file does not repeat all of this.
+        if (share.recorded) {
           token.markModified && token.markModified('labTests');
           try {
             await token.save();
@@ -723,19 +831,40 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
           }
         }
       } else {
-        // No document filed at all — the result is the whole report. Still
-        // worth a message: the value and where to take it.
-        try {
-          const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
-          const alertMsg =
-            `Hello ${tokenPatient.name}, your lab report for "${testName}" is ready.\n` +
-            `🧪 Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range — please show it to your doctor.' : ''}` +
-            `\nView online: ${prescriptionUrl(token._id)}\n` +
-            backToDoctor;
-          const result = await sendWhatsAppNotification(tokenPatient.phone, alertMsg);
-          patientNotified = Boolean(result && result.status === 'sent');
-        } catch (waErr) {
-          logger.error('Lab WhatsApp notify failed', { err: waErr });
+        // No document filed at all — the result IS the whole report. Still worth
+        // announcing: the value, and where to take it. Routed the same way as a
+        // filed report so it lands on the tracker too, not only in a text.
+        const alertMsg =
+          `Hello ${(tokenPatient && tokenPatient.name) || 'there'}, your lab report for "${testName}" is ready.\n` +
+          `🧪 Result: ${resultLine}${test.abnormal ? '\n⚠️ This value is outside the normal range — please show it to your doctor.' : ''}` +
+          `\nView online: ${prescriptionUrl(token._id)}\n` +
+          backToDoctor;
+
+        const { notifyPatient } = require('../utils/patientNotify');
+        const outcome = await notifyPatient({
+          io,
+          token,
+          patient: tokenPatient,
+          kind: 'report',
+          title: test.abnormal ? `${testName} result — needs attention` : `${testName} result ready`,
+          body:
+            `Result: ${resultLine}.` +
+            (test.abnormal ? ' This value is outside the normal range.' : '') +
+            ` Show it to ${doctorName}${room}.`,
+          message: alertMsg,
+          link: prescriptionUrl(token._id),
+          linkLabel: 'Open your report',
+          dedupeKey: `result:${testName}:${resultLine}`,
+          deferSave: true
+        });
+        patientNotified = outcome.sent;
+        patientPublished = Boolean(outcome.recorded);
+        if (outcome.recorded) {
+          try {
+            await token.save();
+          } catch (saveErr) {
+            logger.error('Could not record the result notification', { err: saveErr });
+          }
         }
       }
     }
@@ -744,6 +873,8 @@ router.post('/tests/:tokenId/complete', authenticateToken, ensureLab, async (req
       message: `Test "${testName}" completed successfully.`,
       allComplete: everythingDone,
       patientNotified,
+      // The patient can see this result even if WhatsApp refused it.
+      patientPublished,
       token
     });
   } catch (err: any) {

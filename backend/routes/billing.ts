@@ -9,9 +9,10 @@ const Medicine = require('../models/Medicine');
 const { authenticateToken, ensureRole } = require('../middleware/auth');
 const ensureStaff = ensureRole('staff');
 const { logActivity, announceJourney } = require('../utils/realtime');
-const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+const { notifyPatient } = require('../utils/patientNotify');
 const { getBillingConfig, priceOf, recalculateInvoice } = require('../utils/billingConfig');
 const { findPatientByPhone } = require('../utils/patientLookup');
+const { findInvoiceForToken } = require('../utils/invoiceLookup');
 const { setStage, deriveStage } = require('../utils/journeyHelper');
 const logger = require('../utils/logger');
 
@@ -24,16 +25,21 @@ async function generateInvoiceNumber(hospital, config) {
 }
 
 /**
- * WhatsApp a discharged patient their itemised bill, exactly once.
+ * Put a discharged patient's itemised bill in their hands, exactly once.
  *
  * Idempotent by design. Three different paths want to send this — the discharge
  * itself, the PDF being attached a second later, and reception's fallback — and
  * which one gets there first depends on whether cloud storage is configured. The
  * `receiptSentAt` stamp is what turns "whoever is ready" into one message.
  *
- * The stamp is only written on a delivery that succeeded. `sendWhatsAppNotification`
- * RESOLVES on a Meta rejection rather than throwing, so recording an optimistic
- * success would mark the patient as told and permanently block the retry.
+ * Delivery goes through `utils/patientNotify`, so the bill lands on the patient's
+ * tracker and their device even when WhatsApp is refusing everything — which here
+ * it periodically is. A rejected text is retried on a backoff rather than
+ * dropped, so nobody at the counter has to remember who was missed.
+ *
+ * `receiptSentAt` still means WHATSAPP DELIVERED and nothing weaker. Writing it
+ * for a merely-recorded alert would mark the patient as messaged and permanently
+ * block both the retry sweep and reception's Resend.
  *
  * @param options.onlyWithPdf  Skip unless a bill PDF is attached. Used by the
  *   discharge route, which runs before the browser has uploaded one.
@@ -44,10 +50,21 @@ interface ReceiptOptions {
   onlyWithPdf?: boolean;
   /** Send even if the patient was already sent this receipt. */
   force?: boolean;
+  /** Socket server, so the alert reaches a tracker that is open right now. */
+  io?: any;
 }
 
 interface ReceiptResult {
+  /** A WhatsApp message left. */
   sent: boolean;
+  /**
+   * The bill is on the patient's tracker and was pushed to their device, whether
+   * or not WhatsApp accepted it. Reception should be told this rather than a bare
+   * failure — the patient CAN see their bill.
+   */
+  recorded?: boolean;
+  /** WhatsApp failed but is queued for another automatic attempt. */
+  willRetry?: boolean;
   reason?: string;
   error?: string;
   withPdf?: boolean;
@@ -58,13 +75,11 @@ async function sendDischargeReceipt(
   config: any,
   options: ReceiptOptions = {}
 ): Promise<ReceiptResult> {
-  const { onlyWithPdf = false, force = false } = options;
+  const { onlyWithPdf = false, force = false, io = null } = options;
 
-  if (!invoice || !invoice.patient || !invoice.patient.phone) {
-    return { sent: false, reason: 'no_phone' };
-  }
+  if (!invoice) return { sent: false, reason: 'no_invoice' };
   if (invoice.receiptSentAt && !force) {
-    return { sent: false, reason: 'already_sent' };
+    return { sent: false, recorded: true, reason: 'already_sent' };
   }
 
   // Only a real link. `pdfUrl` is written by the client after a cloud upload, so
@@ -90,7 +105,7 @@ async function sendDischargeReceipt(
 
   const message =
     `🏥 DISCHARGE INVOICE SUMMARY — ${facilityName}\n` +
-    `Patient: ${invoice.patient.name}\n` +
+    `Patient: ${(invoice.patient && invoice.patient.name) || 'Patient'}\n` +
     `Invoice #: ${invoice.invoiceNumber}\n\n` +
     `${itemLines}\n\n` +
     `Subtotal: ${cur}${invoice.subtotal}\n` +
@@ -102,23 +117,58 @@ async function sendDischargeReceipt(
     (pdfLink ? `\n📄 Download Official PDF Bill:\n${pdfLink}\n` : '') +
     `\n${(config && config.footerNote) || 'Thank you. Get well soon!'} 🙏`;
 
+  // Everything above composes the message. Everything below is DELIVERY, and it
+  // no longer rests on WhatsApp alone.
+  //
+  // A discharged patient walking out of the building with an unpaid balance and
+  // no copy of their bill is the failure this prevents. `notifyPatient` writes
+  // the bill onto their tracker first, pushes it to their device, and only then
+  // tries WhatsApp — so a Meta rejection costs them a text, not the bill.
   try {
-    const result = await sendWhatsAppNotification(invoice.patient.phone, message);
-    if (!result || result.status !== 'sent') {
-      logger.error('Discharge receipt was not accepted for delivery', {
-        invoice: invoice.invoiceNumber,
-        status: result && result.status,
-        error: result && result.error
-      });
-      return { sent: false, reason: 'delivery_failed', error: result && result.error };
+    const outcome = await notifyPatient({
+      io,
+      token: invoice.token,
+      patient: invoice.patient,
+      kind: 'bill',
+      title: pdfLink ? 'Your bill is ready to download' : 'Your bill is ready',
+      body:
+        `Invoice ${invoice.invoiceNumber} — total ${cur}${invoice.totalAmount}, ` +
+        `paid ${cur}${invoice.amountPaid}` +
+        (invoice.balanceDue > 0 ? `. Balance due ${cur}${invoice.balanceDue}.` : `. Nothing outstanding.`),
+      message,
+      link: pdfLink,
+      linkLabel: 'Download bill (PDF)',
+      // The invoice, not the send. A corrected total re-notifies (the number
+      // changes); pressing save twice on the same bill does not.
+      dedupeKey: `bill:${invoice.invoiceNumber}:${invoice.totalAmount}:${invoice.amountPaid}`
+    });
+
+    // The stamp still means "WhatsApp delivered", and nothing else. Writing it on
+    // a merely-recorded alert would mark the patient as messaged and permanently
+    // suppress both the retry sweep and reception's Resend.
+    if (outcome.sent) {
+      invoice.receiptSentAt = new Date();
+      await invoice.save();
+      return { sent: true, recorded: true, withPdf: Boolean(pdfLink) };
     }
 
-    invoice.receiptSentAt = new Date();
-    await invoice.save();
-    return { sent: true, withPdf: Boolean(pdfLink) };
+    if (outcome.reason === 'delivery_failed') {
+      logger.error('Discharge receipt was not accepted for delivery', {
+        invoice: invoice.invoiceNumber,
+        willRetry: outcome.willRetry
+      });
+    }
+
+    return {
+      sent: false,
+      recorded: Boolean(outcome.recorded),
+      willRetry: Boolean(outcome.willRetry),
+      reason: outcome.reason || 'delivery_failed',
+      withPdf: Boolean(pdfLink)
+    };
   } catch (err) {
-    logger.error('Discharge receipt WhatsApp error', { err, invoice: invoice.invoiceNumber });
-    return { sent: false, reason: 'delivery_failed', error: err.message };
+    logger.error('Discharge receipt delivery error', { err, invoice: invoice.invoiceNumber });
+    return { sent: false, recorded: false, reason: 'delivery_failed', error: err.message };
   }
 }
 
@@ -344,7 +394,15 @@ router.get('/token/:tokenId', authenticateToken, async (req, res) => {
       return res.status(404).json({ message: 'Token not found' });
     }
 
-    let invoice = await Invoice.findOne({ token: tokenId, hospital }).populate('patient').populate('token');
+    // NOT `Invoice.findOne({ token: tokenId })`. That ref holds the whole
+    // populated Token document once a billing route has saved a populated
+    // invoice, so the equality query misses — and a miss here does not merely
+    // return nothing, it falls through to the auto-initialise below and raises a
+    // SECOND, empty bill alongside the real one. See utils/invoiceLookup.
+    let invoice = await findInvoiceForToken(hospital, tokenId);
+    if (invoice) {
+      invoice = await Invoice.findById(invoice._id).populate('patient').populate('token');
+    }
 
     if (!invoice) {
       // Auto-initialize invoice for token if it doesn't exist yet, at THIS
@@ -747,7 +805,7 @@ router.post('/invoices/:id/pdf', authenticateToken, ensureStaff, async (req, res
     let receipt: ReceiptResult = { sent: false, reason: 'not_discharged' };
     if (updated && updated.status === 'Discharged') {
       const config = await getBillingConfig(hospital);
-      receipt = await sendDischargeReceipt(updated, config);
+      receipt = await sendDischargeReceipt(updated, config, { io: req.io });
     }
 
     if (req.io) {
@@ -758,11 +816,20 @@ router.post('/invoices/:id/pdf', authenticateToken, ensureStaff, async (req, res
     }
 
     res.json({
+      // Say which of the two happened. "Attached" alone reads as a failure to
+      // reception when in fact the patient has the bill on their tracker and on
+      // their phone's notification shade — and it hides the fact that WhatsApp
+      // will be retried by itself, prompting a manual resend nobody needs.
       message: receipt.sent
         ? 'Bill PDF stored and sent to the patient on WhatsApp.'
-        : 'Invoice PDF attached successfully',
+        : receipt.recorded
+          ? 'Bill PDF stored and published to the patient. WhatsApp did not accept it' +
+            (receipt.willRetry ? ' — we will keep retrying automatically.' : '; please call them.')
+          : 'Invoice PDF attached successfully',
       invoice: updated,
-      receiptSent: receipt.sent
+      receiptSent: receipt.sent,
+      receiptRecorded: Boolean(receipt.recorded),
+      receiptRetrying: Boolean(receipt.willRetry)
     });
   } catch (error) {
     logger.error('Error attaching invoice PDF', { err: error });
@@ -849,7 +916,7 @@ router.post('/invoices/:id/discharge', authenticateToken, ensureStaff, async (re
     // is idempotent via `receiptSentAt`, so whichever path arrives first (the
     // PDF attach below, the client's fallback, or this call when a URL was
     // supplied in the request body) sends exactly one message.
-    const receipt = await sendDischargeReceipt(invoice, config, { onlyWithPdf: true });
+    const receipt = await sendDischargeReceipt(invoice, config, { onlyWithPdf: true, io: req.io });
 
     await logActivity(req.io, {
       hospital,
@@ -895,16 +962,29 @@ router.post('/invoices/:id/receipt', authenticateToken, ensureStaff, async (req,
 
     const config = await getBillingConfig(hospital);
     const receipt = await sendDischargeReceipt(invoice, config, {
-      force: req.body && req.body.resend === true
+      force: req.body && req.body.resend === true,
+      io: req.io
     });
 
     if (!receipt.sent) {
+      // 502 still, because the thing reception asked for — a WhatsApp — did not
+      // happen, and telling them otherwise is how a patient gets missed. But say
+      // what DID happen: the bill is on their tracker, it was pushed to their
+      // device, and the text is queued. Reception's next move is different for
+      // "queued, sit tight" than for "call them".
       return res.status(receipt.reason === 'already_sent' ? 200 : 502).json({
         message:
           receipt.reason === 'already_sent'
             ? 'The patient has already been sent this receipt. Use "resend" to send it again.'
-            : `WhatsApp did not accept the receipt${receipt.error ? ` — ${receipt.error}` : ''}.`,
+            : `WhatsApp did not accept the receipt${receipt.error ? ` — ${receipt.error}` : ''}.` +
+              (receipt.recorded
+                ? ' The bill IS on the patient’s tracker and was pushed to their device' +
+                  (receipt.willRetry ? ', and we will keep retrying the message.' : '.')
+                : '') +
+              (receipt.recorded && !receipt.willRetry ? ' Please call them.' : ''),
         sent: false,
+        recorded: Boolean(receipt.recorded),
+        retrying: Boolean(receipt.willRetry),
         reason: receipt.reason
       });
     }

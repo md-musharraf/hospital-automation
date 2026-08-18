@@ -32,6 +32,7 @@ const logger = require('../utils/logger');
 const { normalizePhone, parseBody, field } = require('@careeai/shared');
 const { findPatientByPhone, findPhoneConflict } = require('../utils/patientLookup');
 const { getBillingConfig } = require('../utils/billingConfig');
+const { findInvoiceForToken } = require('../utils/invoiceLookup');
 const { delayNotice, todayOpdHours } = require('../utils/shiftHelper');
 const { trackerUrl, prescriptionUrl } = require('../utils/env');
 
@@ -458,6 +459,39 @@ router.get('/reminders', authenticateToken, ensureStaff, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/v1/staff/alerts/retry — push out every bill and report WhatsApp
+ * refused, right now.
+ *
+ * The button for the moment after someone replaces the Meta credential. The
+ * background sweep would get there on its own, but only after each patient's
+ * backoff elapses — up to a couple of hours for the ones that failed first,
+ * which are precisely the ones waiting longest. This ignores the backoff and the
+ * give-up cap for this facility, without spending anyone's remaining automatic
+ * attempts.
+ */
+router.post('/alerts/retry', authenticateToken, ensureStaff, async (req, res) => {
+  try {
+    const hospital = req.user.hospital || 'general-hospital';
+    const { retryPatientAlerts } = require('../utils/patientNotify');
+    const summary = await retryPatientAlerts(req.io, { force: true, hospital });
+
+    res.json({
+      message:
+        summary.attempted === 0
+          ? 'Nothing is waiting to be delivered.'
+          : `Retried ${summary.attempted} undelivered message(s); ${summary.sent} went out.` +
+            (summary.sent < summary.attempted
+              ? ' The rest were refused again — check the WhatsApp connection.'
+              : ''),
+      ...summary
+    });
+  } catch (error: any) {
+    logger.error('Error retrying patient alerts', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // POST manually trigger pending reminders
 router.post('/reminders/trigger', authenticateToken, ensureStaff, async (req, res) => {
   try {
@@ -519,17 +553,22 @@ router.post('/follow-up/:tokenId', authenticateToken, ensureStaff, async (req, r
     const patientName = token.patient.name || 'Patient';
 
     let body = '';
+    // What the tracker card for this follow-up should say, and where it should
+    // point. Filled in alongside `body` so the two can never drift: the message
+    // and the card are the same announcement on two channels.
+    let cardTitle = '';
+    let cardBody = '';
+    let cardLink = '';
+    let cardLinkLabel = '';
 
     if (kind === 'bill') {
-      // Scoped by hospital as well as token. `Invoice` is tenant-owned, and a
-      // filter naming neither `hospital` nor `_id` is exactly what
-      // utils/tenantGuard refuses — it throws outside production and logs a
-      // guard error inside it. The token's facility is already verified above,
-      // so this is the same row either way; the clause is what keeps the query
-      // legible as tenant-scoped.
-      const invoice = await Invoice.findOne({ token: token._id, hospital: staffHosp }).sort({
-        createdAt: -1
-      });
+      // NOT an equality query on the ref. `Invoice.token` is overwritten with
+      // the whole populated Token document the first time a billing route saves
+      // a populated invoice — which the discharge does — so `{ token: id }`
+      // matches nothing for precisely the patients reception follows up with.
+      // This said "No bill has been raised for this patient yet" to someone who
+      // had just paid. See utils/invoiceLookup.
+      const invoice = await findInvoiceForToken(staffHosp, token._id);
       if (!invoice) {
         return res.status(400).json({ message: 'No bill has been raised for this patient yet.' });
       }
@@ -543,6 +582,13 @@ router.post('/follow-up/:tokenId', authenticateToken, ensureStaff, async (req, r
         (due > 0 ? `Balance due: ${currency}${due}\n` : `Fully paid — nothing outstanding. ✅\n`) +
         (invoice.pdfUrl ? `\n📄 Download your official bill:\n${invoice.pdfUrl}\n` : '') +
         `\nThank you. 🙏`;
+      cardTitle = due > 0 ? 'Your bill — balance outstanding' : 'Your bill';
+      cardBody =
+        `Invoice ${invoice.invoiceNumber} — total ${currency}${invoice.totalAmount || 0}, ` +
+        `paid ${currency}${invoice.amountPaid || 0}` +
+        (due > 0 ? `. Balance due ${currency}${due}.` : '. Fully paid.');
+      cardLink = /^https?:\/\//i.test(String(invoice.pdfUrl || '')) ? invoice.pdfUrl : '';
+      cardLinkLabel = 'Download bill (PDF)';
     } else if (kind === 'report') {
       const done = (token.labTests || []).filter((t) => t.status === 'Completed');
       if (done.length === 0) {
@@ -561,6 +607,15 @@ router.post('/follow-up/:tokenId', authenticateToken, ensureStaff, async (req, r
         lines.join('\n') +
         `\n\nView online: ${prescriptionUrl(token._id)}\n` +
         `Please show ${done.length > 1 ? 'these' : 'this'} to your doctor. 🙏`;
+      cardTitle = done.length > 1 ? 'Your lab reports are ready' : 'Your lab report is ready';
+      cardBody =
+        done
+          .map((test) => `${test.testName}: ${test.resultValue || 'Completed'}${test.abnormal ? ' ⚠️' : ''}`)
+          .join(' · ') + '. Please show them to your doctor.';
+      // The report page, never `reportPdf` — that may be the whole PDF inlined
+      // as a data URI, which no browser will navigate to.
+      cardLink = prescriptionUrl(token._id);
+      cardLinkLabel = done.length > 1 ? 'Open your reports' : 'Open your report';
     } else if (kind === 'queue') {
       const queue = token.doctor ? await Queue.findOne({ doctor: token.doctor._id }) : null;
       let ahead = -1;
@@ -587,6 +642,13 @@ router.post('/follow-up/:tokenId', authenticateToken, ensureStaff, async (req, r
             ? `\n⏳ The cabin is running about ${queue.bufferDelay} min behind.\n`
             : '') +
         `\nTrack live: ${trackerUrl(token._id)}`;
+      cardTitle = 'Your queue status';
+      cardBody =
+        ahead === 0
+          ? `You are being seen now — please go to ${token.doctor?.currentRoom || 'the cabin'}.`
+          : ahead > 0
+            ? `${ahead - 1} patient(s) ahead of you. Approx. your turn: ${formatApptTime(wait)}.`
+            : 'You are not in the active queue right now.';
     } else if (kind === 'info') {
       const hours = token.doctor ? todayOpdHours(token.doctor) : '';
       body =
@@ -598,12 +660,37 @@ router.post('/follow-up/:tokenId', authenticateToken, ensureStaff, async (req, r
         (config?.address ? `\n📍 ${config.address}\n` : '') +
         (config?.phone ? `📞 ${config.phone}\n` : '') +
         `\nTrack your visit: ${trackerUrl(token._id)}`;
+      cardTitle = 'Visit details';
+      cardBody =
+        (token.doctor ? `${token.doctor.name} (${token.doctor.department})` : facility) +
+        (token.doctor?.currentRoom ? ` · Cabin ${token.doctor.currentRoom}` : '') +
+        (hours ? ` · Today's OPD ${hours}` : '');
     } else {
       body = `🏥 ${facility}\n\n${customMessage.trim()}\n\n— Reception`;
+      cardTitle = `A message from ${facility}`;
+      cardBody = customMessage.trim();
     }
 
-    const result = await sendWhatsAppNotification(token.patient.phone, body, req.io);
-    const sent = result && result.status === 'sent';
+    // The follow-up goes on the patient's tracker as well as into WhatsApp, and
+    // joins the retry queue if Meta refuses it. Reception asking "did they get
+    // it" is the question this whole hub exists to answer, and a message that
+    // only ever existed as a rejected API call answers it badly.
+    const { notifyPatient } = require('../utils/patientNotify');
+    const outcome = await notifyPatient({
+      io: req.io,
+      token,
+      patient: token.patient,
+      kind: kind === 'custom' ? 'info' : kind,
+      title: cardTitle || `A message from ${facility}`,
+      body: cardBody || body,
+      message: body,
+      link: cardLink,
+      linkLabel: cardLinkLabel,
+      // Not deduped. Reception pressing this button is a deliberate "tell them
+      // again" — collapsing two of those into one card would hide the second.
+      dedupeKey: ''
+    });
+    const sent = outcome.sent;
 
     await logActivity(req.io, {
       hospital: staffHosp,
@@ -621,8 +708,15 @@ router.post('/follow-up/:tokenId', authenticateToken, ensureStaff, async (req, r
       // Meta token expiring is a recurring failure here, and reception silently
       // believing a patient was told is exactly how someone gets missed.
       return res.status(502).json({
-        message: `WhatsApp did not accept the message${result && result.error ? ` — ${result.error}` : ''}.`,
+        message:
+          'WhatsApp did not accept the message.' +
+          (outcome.recorded
+            ? ' It IS on the patient’s tracker and was pushed to their device' +
+              (outcome.willRetry ? ', and we will keep retrying.' : '; please call them.')
+            : ''),
         sent: false,
+        recorded: Boolean(outcome.recorded),
+        retrying: Boolean(outcome.willRetry),
         preview: body
       });
     }

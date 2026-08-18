@@ -157,6 +157,62 @@ const TokenSchema = new mongoose.Schema(
     // How many times a no-show has been auto-recalled (given a second chance in the
     // queue instead of being sent back to reception). Capped so it can't loop forever.
     recallCount: { type: Number, default: 0 },
+    // Everything this patient has been TOLD about this visit — their bill, their
+    // lab reports, anything reception followed up with.
+    //
+    // This exists because a WhatsApp text was the only delivery this system had.
+    // A message that Meta rejects (an expired token, a blocked app — both routine
+    // here) left the patient with no bill, no report, and no trace anywhere that
+    // anyone had tried: the tracker they were told to watch showed the visit
+    // moving on without ever mentioning the document. Writing the alert down
+    // first, and treating WhatsApp as one of three ways to deliver it, is what
+    // makes the notification survive a dead channel.
+    patientAlerts: [
+      {
+        kind: {
+          type: String,
+          enum: ['bill', 'report', 'prescription', 'queue', 'info'],
+          default: 'info'
+        },
+        title: { type: String },
+        // The short line the patient's tracker shows. NOT the WhatsApp body —
+        // that one carries the facility letterhead and closing, which is noise
+        // on a screen that is already branded.
+        body: { type: String },
+        // An https link only, and openable. Never `reportPdf`/`pdfUrl` verbatim:
+        // those may hold the whole PDF as a base64 data URI. See
+        // utils/patientNotify.
+        link: { type: String },
+        linkLabel: { type: String },
+        // The exact WhatsApp body, kept so a retry re-sends the message that was
+        // composed at the time rather than rebuilding it from data that has since
+        // moved on.
+        message: { type: String },
+        // Identifies the THING being announced, so a retry updates one entry
+        // instead of stacking duplicates in the patient's feed, and re-running an
+        // idempotent send does not announce the same bill twice.
+        dedupeKey: { type: String },
+        createdAt: { type: Date, default: Date.now },
+        readAt: { type: Date, default: null },
+        // 'skipped' = never attempted (no phone on file). 'abandoned' = retried to
+        // the cap and given up on, which is reception's cue to phone them.
+        whatsappStatus: {
+          type: String,
+          enum: ['sent', 'failed', 'skipped', 'abandoned'],
+          default: 'failed'
+        },
+        whatsappAt: { type: Date },
+        attempts: { type: Number, default: 0 },
+        lastError: { type: String },
+        nextRetryAt: { type: Date, default: null },
+        pushed: { type: Boolean, default: false }
+      }
+    ],
+    // The earliest `nextRetryAt` across this token's alerts, or null when nothing
+    // is outstanding. Denormalised so the retry sweep can find the handful of
+    // tokens that need it with one indexed top-level query, instead of scanning
+    // every token in the platform and walking its alert array.
+    alertRetryAt: { type: Date, default: null, index: true },
     calledAt: { type: Date },
     completedAt: { type: Date }
   },

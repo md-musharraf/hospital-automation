@@ -52,8 +52,22 @@ export function toArchiveRecord(token: any): Record<string, any> {
 /**
  * Close the day for one facility.
  */
+/**
+ * Is this token still waiting on a message we promised to keep retrying?
+ *
+ * An evening discharge whose bill WhatsApp refused is queued with a backoff of
+ * up to a couple of hours. Archiving the token at midnight would delete the
+ * queue entry AND the tracker page the patient was pointed at — leaving someone
+ * who was never told, with nowhere left to look. The wait is bounded: after the
+ * last attempt the alert is abandoned, `alertRetryAt` clears, and the token
+ * archives on the following night like any other.
+ */
+export function hasUndeliveredAlert(token: any): boolean {
+  return Boolean(token && token.alertRetryAt);
+}
+
 export async function resetFacility(io: any, hospital: string, tokens: any[]): Promise<Record<string, any>> {
-  const finished = tokens.filter((t) => !CARRY_FORWARD_STAGES.has(t.journeyStage));
+  const finished = tokens.filter((t) => !CARRY_FORWARD_STAGES.has(t.journeyStage) && !hasUndeliveredAlert(t));
   const carried = tokens.length - finished.length;
 
   if (finished.length > 0) {

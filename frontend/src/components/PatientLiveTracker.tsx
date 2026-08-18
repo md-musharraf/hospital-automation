@@ -105,6 +105,10 @@ export default function PatientLiveTracker() {
     // land here as fast as the WhatsApp carrying the same news.
     socket.on('departure-alert', handleUpdate);
     socket.on('token-deferred', handleUpdate);
+    // A bill or a lab report was just published to this visit. It arrives here
+    // as well as on WhatsApp and as a device push, because WhatsApp is the one
+    // channel that regularly refuses to deliver — see utils/patientNotify.
+    socket.on('patient-alert', handleUpdate);
 
     return () => {
       socket.off('queue-updated', handleUpdate);
@@ -113,8 +117,35 @@ export default function PatientLiveTracker() {
       socket.off('queue-delayed', handleUpdate);
       socket.off('departure-alert', handleUpdate);
       socket.off('token-deferred', handleUpdate);
+      socket.off('patient-alert', handleUpdate);
     };
   }, [tokenId]);
+
+  /**
+   * Everything the hospital has told this patient about this visit — their bill,
+   * their reports, anything reception followed up with.
+   *
+   * Newest first. This is the copy that always exists: the WhatsApp carrying the
+   * same news may have been refused by Meta, and before this page showed the
+   * feed, that left the patient with no bill and no report anywhere they could
+   * reach. See backend/utils/patientNotify.
+   */
+  const alerts = [...((data && data.token && data.token.patientAlerts) || [])].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  const unreadCount = alerts.filter((a) => !a.readAt).length;
+  const newestAlertAt = alerts.length ? alerts[0].createdAt : null;
+
+  // Clear the badge once the patient has actually had the updates on screen for
+  // a moment — not the instant the page mounts, which would mark a notification
+  // read before it had been rendered.
+  useEffect(() => {
+    if (unreadCount === 0) return;
+    const timer = setTimeout(() => {
+      fetch(`${BACKEND_URL}/api/v1/chat/token/${tokenId}/alerts/read`, { method: 'POST' }).catch(() => {});
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [tokenId, newestAlertAt, unreadCount]);
 
   useEffect(() => {
     if ('serviceWorker' in navigator && 'PushManager' in window) {
@@ -325,6 +356,90 @@ export default function PatientLiveTracker() {
                   Your updated turn is shown below — there is no need to wait here until then.
                 </p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Everything the hospital has told this patient, on the page itself.
+         *
+         * The bill and the lab report used to exist only as a WhatsApp text. When
+         * Meta refused the send — which here it does for hours at a time — the
+         * patient had no bill, no report, and no trace on the very page they were
+         * told to watch. This panel is that missing copy, and it is deliberately
+         * above the progress rail: a document that is ready is more actionable
+         * than a diagram of where they are. */}
+        {alerts.length > 0 && (
+          <div className="mb-6 bg-[var(--bg-color)] border border-[var(--border-color)]/50 rounded-2xl p-4 space-y-3 text-left">
+            <div className="flex items-center justify-between">
+              <p className="text-[12px] font-black uppercase tracking-wider text-[var(--primary-color)] flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[16px]">notifications</span>
+                Your updates
+              </p>
+              {unreadCount > 0 && (
+                <span className="bg-[var(--primary-color)] text-white text-[11px] font-black px-2 py-0.5 rounded-full">
+                  {unreadCount} new
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              {alerts.map((a, idx) => (
+                <div
+                  key={a._id || `${a.dedupeKey}-${idx}`}
+                  className={`rounded-xl border p-3 ${
+                    a.readAt
+                      ? 'border-[var(--border-color)]/40 bg-[var(--card-bg)]'
+                      : 'border-[var(--primary-color)]/40 bg-[var(--primary-color)]/5'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="material-symbols-outlined text-[18px] text-[var(--primary-color)] mt-0.5">
+                      {a.kind === 'bill'
+                        ? 'receipt_long'
+                        : a.kind === 'report'
+                          ? 'science'
+                          : a.kind === 'prescription'
+                            ? 'medication'
+                            : a.kind === 'queue'
+                              ? 'schedule'
+                              : 'info'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-extrabold text-[var(--text-color)] leading-snug">
+                        {a.title}
+                      </p>
+                      <p className="text-[12px] text-[var(--text-secondary)] mt-0.5 leading-relaxed">
+                        {a.body}
+                      </p>
+                      <p className="text-[11px] text-[var(--text-secondary)]/70 mt-1">
+                        {new Date(a.createdAt).toLocaleString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          day: 'numeric',
+                          month: 'short'
+                        })}
+                        {a.whatsappStatus === 'sent' && ' · also sent to your WhatsApp'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* A real https link every time. The backend refuses to put a
+                      data URI here precisely so this can be a plain anchor —
+                      a data: href renders a button that silently does nothing.
+                      See lib/storedDocument for the stored-inline case. */}
+                  {a.link && (
+                    <a
+                      href={a.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 bg-[var(--primary-color)] hover:opacity-90 text-white text-[12px] font-bold rounded-lg shadow-sm"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                      <span>{a.linkLabel || 'Open'}</span>
+                    </a>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}

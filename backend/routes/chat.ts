@@ -2776,6 +2776,24 @@ router.get('/public-tv-queues', async (req, res) => {
 });
 
 // GET token details and queue position by Mongo ID
+/**
+ * POST /api/v1/chat/token/:tokenId/alerts/read — clear the unread badge.
+ *
+ * Unauthenticated, like the rest of the tracker: the token id IS the patient's
+ * credential here, and the worst a stranger holding one can do is mark someone's
+ * own notifications as seen.
+ */
+router.post('/token/:tokenId/alerts/read', async (req, res) => {
+  try {
+    const { markAlertsRead } = require('../utils/patientNotify');
+    const cleared = await markAlertsRead(req.params.tokenId);
+    res.json({ cleared });
+  } catch (err: any) {
+    logger.error('Could not mark patient alerts read', { err });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 router.get('/token/:tokenId', async (req, res) => {
   try {
     const { tokenId } = req.params;

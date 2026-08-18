@@ -363,6 +363,26 @@ setInterval(
     } catch (error) {
       console.error('[AUTO-REMINDERS] Background auto follow-up process encountered an error:', error);
     }
+
+    // Re-send the bills and lab reports WhatsApp refused.
+    //
+    // Deliberately in the same tick and after the reminders, not on a timer of
+    // its own: both talk to the same Meta endpoint, and when the credential is
+    // dead — which here it periodically is, for hours — two independent loops
+    // would just double the rejected calls.
+    //
+    // This is the follow-up that used to be a human's job. Every patient whose
+    // discharge or report landed during an outage is retried automatically, so
+    // replacing the token is the only action anyone has to take.
+    try {
+      const { retryPatientAlerts } = require('./utils/patientNotify');
+      const summary = await retryPatientAlerts(io);
+      if (summary.attempted > 0) {
+        logger.info('[PATIENT-ALERTS] Follow-up sweep', summary);
+      }
+    } catch (error) {
+      logger.error('[PATIENT-ALERTS] Follow-up sweep failed', { err: error.message });
+    }
   },
   5 * 60 * 1000
 ); // 5 minutes

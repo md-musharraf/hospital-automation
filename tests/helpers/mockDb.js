@@ -12,7 +12,7 @@ const path = require('path');
 let idCounter = 0;
 const nextId = (prefix) => `${prefix}${++idCounter}`;
 
-/** Supports the query shapes the routes actually use: equality, $ne, $in, $gte, $or. */
+/** Supports the query shapes the routes actually use: equality, $ne, $in, $gte, $lte, $or. */
 function matches(doc, query) {
   for (const [key, expected] of Object.entries(query || {})) {
     if (key === '$or') {
@@ -25,6 +25,10 @@ function matches(doc, query) {
       if ('$ne' in expected && String(actual) === String(expected.$ne)) return false;
       if ('$in' in expected && !expected.$in.map(String).includes(String(actual))) return false;
       if ('$gte' in expected && !(new Date(actual) >= new Date(expected.$gte))) return false;
+      // Real Mongo type-brackets its comparisons, so a null field never matches
+      // a date range. This does not, so callers filter nulls in JS afterwards —
+      // see utils/patientNotify's retry sweep, which relies on exactly that.
+      if ('$lte' in expected && !(new Date(actual) <= new Date(expected.$lte))) return false;
       continue;
     }
 
