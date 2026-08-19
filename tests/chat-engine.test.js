@@ -62,6 +62,9 @@ async function say(sessionId, message) {
   reply = await say(session, 'Ramesh Kumar');
   check('asks for age', /age of Ramesh/i.test(reply.flat), reply.flat);
 
+  reply = await say(session, '2a');
+  check('strictly rejects invalid age "2a"', /valid age|सही उम्र/i.test(reply.flat), reply.flat);
+
   reply = await say(session, '34 years');
   check('accepts "34 years"', /gender/i.test(reply.flat), reply.flat);
 

@@ -401,10 +401,63 @@ const RESET_TRIGGERS = ['hi', 'hello', 'hey', 'start', 'reset', 'restart', 'न�
 // Only these wipe the chosen language too; a plain "hi" just returns to the menu.
 const HARD_RESET_TRIGGERS = ['reset', 'restart'];
 
-/** A phone number a human might type: 7-15 digits, spaces/dashes/+ allowed. */
-function isLikelyPhone(raw) {
-  const d = digitsOnly(raw);
-  return d.length >= 7 && d.length <= 15;
+/** A phone number a human might type: 7-15 digits, spaces/dashes/+ allowed, NO random alphabetic words. */
+function isLikelyPhone(raw: any) {
+  if (!raw) return false;
+  const s = String(raw).trim();
+  const d = digitsOnly(s);
+  if (d.length < 7 || d.length > 15) return false;
+
+  // Strip standard punctuation: +, -, (, ), spaces, dots
+  const stripped = s.replace(/^whatsapp:/i, '').replace(/[\d\s+\-().]/g, '');
+  if (stripped.length > 0) {
+    if (!/^(?:phone|ph|tel|mobile|mob|फ़ोन|फोन|नंबर|नम्बर)\s*:?\s*[\d\s+\-().]+$/i.test(s)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Strict and intelligent age parser for both WhatsApp and Web chatbots.
+ * Accepts "25", "25 years", "25 yrs", "25 saal", "उम्र 45", "age: 45", "6 months".
+ * Strictly REJECTS invalid inputs like "2a", "2b", "2a v", "xyz", "abc".
+ */
+function parseAge(raw: any): number | null {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+
+  // 1. Pure digits (e.g. "25", "4", "102")
+  if (/^\d{1,3}$/.test(s)) {
+    const val = parseInt(s, 10);
+    return val >= 1 && val <= 130 ? val : null;
+  }
+
+  const text = s.toLowerCase().trim();
+
+  // 2. Months/infants (e.g. "6 months", "6 m", "6 mahine", "6 महीने")
+  const monthMatch = text.match(
+    /^(?:age\s*:?\s*|umr\s*:?\s*|उम्र\s*:?\s*)?(\d{1,2})\s*(?:months?|mos?|mo|m|mahine|mahina|महीने|महीना)\s*$/i
+  );
+  if (monthMatch) {
+    const months = parseInt(monthMatch[1], 10);
+    if (months >= 0 && months <= 120) {
+      return Math.max(1, Math.round(months / 12));
+    }
+  }
+
+  // 3. Years with valid unit / prefix words only
+  const yearMatch = text.match(
+    /^(?:age\s*:?\s*|umr\s*:?\s*|उम्र\s*:?\s*)?(\d{1,3})\s*(?:years?|yrs?|yr|y|saal|sal|varsh|वर्ष|साल|yo|y\/o|years\s+old)\s*$/i
+  );
+  if (yearMatch) {
+    const val = parseInt(yearMatch[1], 10);
+    return val >= 1 && val <= 130 ? val : null;
+  }
+
+  return null;
 }
 
 // `normalizePhone`, `phoneVariants` and `findPatientByPhone` used to be defined
@@ -2363,11 +2416,11 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     };
   }
 
-  // AWAITING_AGE state. Accepts "45", "45 years", "45 saal", "उम्र 45".
+  // AWAITING_AGE state. Accepts "45", "45 years", "45 saal", "उम्र 45", "6 months".
+  // Strictly rejects invalid/mixed alphanumeric strings like "2a", "2b", "2a v".
   if (state === 'AWAITING_AGE') {
-    const ageMatch = cleanMsg.match(/\d{1,3}/);
-    const age = ageMatch ? parseInt(ageMatch[0], 10) : NaN;
-    if (isNaN(age) || age <= 0 || age > 130) {
+    const age = parseAge(cleanMsg);
+    if (age === null) {
       return {
         messages: [{ sender: 'bot', text: text.invalidAge }],
         options: []
@@ -3467,7 +3520,8 @@ export default router;
   parseTokenNumber,
   normalizePhone,
   phoneVariants,
-  isLikelyPhone
+  isLikelyPhone,
+  parseAge
 };
 
 module.exports = router;
