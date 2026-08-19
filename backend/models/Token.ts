@@ -24,6 +24,11 @@ const TokenSchema = new mongoose.Schema(
       enum: ['None', 'Senior', 'Pregnant', 'Disabled'],
       default: 'None'
     },
+    // Next-Day / Night-booking support: if patient books at night when today's OPD is closed,
+    // token is stamped for next day's sitting and preserved across midnight reset.
+    isNextDay: { type: Boolean, default: false },
+    scheduledDate: { type: Date, default: null },
+    appointmentDate: { type: String, default: null }, // "YYYY-MM-DD"
     // WHERE this booking came from. Reception needs to tell a patient standing at
     // the counter apart from one who booked from home on WhatsApp — the second
     // group never passes the desk, so their bill and their special-needs priority

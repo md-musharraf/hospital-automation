@@ -38,7 +38,7 @@ const logger = require('../utils/logger');
 const { useMockDb, trackerUrl } = require('../utils/env');
 const { normalizePhone, phoneVariants, normalizeName } = require('@careeai/shared');
 const { stageMessage } = require('../utils/journeyHelper');
-const { describeNextSitting } = require('../utils/shiftHelper');
+const { describeNextSitting, sittingStatus, localDateKey, formatHhMm } = require('../utils/shiftHelper');
 const { onlyToday } = require('../utils/dates');
 const { findPatientByPhone } = require('../utils/patientLookup');
 const { authenticateStaffOrAdmin } = require('../middleware/auth');
@@ -603,11 +603,21 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
 
   const tokenNumber = await generateUniqueTokenNumber(currentHospId);
 
+  const sitting = sittingStatus(selectedDoc, new Date());
+  const isNextDay = Boolean(
+    sitting.nextStart && sitting.nextStart.toDateString() !== new Date().toDateString()
+  );
+  const scheduledDate = sitting.nextStart || new Date();
+  const appointmentDate = localDateKey(scheduledDate);
+
   const token = new Token({
     tokenNumber,
     hospital: currentHospId,
     status: 'Waiting',
     tokenType,
+    isNextDay,
+    scheduledDate,
+    appointmentDate,
     priorityCategory: priorityCategory || 'None',
     bookingSource: bookingSourceOf(session),
     patient: patient._id,
@@ -656,11 +666,16 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   // empty hospital reads as a mistake — so the number and the reason for it
   // travel together.
   const nextSitting = describeNextSitting(selectedDoc, new Date());
-  const sittingLine = nextSitting ? `🕒 ${selectedDoc.name} sits for ${nextSitting}.\n` : '';
+  let bookingMessage = '';
 
-  // Crowd-control message: tell the patient roughly WHEN to come and that they do
-  // NOT need to stand in line — a WhatsApp ping will call them when their turn nears.
-  const bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}.\n${sittingLine}Your approx. turn: ${apptTime} (~${refreshedToken.estimatedWaitTime || 0} min).\n${leaveLine}\n✅ No need to stand in line — wait at home/outside. We will WhatsApp you when your turn is near.\n🔔 घर पर आराम करें, लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम आपको WhatsApp कर देंगे।\n\nTrack live: ${trackerLink}`;
+  if (isNextDay) {
+    const nextStartLabel = sitting.shift ? formatHhMm(sitting.shift.start) : '09:00 AM';
+    const nextDateStr = sitting.nextStart ? sitting.nextStart.toLocaleDateString() : 'Tomorrow';
+    bookingMessage = `Hello ${patient.name},\n🌙 Today's OPD is closed. Your token ${refreshedToken.tokenNumber} is confirmed for TOMORROW (${nextDateStr}) for ${nextSitting || 'OPD'} starting at ${nextStartLabel} with ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}.\n${leaveLine}\n✅ No need to come tonight — relax at home. We will WhatsApp you before tomorrow's OPD begins!\n🔔 आज की OPD समाप्त हो चुकी है। आपका टोकन कल (${nextDateStr}) सुबह ${nextStartLabel} के लिए कन्फर्म है। हम समय पर WhatsApp अलर्ट भेजेंगे।\n\nTrack live: ${trackerLink}`;
+  } else {
+    const sittingLine = nextSitting ? `🕒 ${selectedDoc.name} sits for ${nextSitting}.\n` : '';
+    bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}.\n${sittingLine}Your approx. turn: ${apptTime} (~${refreshedToken.estimatedWaitTime || 0} min).\n${leaveLine}\n✅ No need to stand in line — wait at home/outside. We will WhatsApp you when your turn is near.\n🔔 घर पर आराम करें, लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम आपको WhatsApp कर देंगे।\n\nTrack live: ${trackerLink}`;
+  }
 
   try {
     await sendWhatsAppNotification(patient.phone, bookingMessage);

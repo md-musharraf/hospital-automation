@@ -66,8 +66,21 @@ export function hasUndeliveredAlert(token: any): boolean {
   return Boolean(token && token.alertRetryAt);
 }
 
+/**
+ * Is this token pre-booked for the upcoming day/future?
+ * Tokens booked during off-hours/night for tomorrow's OPD must be preserved.
+ */
+export function isScheduledForFuture(token: any, now: Date = new Date()): boolean {
+  if (!token) return false;
+  if (token.isNextDay) return true;
+  if (token.scheduledDate && new Date(token.scheduledDate) > now) return true;
+  return false;
+}
+
 export async function resetFacility(io: any, hospital: string, tokens: any[]): Promise<Record<string, any>> {
-  const finished = tokens.filter((t) => !CARRY_FORWARD_STAGES.has(t.journeyStage) && !hasUndeliveredAlert(t));
+  const finished = tokens.filter(
+    (t) => !CARRY_FORWARD_STAGES.has(t.journeyStage) && !hasUndeliveredAlert(t) && !isScheduledForFuture(t)
+  );
   const carried = tokens.length - finished.length;
 
   if (finished.length > 0) {
