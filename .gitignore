@@ -31,3 +31,7 @@ backend/.env
 
 # VAPID private keys
 backend/vapid_keys.json
+
+# Agent workspace / logs
+.agents/
+

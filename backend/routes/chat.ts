@@ -33,12 +33,20 @@ const {
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { resolveLocation } = require('../utils/locationHelper');
 const { buildLandingPage } = require('../utils/facilityProfile');
-const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
+const { classifySymptoms, detectPriorityCategory } = require('../utils/triageHelper');
 const logger = require('../utils/logger');
 const { useMockDb, trackerUrl } = require('../utils/env');
 const { normalizePhone, phoneVariants, normalizeName } = require('@careeai/shared');
 const { stageMessage } = require('../utils/journeyHelper');
-const { describeNextSitting, sittingStatus, localDateKey, formatHhMm } = require('../utils/shiftHelper');
+const {
+  describeNextSitting,
+  sittingStatus,
+  localDateKey,
+  formatHhMm,
+  firstSittingOn,
+  dayName
+} = require('../utils/shiftHelper');
+const { resolveBookingSlot } = require('../utils/bookingSlot');
 const { onlyToday } = require('../utils/dates');
 const { findPatientByPhone } = require('../utils/patientLookup');
 const { authenticateStaffOrAdmin } = require('../middleware/auth');
@@ -582,10 +590,27 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
 
   const tokenType = session.tempData.tokenType || 'Regular';
 
-  // OPD capacity cutoff — never refuse an Emergency, but a Regular/Re-visit booking
-  // is blocked once the doctor hits the daily token limit, so the patient is told
-  // NOW (before travelling) instead of standing in a line for a token that won't come.
-  if (tokenType !== 'Emergency' && (await isDoctorFull(selectedDoc))) {
+  // Which day this token is for. Resolved before anything is written, because a
+  // day with no room left is the one case where nothing should be written at all.
+  //
+  // An Emergency is never rolled and never refused: it is seen now, whatever the
+  // schedule and whatever the day's limit says. Every other booking follows the
+  // doctor's own sitting hours — after the evening shift that means tomorrow —
+  // and rolls past any day whose token limit is already spent.
+  const slot =
+    tokenType === 'Emergency'
+      ? {
+          scheduledDate: new Date(),
+          appointmentDate: localDateKey(new Date()),
+          isNextDay: false,
+          rolledDays: 0,
+          noRoom: false
+        }
+      : await resolveBookingSlot(selectedDoc, new Date());
+
+  // Genuinely nothing free in the week ahead — tell the patient before they
+  // travel, rather than issuing a token that cannot be honoured.
+  if (slot.noRoom) {
     return {
       messages: [{ sender: 'bot', text: text.opdFull }],
       options: text.options
@@ -604,11 +629,7 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   const tokenNumber = await generateUniqueTokenNumber(currentHospId);
 
   const sitting = sittingStatus(selectedDoc, new Date());
-  const isNextDay = Boolean(
-    sitting.nextStart && sitting.nextStart.toDateString() !== new Date().toDateString()
-  );
-  const scheduledDate = sitting.nextStart || new Date();
-  const appointmentDate = localDateKey(scheduledDate);
+  const { isNextDay, scheduledDate, appointmentDate } = slot;
 
   const token = new Token({
     tokenNumber,
@@ -669,9 +690,27 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   let bookingMessage = '';
 
   if (isNextDay) {
-    const nextStartLabel = sitting.shift ? formatHhMm(sitting.shift.start) : '09:00 AM';
-    const nextDateStr = sitting.nextStart ? sitting.nextStart.toLocaleDateString() : 'Tomorrow';
-    bookingMessage = `Hello ${patient.name},\n🌙 Today's OPD is closed. Your token ${refreshedToken.tokenNumber} is confirmed for TOMORROW (${nextDateStr}) for ${nextSitting || 'OPD'} starting at ${nextStartLabel} with ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}.\n${leaveLine}\n✅ No need to come tonight — relax at home. We will WhatsApp you before tomorrow's OPD begins!\n🔔 आज की OPD समाप्त हो चुकी है। आपका टोकन कल (${nextDateStr}) सुबह ${nextStartLabel} के लिए कन्फर्म है। हम समय पर WhatsApp अलर्ट भेजेंगे।\n\nTrack live: ${trackerLink}`;
+    // The day the token is actually for — which is tomorrow for an evening
+    // booking, but a later day when everything in between was full. Read off
+    // the resolved slot rather than off "next sitting from now", so the date in
+    // the message and the date on the token can never disagree.
+    const startOnDay = firstSittingOn(selectedDoc, scheduledDate);
+    const nextStartLabel = startOnDay
+      ? formatHhMm(`${startOnDay.getHours()}:${String(startOnDay.getMinutes()).padStart(2, '0')}`)
+      : sitting.shift
+        ? formatHhMm(sitting.shift.start)
+        : '09:00 AM';
+    const nextDateStr = scheduledDate.toLocaleDateString();
+    const isTomorrow =
+      localDateKey(scheduledDate) === localDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const dayWord = isTomorrow ? 'TOMORROW' : dayName(scheduledDate).toUpperCase();
+    // Why they were moved past today: a closed OPD and a full one are different
+    // facts, and a patient who is told the wrong one turns up on the wrong day.
+    const reasonLine =
+      slot.rolledDays > 0
+        ? `📋 Today's OPD tokens are finished, so you have the next available slot.`
+        : `🌙 Today's OPD is closed.`;
+    bookingMessage = `Hello ${patient.name},\n${reasonLine} Your token ${refreshedToken.tokenNumber} is confirmed for ${dayWord} (${nextDateStr}) for ${nextSitting || 'OPD'} starting at ${nextStartLabel} with ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}.\n${leaveLine}\n✅ No need to come today — relax at home. We will WhatsApp you before the OPD begins!\n🔔 आज की OPD उपलब्ध नहीं है। आपका टोकन ${nextDateStr} को ${nextStartLabel} बजे के लिए कन्फर्म है। हम समय पर WhatsApp अलर्ट भेजेंगे।\n\nTrack live: ${trackerLink}`;
   } else {
     const sittingLine = nextSitting ? `🕒 ${selectedDoc.name} sits for ${nextSitting}.\n` : '';
     bookingMessage = `Hello ${patient.name}, your token ${refreshedToken.tokenNumber} is booked for ${selectedDoc.name} in ${selectedDoc.currentRoom || 'Cabin A'}.\n${sittingLine}Your approx. turn: ${apptTime} (~${refreshedToken.estimatedWaitTime || 0} min).\n${leaveLine}\n✅ No need to stand in line — wait at home/outside. We will WhatsApp you when your turn is near.\n🔔 घर पर आराम करें, लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम आपको WhatsApp कर देंगे।\n\nTrack live: ${trackerLink}`;
@@ -1197,53 +1236,16 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
     msgs.push({ sender: 'bot', text: text.emergencyDetected });
   }
 
-  const {
-    doctor: suggested,
-    matchedDepartment,
-    allFull
-  } = await pickLeastBusyDoctor(doctors, triage.department);
-
-  // OPD capacity cutoff: if every candidate doctor is full and this is not an
-  // emergency, tell the patient now — don't recommend a doctor who can't take them.
-  if (allFull && session.tempData.tokenType !== 'Emergency') {
-    session.currentState = 'COMPLETED';
-    session.markModified && session.markModified('tempData');
-    await session.save();
-    return { messages: [...msgs, { sender: 'bot', text: text.opdFull }], options: text.options };
-  }
-
-  if (suggested) {
-    // Estimated wait for the suggested doctor so the patient sees the payoff of
-    // load balancing before confirming.
-    const sQueue = await Queue.findOne({ doctor: suggested._id });
-    const sLen = (sQueue && sQueue.activeQueue && sQueue.activeQueue.length) || 0;
-    // Shift-aware, cabin-aware and paced on what this doctor is actually
-    // managing today. An empty queue is not "no wait" if the next sitting is at
-    // five — that mismatch is what told a patient "Approx. wait: 0 min" for a
-    // cabin that would be empty for hours — and it is not "no wait" either
-    // while somebody is still inside the room.
-    const sWait = await projectedWaitMinutes(suggested, sQueue, sLen);
-    const shownDept = matchedDepartment ? triage.department : suggested.department || triage.department;
-
-    session.tempData.suggestedDoctorId = String(suggested._id);
-    session.currentState = 'AWAITING_TRIAGE_CONFIRM';
-    session.markModified && session.markModified('tempData');
-    await session.save();
-
-    return {
-      messages: [
-        ...msgs,
-        {
-          sender: 'bot',
-          text: text.triageRecommend(shownDept, suggested.name, suggested.currentRoom || 'Cabin A', sWait)
-        },
-        { sender: 'bot', text: text.triageConfirmPrompt }
-      ],
-      options: text.triageConfirmOptions
-    };
-  }
-
-  // Fallback: could not auto-route — offer the full manual list.
+  // The patient picks their own doctor. Symptoms are still read — they travel
+  // with the token so the cabin knows what is coming, and a red flag above
+  // still escalates the token to Emergency — but they no longer CHOOSE for the
+  // patient. A recommendation that arrives before the list has an answer people
+  // accept by default, and at a facility where somebody has been seeing the
+  // same doctor for years that default is wrong more often than it is right.
+  //
+  // Capacity is no longer judged here either: a full day is now a reason to
+  // book the next one (see `resolveBookingSlot`), not a reason to turn the
+  // patient away, and that decision belongs at the booking itself.
   session.currentState = 'AWAITING_DOCTOR_CHOICE';
   session.markModified && session.markModified('tempData');
   await session.save();

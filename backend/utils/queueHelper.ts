@@ -3,7 +3,13 @@ import Doctor from '../models/Doctor';
 import Token from '../models/Token';
 import logger from './logger';
 import { startOfToday } from './dates';
-import { shiftLeadMinutes, describeNextSitting, delayNotice, todayOpdHours } from './shiftHelper';
+import {
+  shiftLeadMinutes,
+  describeNextSitting,
+  delayNotice,
+  todayOpdHours,
+  localDateKey
+} from './shiftHelper';
 
 // How many front positions get a "your turn is near — please come now" ping.
 // Positions 1 and 2 in the waiting line, so a patient can wait at home / outside
@@ -1082,24 +1088,46 @@ export async function insertTokenByPriority(queue: any, token: any): Promise<voi
   queue.activeQueue.splice(idx, 0, token._id);
 }
 
-// How many OPD tokens this doctor has taken today (excluding no-shows, which free
-// their slot back up). Used for the daily capacity cutoff.
-export async function getTodayTokenCount(doctorId: string): Promise<number> {
+/**
+ * How many OPD tokens this doctor is holding for one calendar day, excluding
+ * no-shows (which free their slot back up).
+ *
+ * Counted by the day the patient is SEEN, not the day the token was created.
+ * Those are the same thing for a walk-in and different for every booking taken
+ * after hours: a token created at 9pm for tomorrow's OPD belongs to tomorrow's
+ * capacity. Counting it against today filled today's limit with patients who
+ * were never going to be seen today, and — because a full day was refused
+ * outright — turned the whole evening into "come back tomorrow" for everyone.
+ *
+ * `appointmentDate` has only been written since next-day booking existed, so a
+ * token without one falls back to its creation day.
+ */
+export async function getTokenCountForDate(doctorId: string, dateKey: string): Promise<number> {
   try {
-    const start = startOfToday().getTime();
     const toks = await (Token as any).find({ doctor: doctorId, status: { $ne: 'Absent' } });
-    return (toks || []).filter((t: any) => t.createdAt && new Date(t.createdAt).getTime() >= start).length;
+    return (toks || []).filter((t: any) => {
+      if (t.appointmentDate) return t.appointmentDate === dateKey;
+      return t.createdAt && localDateKey(new Date(t.createdAt)) === dateKey;
+    }).length;
   } catch (_) {
     return 0;
   }
 }
 
-// Is this doctor at/over their daily token limit? (0 limit = unlimited => never full.)
-export async function isDoctorFull(doctor: any): Promise<boolean> {
+/** How many tokens this doctor has taken for today. */
+export async function getTodayTokenCount(doctorId: string): Promise<number> {
+  return getTokenCountForDate(doctorId, localDateKey(new Date()));
+}
+
+/**
+ * Is this doctor at/over their daily token limit for a given day?
+ * (0 limit = unlimited => never full.) Defaults to today.
+ */
+export async function isDoctorFull(doctor: any, dateKey?: string): Promise<boolean> {
   if (!doctor) return false;
   const limit = doctor.dailyTokenLimit || 0;
   if (limit <= 0) return false;
-  const count = await getTodayTokenCount(doctor._id);
+  const count = await getTokenCountForDate(doctor._id, dateKey || localDateKey(new Date()));
   return count >= limit;
 }
 

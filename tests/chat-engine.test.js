@@ -71,10 +71,20 @@ async function say(sessionId, message) {
   reply = await say(session, 'm');
   check('accepts "m" as gender', !/gender/i.test(reply.flat), reply.flat);
   check('does not ask for symptoms twice', !/describe/i.test(reply.flat), reply.flat);
-  check('recommends a doctor', /Recommended/i.test(reply.flat), reply.flat);
-  check('fever routes to General Medicine', /General Medicine/.test(reply.flat), reply.flat);
+  // The patient chooses their own doctor. Symptoms are still read — they ride
+  // along on the token and a red flag still escalates it — but the bot does not
+  // pick for them any more: a recommendation shown before the list is accepted
+  // by default, and a default is the wrong answer for anyone who has been
+  // seeing the same doctor for years.
+  check(
+    'offers the doctor list rather than a recommendation',
+    /Select an available doctor/i.test(reply.flat),
+    reply.flat
+  );
+  check('does not recommend anyone', !/Recommended/i.test(reply.flat), reply.flat);
+  check('every doctor at the facility is on the list', (reply.options || []).length >= 1, reply.options);
 
-  reply = await say(session, 'yes');
+  reply = await say(session, '1');
   // A first-time patient is asked one more thing before the token is minted:
   // how long they need to reach us, which is what every later "leave now"
   // alert is counted back from. See tests/arrival-alerts.test.js.
@@ -112,7 +122,13 @@ async function say(sessionId, message) {
 
   reply = await say(session, 'seene me dard ho raha hai');
   check('chest pain escalates to emergency', /URGENT|EMERGENCY/i.test(reply.flat), reply.flat);
-  check('chest pain routes to Cardiology', /Cardiology/.test(reply.flat), reply.flat);
+  // Symptom reading still drives the EMERGENCY flag — that is a safety decision
+  // and stays automatic. What it no longer does is choose the doctor.
+  check(
+    '…and still hands the choice to the patient',
+    /Select an available doctor/i.test(reply.flat),
+    reply.flat
+  );
 
   reply = await say(session, '1');
   check('booked', /Booking Complete/i.test(reply.flat), reply.flat);
@@ -129,10 +145,12 @@ async function say(sessionId, message) {
   check('and the patient is recognised', /Welcome back/i.test(reply.flat), reply.flat);
 
   reply = await say(session, 'ghutne me dard');
-  check('knee pain routes to Orthopedics', /Orthopedics/.test(reply.flat), reply.flat);
-
-  reply = await say(session, '2'); // choose another doctor
-  check('manual doctor list offered', /Select an available doctor/i.test(reply.flat), reply.flat);
+  check(
+    'symptoms lead straight to the doctor list',
+    /Select an available doctor/i.test(reply.flat),
+    reply.flat
+  );
+  check('…with no department pre-picked for them', !/Recommended/i.test(reply.flat), reply.flat);
 
   reply = await say(session, 'dr chen');
   check('loose doctor-name match books it', /Booking Complete/i.test(reply.flat), reply.flat);
@@ -221,10 +239,14 @@ async function say(sessionId, message) {
   await waSay(session, 'Anil Kumar');
   await waSay(session, '30');
   reply = await waSay(session, 'male');
-  check("routed to the CHOSEN facility's own doctor", /Neha Rao/.test(reply.flat), reply.flat);
-  check('and to the right department', /Dental/.test(reply.flat), reply.flat);
+  // Tenant scoping, which the manual list has to honour just as the old
+  // recommendation did: the only doctors offered are this facility's own.
+  const offered = (reply.options || []).join(' | ');
+  check("only the CHOSEN facility's own doctors are offered", /Neha Rao/.test(offered), offered);
+  check('and none from the facility they did not pick', !/Sarah Jenkins/.test(offered), offered);
+  check('the list names the department too', /Dental/.test(offered), offered);
 
-  await waSay(session, 'yes');
+  await waSay(session, 'Neha Rao');
   reply = await waSay(session, '15 minutes'); // travel time, asked once per patient
   check('token booked at the chosen facility', /Booking Complete/i.test(reply.flat), reply.flat);
   const dentalToken = models.Token._rows.find((t) => t.hospital === 'bright-dental');

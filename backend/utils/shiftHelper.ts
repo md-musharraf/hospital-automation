@@ -432,6 +432,30 @@ export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatu
  * The lead time to add to a wait estimate: how long before the doctor is even
  * in the room. Zero while sitting, so nothing changes for a live OPD.
  */
+/**
+ * The doctor's first sitting on a given calendar day, or null if they do not sit.
+ *
+ * `sittingStatus` answers "what is next from right now", which is the wrong
+ * question once a booking has to be placed on a SPECIFIC day — a patient rolled
+ * past a full Tuesday needs Wednesday's start time, not the next start from now.
+ * Overrides only ever describe today, so `effectiveShifts` applies them for
+ * today and the standing schedule answers for every later day.
+ */
+export function firstSittingOn(doctor: any, date: Date): Date | null {
+  const usable = effectiveShifts(doctor, date).filter(
+    (s) => parseHhMm(s.start) !== null && parseHhMm(s.end) !== null
+  );
+
+  let earliest: Date | null = null;
+  for (const shift of usable) {
+    if (!shiftRunsOn(shift, doctor, date)) continue;
+    const window = shiftWindow(shift, date);
+    if (!window) continue;
+    if (!earliest || window.start < earliest) earliest = window.start;
+  }
+  return earliest;
+}
+
 export function shiftLeadMinutes(doctor: any, now: Date = new Date()): number {
   return sittingStatus(doctor, now).minutesUntilStart;
 }

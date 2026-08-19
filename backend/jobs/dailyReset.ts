@@ -9,7 +9,8 @@ import Doctor from '../models/Doctor';
 import ArchivedToken from '../models/ArchivedToken';
 import logger from '../utils/logger';
 import { toFacility } from '../utils/realtime';
-import { pruneOverrides } from '../utils/shiftHelper';
+import { pruneOverrides, localDateKey } from '../utils/shiftHelper';
+import { insertTokenByPriority } from '../utils/queueHelper';
 
 /**
  * Journey stages that mean treatment is still in progress.
@@ -77,10 +78,64 @@ export function isScheduledForFuture(token: any, now: Date = new Date()): boolea
   return false;
 }
 
+/**
+ * Re-insert tokens whose appointment day has arrived into their doctor's queue.
+ *
+ * Anything dated later than today stays out — it is not this day's line yet, and
+ * it will be re-inserted by the reset on the morning it is due. A token with no
+ * appointment date predates next-day booking and is left alone.
+ */
+export async function requeueScheduledTokens(
+  hospital: string,
+  tokens: any[],
+  now: Date = new Date()
+): Promise<number> {
+  const todayKey = localDateKey(now);
+  const due = (tokens || []).filter(
+    (t) => t.appointmentDate && t.appointmentDate <= todayKey && t.status === 'Waiting'
+  );
+  if (due.length === 0) return 0;
+
+  // Oldest booking first, so the patient who booked at 9pm is ahead of the one
+  // who booked at 11pm. Priority tiers still re-sort them on insert.
+  due.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+
+  let requeued = 0;
+  for (const token of due) {
+    const doctorId = token.doctor && (token.doctor._id || token.doctor);
+    if (!doctorId) continue;
+    try {
+      let queue = await (Queue as any).findOne({ doctor: doctorId });
+      if (!queue) queue = new (Queue as any)({ doctor: doctorId, activeQueue: [] });
+      const already = (queue.activeQueue || []).some((id: any) => String(id) === String(token._id));
+      if (already) continue;
+      await insertTokenByPriority(queue, token);
+      await queue.save();
+      requeued += 1;
+    } catch (err) {
+      // One unqueueable token must not stop the rest of the facility opening.
+      logger.error('[DAILY-RESET] Could not requeue a scheduled token', {
+        hospital,
+        token: String(token._id),
+        err
+      });
+    }
+  }
+
+  if (requeued > 0)
+    logger.info('[DAILY-RESET] Scheduled tokens returned to the queue', { hospital, requeued });
+  return requeued;
+}
+
 export async function resetFacility(io: any, hospital: string, tokens: any[]): Promise<Record<string, any>> {
   const finished = tokens.filter(
     (t) => !CARRY_FORWARD_STAGES.has(t.journeyStage) && !hasUndeliveredAlert(t) && !isScheduledForFuture(t)
   );
+  const archivedIds = new Set(finished.map((t) => String(t._id)));
+  // What survives the night. Only these may be put back into a queue — the rest
+  // are about to be deleted, and re-inserting one would point the new day's line
+  // at a token that no longer exists.
+  const kept = tokens.filter((t) => !archivedIds.has(String(t._id)));
   const carried = tokens.length - finished.length;
 
   if (finished.length > 0) {
@@ -94,6 +149,15 @@ export async function resetFacility(io: any, hospital: string, tokens: any[]): P
       { doctor: { $in: doctors.map((d: any) => d._id) } },
       { currentToken: null, activeQueue: [], bufferDelay: 0, delayReason: '', delayedUntil: null }
     );
+
+    // Put back the tokens that were booked FOR the day now beginning.
+    //
+    // Clearing every queue is right — yesterday's line is over — but the tokens
+    // kept above are kept precisely because they belong to a day that has not
+    // happened yet, and a patient who booked at 9pm for this morning's OPD was
+    // left holding a token that existed, tracked, and appeared in no queue at
+    // all. They arrived to find themselves not in the line.
+    await requeueScheduledTokens(hospital, kept);
 
     // Yesterday's "I'll be 30 minutes late" must not survive into today. The
     // lookup is keyed by date so a stale row never applies, but clearing it

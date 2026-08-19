@@ -635,7 +635,9 @@ const seedMockData = async () => {
           availabilityStatus: 'Available',
           averageCheckupTime: 12,
           currentRoom: 'Cabin 101',
-          hospital: 'general-hospital'
+          hospital: 'general-hospital',
+          shifts: [{ label: 'Morning', start: '09:00', end: '13:00' }],
+          dailyTokenLimit: 20
         },
         {
           name: 'Dr. Robert Chen',
@@ -645,7 +647,8 @@ const seedMockData = async () => {
           availabilityStatus: 'Available',
           averageCheckupTime: 8,
           currentRoom: 'Cabin 102',
-          hospital: 'bright-dental-clinic'
+          hospital: 'bright-dental-clinic',
+          shifts: [{ label: 'Evening', start: '16:00', end: '20:00' }]
         },
         {
           name: 'Dr. Emily Taylor',
@@ -655,7 +658,11 @@ const seedMockData = async () => {
           availabilityStatus: 'Available',
           averageCheckupTime: 10,
           currentRoom: 'Cabin 103',
-          hospital: 'general-hospital'
+          hospital: 'general-hospital',
+          shifts: [
+            { label: 'Morning', start: '10:00', end: '13:00' },
+            { label: 'Evening', start: '17:00', end: '20:00' }
+          ]
         },
         {
           name: 'Dr. Alan Green',
@@ -665,7 +672,8 @@ const seedMockData = async () => {
           availabilityStatus: 'Available',
           averageCheckupTime: 15,
           currentRoom: 'Lab Room A',
-          hospital: 'care-diagnostics'
+          hospital: 'care-diagnostics',
+          shifts: [{ label: 'Collection', start: '07:00', end: '15:00' }]
         },
         {
           name: 'Dr. Clara Watson',

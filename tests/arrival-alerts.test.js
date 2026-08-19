@@ -403,9 +403,11 @@ const sentTo = (phone) => outbound.filter((m) => m.phone === phone);
   await say(s1, '34');
   await say(s1, 'm');
 
-  let reply = await say(s1, 'yes');
+  // The patient now picks their own doctor off the list instead of confirming a
+  // recommendation; the travel-time question follows the choice either way.
+  let reply = await say(s1, '1');
   check(
-    'Confirming the doctor asks how long they need to reach us',
+    'Choosing the doctor asks how long they need to reach us',
     /how long do you need to REACH/i.test(reply.flat),
     reply.flat
   );
@@ -424,7 +426,10 @@ const sentTo = (phone) => outbound.filter((m) => m.phone === phone);
   check('…and confirms what we will do with it', /60 min/.test(reply.flat), reply.flat);
   check('…telling them when to leave home', /Leave (home by|for the hospital)/i.test(reply.flat), reply.flat);
 
-  const booked = models.Token._rows.find((t) => t.symptoms && String(t.doctor) === 'chatdoc');
+  // Found by the symptoms the patient typed rather than by doctor id: the
+  // patient picks off the list now, so which doctor they land on is their
+  // choice and not something this test should pin.
+  const booked = models.Token._rows.find((t) => t.symptoms === 'mujhe 2 din se bukhar hai');
   check('The travel time is stored on the token', booked && booked.travelMinutes === 60, booked);
 
   const ramesh = models.Patient._rows.find((p) => p.name === 'Ramesh Kumar');
@@ -443,7 +448,7 @@ const sentTo = (phone) => outbound.filter((m) => m.phone === phone);
   await say(s2, 'English');
   await say(s2, 'phir se bukhar hai');
   await say(s2, '+91 98765 43219');
-  reply = await say(s2, 'yes');
+  reply = await say(s2, '1');
   check(
     'A returning patient is never asked the same question twice',
     !/how long do you need to REACH/i.test(reply.flat),
@@ -477,7 +482,7 @@ const sentTo = (phone) => outbound.filter((m) => m.phone === phone);
   await say(s5, 'Sunita Devi');
   await say(s5, '41');
   await say(s5, 'f');
-  await say(s5, 'yes');
+  await say(s5, '1'); // pick the first doctor off the list
 
   reply = await say(s5, '4'); // the "1 hour" button
   check('Option 4 is one hour, not four minutes', /about 60 min/i.test(reply.flat), reply.flat);
@@ -495,7 +500,7 @@ const sentTo = (phone) => outbound.filter((m) => m.phone === phone);
   await say(s6, 'Alok Nath');
   await say(s6, '29');
   await say(s6, 'm');
-  await say(s6, 'yes');
+  await say(s6, '1'); // pick the first doctor off the list
 
   reply = await say(s6, '1'); // the "I'm at the hospital" button
   check('Option 1 means already here', /you are here already/i.test(reply.flat), reply.flat);
@@ -512,7 +517,7 @@ const sentTo = (phone) => outbound.filter((m) => m.phone === phone);
   await say(s4, 'Imran Ali');
   await say(s4, '52');
   reply = await say(s4, 'm');
-  const emergencyReply = /Booking Complete/i.test(reply.flat) ? reply : await say(s4, 'yes');
+  const emergencyReply = /Booking Complete/i.test(reply.flat) ? reply : await say(s4, '1');
   check(
     'A red-flag booking goes straight through',
     /Booking Complete/i.test(emergencyReply.flat),
