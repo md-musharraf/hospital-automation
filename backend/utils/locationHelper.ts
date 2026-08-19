@@ -1,10 +1,4 @@
-import {
-  getAllStates,
-  getDistrictsForState,
-  isValidState,
-  isValidDistrict,
-  normalizeLocation
-} from '@careeai/shared';
+import { getDistrictsForState, isValidState, isValidDistrict, normalizeLocation } from '@careeai/shared';
 
 // Location fallback helper.
 //
@@ -89,4 +83,80 @@ export function resolveLocation({
     state: cleanState || cleanCity || 'Other',
     district: cleanDistrict || cleanCity || 'Other'
   };
+}
+
+export interface LocationCheck {
+  ok: boolean;
+  message?: string;
+  state: string;
+  district: string;
+}
+
+/**
+ * Gate for a facility's location before it is written.
+ *
+ * The Super Admin portal already constrains state and district to the canonical
+ * dataset with cascading dropdowns, so the browser never sends anything else.
+ * That is exactly why the server has to check too: `normalizeLocation` hands
+ * back the raw trimmed string when it does not recognise a state, so a direct
+ * API call storing "Jharkhandd" was persisted verbatim — and the public
+ * discovery filters build their state list *from stored facilities*, so one
+ * typo mints a permanent phantom entry that no admin screen can remove.
+ *
+ * Both fields stay optional: a facility onboarded with only a city still falls
+ * back to `resolveLocation`. What is rejected is a value that is present and
+ * wrong, or a district that does not belong to the state it arrived with.
+ * Returns canonical casing on success so callers can store the result directly.
+ */
+export function checkLocationInput(stateRaw?: unknown, districtRaw?: unknown): LocationCheck {
+  // Typed as `unknown` on purpose: these arrive from JSON, where the declared
+  // string type is a suggestion. A `{"$ne": null}` posted here used to reach
+  // .trim() and crash the handler into a 500 — the caller learns nothing and
+  // the log fills with stack traces instead of one rejected request.
+  const state = typeof stateRaw === 'string' ? stateRaw.trim() : '';
+  const district = typeof districtRaw === 'string' ? districtRaw.trim() : '';
+
+  if (stateRaw != null && typeof stateRaw !== 'string') {
+    return { ok: false, message: 'State must be a text value.', state: '', district: '' };
+  }
+  if (districtRaw != null && typeof districtRaw !== 'string') {
+    return { ok: false, message: 'District must be a text value.', state: '', district: '' };
+  }
+
+  if (!state && !district) {
+    return { ok: true, state: '', district: '' };
+  }
+
+  if (state && !isValidState(state)) {
+    return {
+      ok: false,
+      message: `"${state}" is not a recognised Indian State or Union Territory.`,
+      state: '',
+      district: ''
+    };
+  }
+
+  // A district without a state cannot be checked against anything, and stored
+  // on its own it is unreachable from the State -> District discovery flow.
+  if (district && !state) {
+    return {
+      ok: false,
+      message: `A district ("${district}") requires the State or Union Territory it belongs to.`,
+      state: '',
+      district: ''
+    };
+  }
+
+  if (district && !isValidDistrict(state, district)) {
+    const known = getDistrictsForState(state);
+    return {
+      ok: false,
+      message: `"${district}" is not a district of ${normalizeLocation(state, '').state}. Expected one of ${known.length} official districts.`,
+      state: '',
+      district: ''
+    };
+  }
+
+  const norm = normalizeLocation(state, district);
+  return { ok: true, state: norm.state, district: norm.district };
 }

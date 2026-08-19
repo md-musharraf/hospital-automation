@@ -511,7 +511,7 @@ const seedMockData = async () => {
             'Dedicated children and adult dental health center providing laser surgery, cosmetic aligners, and cleanings.',
           city: 'Mumbai',
           state: 'Maharashtra',
-          district: 'Mumbai',
+          district: 'Mumbai City',
           coordinates: { lat: 19.076, lng: 72.8777 },
           type: 'Clinic',
           clinicSubtype: 'Dental',

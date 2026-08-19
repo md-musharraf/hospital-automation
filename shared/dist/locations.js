@@ -83,7 +83,7 @@ exports.INDIA_LOCATIONS = {
             'West Siang'
         ]
     },
-    'Assam': {
+    Assam: {
         name: 'Assam',
         type: 'state',
         districts: [
@@ -124,7 +124,7 @@ exports.INDIA_LOCATIONS = {
             'West Karbi Anglong'
         ]
     },
-    'Bihar': {
+    Bihar: {
         name: 'Bihar',
         type: 'state',
         districts: [
@@ -168,7 +168,7 @@ exports.INDIA_LOCATIONS = {
             'West Champaran'
         ]
     },
-    'Chhattisgarh': {
+    Chhattisgarh: {
         name: 'Chhattisgarh',
         type: 'state',
         districts: [
@@ -207,15 +207,12 @@ exports.INDIA_LOCATIONS = {
             'Surguja'
         ]
     },
-    'Goa': {
+    Goa: {
         name: 'Goa',
         type: 'state',
-        districts: [
-            'North Goa',
-            'South Goa'
-        ]
+        districts: ['North Goa', 'South Goa']
     },
-    'Gujarat': {
+    Gujarat: {
         name: 'Gujarat',
         type: 'state',
         districts: [
@@ -254,7 +251,7 @@ exports.INDIA_LOCATIONS = {
             'Valsad'
         ]
     },
-    'Haryana': {
+    Haryana: {
         name: 'Haryana',
         type: 'state',
         districts: [
@@ -300,7 +297,7 @@ exports.INDIA_LOCATIONS = {
             'Una'
         ]
     },
-    'Jharkhand': {
+    Jharkhand: {
         name: 'Jharkhand',
         type: 'state',
         districts: [
@@ -330,7 +327,7 @@ exports.INDIA_LOCATIONS = {
             'West Singhbhum'
         ]
     },
-    'Karnataka': {
+    Karnataka: {
         name: 'Karnataka',
         type: 'state',
         districts: [
@@ -367,7 +364,7 @@ exports.INDIA_LOCATIONS = {
             'Yadgir'
         ]
     },
-    'Kerala': {
+    Kerala: {
         name: 'Kerala',
         type: 'state',
         districts: [
@@ -448,7 +445,7 @@ exports.INDIA_LOCATIONS = {
             'Vidisha'
         ]
     },
-    'Maharashtra': {
+    Maharashtra: {
         name: 'Maharashtra',
         type: 'state',
         districts: [
@@ -490,7 +487,7 @@ exports.INDIA_LOCATIONS = {
             'Yavatmal'
         ]
     },
-    'Manipur': {
+    Manipur: {
         name: 'Manipur',
         type: 'state',
         districts: [
@@ -512,7 +509,7 @@ exports.INDIA_LOCATIONS = {
             'Ukhrul'
         ]
     },
-    'Meghalaya': {
+    Meghalaya: {
         name: 'Meghalaya',
         type: 'state',
         districts: [
@@ -530,7 +527,7 @@ exports.INDIA_LOCATIONS = {
             'West Khasi Hills'
         ]
     },
-    'Mizoram': {
+    Mizoram: {
         name: 'Mizoram',
         type: 'state',
         districts: [
@@ -547,7 +544,7 @@ exports.INDIA_LOCATIONS = {
             'Serchhip'
         ]
     },
-    'Nagaland': {
+    Nagaland: {
         name: 'Nagaland',
         type: 'state',
         districts: [
@@ -569,7 +566,7 @@ exports.INDIA_LOCATIONS = {
             'Zunheboto'
         ]
     },
-    'Odisha': {
+    Odisha: {
         name: 'Odisha',
         type: 'state',
         districts: [
@@ -605,7 +602,7 @@ exports.INDIA_LOCATIONS = {
             'Sundargarh'
         ]
     },
-    'Punjab': {
+    Punjab: {
         name: 'Punjab',
         type: 'state',
         districts: [
@@ -634,7 +631,7 @@ exports.INDIA_LOCATIONS = {
             'Tarn Taran'
         ]
     },
-    'Rajasthan': {
+    Rajasthan: {
         name: 'Rajasthan',
         type: 'state',
         districts: [
@@ -690,17 +687,10 @@ exports.INDIA_LOCATIONS = {
             'Udaipur'
         ]
     },
-    'Sikkim': {
+    Sikkim: {
         name: 'Sikkim',
         type: 'state',
-        districts: [
-            'Gangtok',
-            'Gyalshing',
-            'Mangan',
-            'Namchi',
-            'Pakyong',
-            'Soreng'
-        ]
+        districts: ['Gangtok', 'Gyalshing', 'Mangan', 'Namchi', 'Pakyong', 'Soreng']
     },
     'Tamil Nadu': {
         name: 'Tamil Nadu',
@@ -746,7 +736,7 @@ exports.INDIA_LOCATIONS = {
             'Virudhunagar'
         ]
     },
-    'Telangana': {
+    Telangana: {
         name: 'Telangana',
         type: 'state',
         districts: [
@@ -785,7 +775,7 @@ exports.INDIA_LOCATIONS = {
             'Yadadri Bhuvanagiri'
         ]
     },
-    'Tripura': {
+    Tripura: {
         name: 'Tripura',
         type: 'state',
         districts: [
@@ -880,7 +870,7 @@ exports.INDIA_LOCATIONS = {
             'Varanasi'
         ]
     },
-    'Uttarakhand': {
+    Uttarakhand: {
         name: 'Uttarakhand',
         type: 'state',
         districts: [
@@ -932,29 +922,19 @@ exports.INDIA_LOCATIONS = {
     'Andaman and Nicobar Islands': {
         name: 'Andaman and Nicobar Islands',
         type: 'ut',
-        districts: [
-            'Nicobar',
-            'North and Middle Andaman',
-            'South Andaman'
-        ]
+        districts: ['Nicobar', 'North and Middle Andaman', 'South Andaman']
     },
-    'Chandigarh': {
+    Chandigarh: {
         name: 'Chandigarh',
         type: 'ut',
-        districts: [
-            'Chandigarh'
-        ]
+        districts: ['Chandigarh']
     },
     'Dadra and Nagar Haveli and Daman and Diu': {
         name: 'Dadra and Nagar Haveli and Daman and Diu',
         type: 'ut',
-        districts: [
-            'Dadra and Nagar Haveli',
-            'Daman',
-            'Diu'
-        ]
+        districts: ['Dadra and Nagar Haveli', 'Daman', 'Diu']
     },
-    'Delhi': {
+    Delhi: {
         name: 'Delhi',
         type: 'ut',
         districts: [
@@ -997,30 +977,20 @@ exports.INDIA_LOCATIONS = {
             'Udhampur'
         ]
     },
-    'Ladakh': {
+    Ladakh: {
         name: 'Ladakh',
         type: 'ut',
-        districts: [
-            'Kargil',
-            'Leh'
-        ]
+        districts: ['Kargil', 'Leh']
     },
-    'Lakshadweep': {
+    Lakshadweep: {
         name: 'Lakshadweep',
         type: 'ut',
-        districts: [
-            'Lakshadweep'
-        ]
+        districts: ['Lakshadweep']
     },
-    'Puducherry': {
+    Puducherry: {
         name: 'Puducherry',
         type: 'ut',
-        districts: [
-            'Karaikal',
-            'Mahe',
-            'Puducherry',
-            'Yanam'
-        ]
+        districts: ['Karaikal', 'Mahe', 'Puducherry', 'Yanam']
     }
 };
 /**

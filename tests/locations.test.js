@@ -26,7 +26,7 @@ const {
 } = require(path.resolve(__dirname, '..', 'shared', 'dist'));
 
 // 2. Backend Location Helper Utilities
-const { CITY_TO_STATE, resolveLocation } = require(
+const { CITY_TO_STATE, resolveLocation, checkLocationInput } = require(
   path.resolve(__dirname, '..', 'backend', 'dist', 'utils', 'locationHelper')
 );
 
@@ -714,6 +714,82 @@ const { CITY_TO_STATE, resolveLocation } = require(
     'Preselection for empty record falls back safely to default state "Delhi" and valid district',
     pres3.chosenState === 'Delhi' && isValidDistrict('Delhi', pres3.chosenDistrict),
     pres3
+  );
+
+  // =========================================================================
+  // TIER 5: SERVER-SIDE WRITE GATE (checkLocationInput)
+  // =========================================================================
+  section('Tier 5: Server-Side Write Gate — rejecting locations the filters cannot survive');
+
+  // The portal's cascading dropdowns mean a browser never sends a bad state.
+  // A direct API call does, and the public State -> District filters are built
+  // from whatever facilities have stored — so an unrecognised value becomes a
+  // phantom filter entry that no admin screen can remove.
+  const badState = checkLocationInput('Jharkhandd', 'Ranchi');
+  check(
+    'Misspelt state is rejected rather than stored verbatim',
+    badState.ok === false && badState.state === '' && /not a recognised/i.test(badState.message || ''),
+    badState
+  );
+
+  const wrongDistrict = checkLocationInput('Bihar', 'Ranchi');
+  check(
+    'District belonging to another state is rejected',
+    wrongDistrict.ok === false && /not a district of Bihar/i.test(wrongDistrict.message || ''),
+    wrongDistrict
+  );
+
+  const orphanDistrict = checkLocationInput('', 'Ranchi');
+  check(
+    'District without a state is rejected (unreachable from the discovery flow)',
+    orphanDistrict.ok === false && /requires the State/i.test(orphanDistrict.message || ''),
+    orphanDistrict
+  );
+
+  const emptyPair = checkLocationInput('', '');
+  check(
+    'Empty location is allowed — the city-derived fallback still applies',
+    emptyPair.ok === true && emptyPair.state === '' && emptyPair.district === '',
+    emptyPair
+  );
+
+  const stateOnly = checkLocationInput('  jHaRkHaNd  ', '');
+  check(
+    'State alone is allowed and returned in canonical casing',
+    stateOnly.ok === true && stateOnly.state === 'Jharkhand' && stateOnly.district === '',
+    stateOnly
+  );
+
+  const messyPair = checkLocationInput('  jharkhand ', '  rAnChI  ');
+  check(
+    'Valid pair is normalised to canonical casing before storage',
+    messyPair.ok === true && messyPair.state === 'Jharkhand' && messyPair.district === 'Ranchi',
+    messyPair
+  );
+
+  // Injection-shaped input is not special-cased anywhere; it simply is not a
+  // state, and the gate is what keeps it out of the stored filter vocabulary.
+  const injection = checkLocationInput({ $ne: null }, 'Ranchi');
+  check('Non-string state (NoSQL operator object) is rejected', injection.ok === false, injection);
+
+  const xss = checkLocationInput('<script>alert(1)</script>', '');
+  check('Script-tag state is rejected', xss.ok === false, xss);
+
+  // The PUT handler validates the pair using stored values for whatever the
+  // request omits, so a legacy record with no location can be fixed one field
+  // at a time — but cannot be left half-set to something inconsistent.
+  const legacyFixup = checkLocationInput('West Bengal', '');
+  check(
+    'Legacy record with no stored district accepts a state-only correction',
+    legacyFixup.ok === true && legacyFixup.state === 'West Bengal',
+    legacyFixup
+  );
+
+  const strandedDistrict = checkLocationInput('Bihar', 'Howrah');
+  check(
+    'Changing state while a stored district belongs elsewhere is refused',
+    strandedDistrict.ok === false,
+    strandedDistrict
   );
 
   // Summary Report

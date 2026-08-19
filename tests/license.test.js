@@ -286,5 +286,186 @@ const facilityWith = (license, name = 'Ashoka Life Care') => ({ id: 'ashoka', na
     outbound[0] && outbound[0].message
   );
 
+  // =========================================================================
+  section('Month-end arithmetic — the clamp the comment promises');
+
+  // A term sold on the 31st must not expire two days later than one sold on the
+  // 1st. `setMonth` alone rolls 31 January into 3 March; every assertion here
+  // exists because that rollover is invisible on an invoice until a customer
+  // adds the days up.
+  const JAN31 = at(2026, 1, 31);
+  check(
+    '31 January + 1 month lands on the last day of February',
+    addMonths(JAN31, 1).getDate() === 28,
+    addMonths(JAN31, 1).toDateString()
+  );
+  check('…in the right month', addMonths(JAN31, 1).getMonth() === 1, addMonths(JAN31, 1).toDateString());
+  check(
+    '31 August + 6 months clamps to 28 February',
+    addMonths(at(2026, 8, 31), 6).getDate() === 28,
+    addMonths(at(2026, 8, 31), 6).toDateString()
+  );
+  check(
+    'A leap February keeps its 29th',
+    addMonths(at(2028, 1, 31), 1).getDate() === 29,
+    addMonths(at(2028, 1, 31), 1).toDateString()
+  );
+  check(
+    '31 March + 1 month clamps to 30 April',
+    addMonths(at(2026, 3, 31), 1).getDate() === 30,
+    addMonths(at(2026, 3, 31), 1).toDateString()
+  );
+
+  section('Renewing early must not delete time already paid for');
+
+  const paidYear = facilityWith(renewLicense({}, '12m', { now: JAN15 }));
+  const renewedEarly = renewLicense(paidYear, '12m', { now: at(2026, 12, 1) });
+  check(
+    'A facility renewing six weeks early is counted from its expiry, not from today',
+    new Date(renewedEarly.expiresAt).getFullYear() === 2028 &&
+      new Date(renewedEarly.expiresAt).getMonth() === 0,
+    new Date(renewedEarly.expiresAt).toDateString()
+  );
+
+  // The function reads `hospital.license`, so handing it the licence itself
+  // finds no current term and silently restarts the clock from today. Nothing
+  // throws and the response looks right — the customer just loses the unexpired
+  // remainder. Pinned here so a refactor that "simplifies" the argument gets caught.
+  const wrongShape = renewLicense(paidYear.license, '12m', { now: at(2026, 12, 1) });
+  check(
+    'Passing the licence instead of the facility would lose that time (argument shape is load-bearing)',
+    new Date(wrongShape.expiresAt).getFullYear() === 2027,
+    new Date(wrongShape.expiresAt).toDateString()
+  );
+
+  const lapsedThenRenewed = renewLicense(facilityWith(renewLicense({}, '1m', { now: JAN15 })), '12m', {
+    now: at(2026, 6, 1)
+  });
+  check(
+    'A facility renewing after a lapse starts from today, not from the dead term',
+    new Date(lapsedThenRenewed.expiresAt).getFullYear() === 2027 &&
+      new Date(lapsedThenRenewed.expiresAt).getMonth() === 5,
+    new Date(lapsedThenRenewed.expiresAt).toDateString()
+  );
+
+  section('Suspension, and coming back from it');
+
+  const suspendedFacility = facilityWith({
+    ...renewLicense({}, '12m', { now: JAN15 }),
+    status: 'Suspended'
+  });
+  check(
+    'A suspension blocks even a facility with time left',
+    licenseState(suspendedFacility, at(2026, 6, 1)).blocked === true
+  );
+  const restored = renewLicense(suspendedFacility, '6m', { now: at(2026, 6, 1) });
+  check('Granting a term lifts the suspension', restored.status === 'Active', restored.status);
+  check(
+    '…and the facility is working again immediately',
+    licenseState({ license: restored }, at(2026, 6, 1)).blocked === false
+  );
+
+  let rejected = null;
+  try {
+    renewLicense({}, 'lifetime');
+  } catch (err) {
+    rejected = err.message;
+  }
+  check('A plan nobody sells is refused rather than stored', /Unknown plan/.test(rejected || ''), rejected);
+
+  section('The gate that actually switches a facility off');
+
+  const { refuseIfUnlicensed, invalidateLicense } = require(path.join(BACKEND, 'middleware', 'license.js'));
+
+  /** Capture what the gate did instead of letting it talk to a socket. */
+  const fakeRes = () => {
+    const out = { status: null, body: null };
+    return {
+      out,
+      status(code) {
+        out.status = code;
+        return this;
+      },
+      json(payload) {
+        out.body = payload;
+        return this;
+      }
+    };
+  };
+  const reqFor = (hospital, url) => ({ user: { hospital }, originalUrl: url, path: url });
+
+  await new models.Hospital({
+    id: 'lapsed-clinic',
+    name: 'Lapsed Clinic',
+    license: { plan: '1m', expiresAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), status: 'Active' }
+  }).save();
+  await new models.Hospital({
+    id: 'paid-clinic',
+    name: 'Paid Clinic',
+    license: { plan: '12m', expiresAt: new Date(Date.now() + 200 * 24 * 60 * 60 * 1000), status: 'Active' }
+  }).save();
+
+  invalidateLicense();
+
+  const blockedRes = fakeRes();
+  const wasBlocked = await refuseIfUnlicensed(reqFor('lapsed-clinic', '/api/v1/staff/tokens'), blockedRes);
+  check('A lapsed facility is refused', wasBlocked === true);
+  check(
+    '…with 402 Payment Required, not a 403 that reads as a permissions bug',
+    blockedRes.out.status === 402,
+    blockedRes.out.status
+  );
+  check(
+    '…flagged so the console can show a renewal screen',
+    blockedRes.out.body && blockedRes.out.body.licenseBlocked === true,
+    blockedRes.out.body
+  );
+  check(
+    '…and told why',
+    /expired/i.test((blockedRes.out.body || {}).message || ''),
+    (blockedRes.out.body || {}).message
+  );
+
+  const paidRes = fakeRes();
+  const paidReq = reqFor('paid-clinic', '/api/v1/staff/tokens');
+  check('A paying facility passes through', (await refuseIfUnlicensed(paidReq, paidRes)) === false);
+  check(
+    '…and its licence rides along so routes need not look it up again',
+    paidReq.license && paidReq.license.blocked === false,
+    paidReq.license
+  );
+
+  // Two doors stay open on purpose: a blocked facility must be able to sign in
+  // and read its own licence, or it cannot be told why nothing works.
+  for (const openPath of ['/api/v1/auth/facility/login', '/api/v1/ops/license']) {
+    const res = fakeRes();
+    check(
+      `A blocked facility can still reach ${openPath}`,
+      (await refuseIfUnlicensed(reqFor('lapsed-clinic', openPath), res)) === false,
+      res.out
+    );
+  }
+
+  const anonRes = fakeRes();
+  check(
+    'A request with no tenant is not the licence gate to answer',
+    (await refuseIfUnlicensed({ originalUrl: '/api/v1/chat/hospitals' }, anonRes)) === false
+  );
+
+  // Refusing every request on a database hiccup would turn an unrelated outage
+  // into a platform-wide shutdown of hospitals that have paid.
+  const brokenRes = fakeRes();
+  const findOne = models.Hospital.findOne;
+  models.Hospital.findOne = () => Promise.reject(new Error('database is down'));
+  invalidateLicense();
+  const duringOutage = await refuseIfUnlicensed(reqFor('lapsed-clinic', '/api/v1/staff/tokens'), brokenRes);
+  models.Hospital.findOne = findOne;
+  invalidateLicense();
+  check(
+    'A licence lookup failure lets the request through rather than shutting the platform',
+    duringOutage === false,
+    brokenRes.out
+  );
+
   report();
 })();

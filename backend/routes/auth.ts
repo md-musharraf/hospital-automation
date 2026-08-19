@@ -40,8 +40,8 @@ const {
 } = require('../utils/licenseHelper');
 const { invalidateLicense } = require('../middleware/license');
 const { safeCompare, isProduction } = require('../utils/env');
-const { normalizeEmail, normalizeLocation } = require('@careeai/shared');
-const { resolveLocation } = require('../utils/locationHelper');
+const { normalizeEmail } = require('@careeai/shared');
+const { resolveLocation, checkLocationInput } = require('../utils/locationHelper');
 const logger = require('../utils/logger');
 // Keyed by IP *and* account, so one reception desk's staff do not share a single
 // ten-attempt budget between them. See middleware/rateLimits.js.
@@ -564,6 +564,19 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       });
     }
 
+    // Where the facility sits on the map. Rejected before anything is written,
+    // for the same reason as the password below: the public directory builds
+    // its State -> District filters out of stored facilities, so a bad value
+    // saved here is a phantom filter entry forever.
+    const location = checkLocationInput(b.state, b.district);
+    if (!location.ok) return res.status(400).json({ message: location.message });
+
+    // A facility onboarded with only a city keeps the derived fallback.
+    const derived =
+      location.state || location.district
+        ? location
+        : resolveLocation({ state: b.state, district: b.district, city: b.city || city });
+
     // The one credential this facility will ever sign in with. Checked before
     // anything is written, so a rejected password cannot leave a half-created
     // tenant behind — and there is no fallback if it is missing, because a
@@ -715,19 +728,10 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       city,
       coordinates,
       type,
-      state:
-        b.state && b.state.trim()
-          ? normalizeLocation(b.state, b.district).state || b.state.trim()
-          : resolveLocation({ state: b.state, district: b.district, city: b.city || city }).state !== 'Other'
-            ? resolveLocation({ state: b.state, district: b.district, city: b.city || city }).state
-            : '',
-      district:
-        b.district && b.district.trim()
-          ? normalizeLocation(b.state, b.district).district || b.district.trim()
-          : resolveLocation({ state: b.state, district: b.district, city: b.city || city }).district !==
-              'Other'
-            ? resolveLocation({ state: b.state, district: b.district, city: b.city || city }).district
-            : '',
+      // 'Other' is the helper's "I could not tell" answer; store nothing rather
+      // than a state nobody can filter by.
+      state: derived.state === 'Other' ? '' : derived.state,
+      district: derived.district === 'Other' ? '' : derived.district,
       logoUrl: b.logoUrl || '',
       heroImage: b.heroImage || coverImage || '',
       galleryImages: b.galleryImages || (coverImage ? [coverImage] : []),
@@ -1179,15 +1183,22 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     if (coverImage !== undefined) hospital.coverImage = coverImage;
     if (description !== undefined) hospital.description = description;
     if (city !== undefined) hospital.city = city;
+    // An edit that touches either half is checked as a pair, because a district
+    // is only meaningful inside its state: changing one can strand the other.
+    // Whatever this request does not send is taken from what is already stored,
+    // so a legacy record with no location at all can still be corrected one
+    // field at a time. Nothing is saved until the end of the handler, so a
+    // rejection here leaves the stored facility untouched.
     if (req.body.state !== undefined || req.body.district !== undefined) {
       const stateToUse = req.body.state !== undefined ? req.body.state : hospital.state;
       const districtToUse = req.body.district !== undefined ? req.body.district : hospital.district;
-      const norm = normalizeLocation(stateToUse, districtToUse);
+      const norm = checkLocationInput(stateToUse, districtToUse);
+      if (!norm.ok) return res.status(400).json({ message: norm.message });
       if (req.body.state !== undefined) {
-        hospital.state = norm.state || req.body.state;
+        hospital.state = norm.state;
       }
       if (req.body.district !== undefined) {
-        hospital.district = norm.district || req.body.district;
+        hospital.district = norm.district;
       }
     }
     if (coordinates !== undefined) hospital.coordinates = coordinates;

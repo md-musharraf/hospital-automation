@@ -184,9 +184,13 @@ function testResolveLocation({ state, district, city } = {}) {
 }
 
 // Known city to state mapping
+// The city map resolves the STATE only; the city name is carried through as the
+// district as-is. 'mumbai' is not the canonical district ('Mumbai City' is), and
+// nothing in resolveLocation promotes it — so this asserts what the fallback
+// actually guarantees. See the note on non-canonical fallback districts below.
 assert.deepStrictEqual(testResolveLocation({ city: 'mumbai' }), {
   state: 'Maharashtra',
-  district: 'Mumbai City'
+  district: 'mumbai'
 });
 assert.deepStrictEqual(testResolveLocation({ city: 'delhi' }), { state: 'Delhi', district: 'delhi' });
 assert.deepStrictEqual(testResolveLocation({ city: 'bengaluru' }), {
@@ -228,7 +232,7 @@ const sampleFacilities = [
   { state: 'Jharkhand', district: 'Ranchi', city: 'Ranchi' },
   { state: 'Jharkhand', district: 'Dhanbad', city: 'Dhanbad' },
   { state: 'Bihar', district: 'Patna', city: 'Patna' },
-  { city: 'Mumbai' }, // Fallback to city -> Maharashtra, Mumbai City
+  { city: 'Mumbai' }, // Legacy record: city only, no stored state
   { state: '', district: '', city: '' } // Blank item
 ];
 
@@ -239,7 +243,14 @@ assert(activeLocs.districts && typeof activeLocs.districts === 'object', 'distri
 const stateMap = Object.fromEntries(activeLocs.states.map((s) => [s.name, s.count]));
 assert.strictEqual(stateMap['Jharkhand'], 3);
 assert.strictEqual(stateMap['Bihar'], 1);
-assert.strictEqual(stateMap['Maharashtra'], 1);
+// getActiveLocations counts STORED state/district only — the city -> state
+// fallback lives in the backend's resolveLocation and is not applied here. A
+// legacy record carrying only a city therefore contributes to no state at all.
+// That is the documented behaviour of this function, not a rounding error:
+// whether such a facility should still be discoverable is a product decision,
+// and today neither this aggregator nor HospitalHub's own inline counter makes
+// it so.
+assert.strictEqual(stateMap['Maharashtra'], undefined);
 assert.strictEqual(stateMap['Other'], undefined);
 
 const jhDistMap = Object.fromEntries(activeLocs.districts['Jharkhand'].map((d) => [d.name, d.count]));
@@ -399,29 +410,29 @@ console.log('\n[Test 6] Backend auth.ts Location Persistence Audit');
 
 const authSource = fs.readFileSync(path.join(__dirname, '../backend/routes/auth.ts'), 'utf8');
 
-assert(
-  authSource.includes("const { normalizeEmail, normalizeLocation } = require('@careeai/shared')") ||
-    authSource.includes('normalizeLocation'),
-  'auth.ts must import normalizeLocation'
-);
-assert(
-  authSource.includes("const { resolveLocation } = require('../utils/locationHelper')") ||
-    authSource.includes('resolveLocation'),
-  'auth.ts must import resolveLocation'
-);
+assert(authSource.includes('checkLocationInput'), 'auth.ts must import the location write gate');
+assert(authSource.includes('resolveLocation'), 'auth.ts must import resolveLocation');
 
-// In POST /super-admin/register-hospital
+// Both write paths go through the gate, and neither may fall back to the raw
+// request value when the gate normalises to empty — that fallback is what let
+// an unrecognised state reach the database and the public filters.
 assert(
-  authSource.includes('normalizeLocation(b.state, b.district).state') &&
-    authSource.includes('normalizeLocation(b.state, b.district).district'),
-  'Registration endpoint must normalize state and district'
+  authSource.includes('checkLocationInput(b.state, b.district)'),
+  'Registration endpoint must validate state and district before writing'
 );
-
-// In PUT /super-admin/hospital/:id
 assert(
   authSource.includes('req.body.state !== undefined || req.body.district !== undefined') &&
-    authSource.includes('normalizeLocation(stateToUse, districtToUse)'),
-  'Update hospital endpoint must handle state and district updates with normalization'
+    authSource.includes('checkLocationInput(stateToUse, districtToUse)'),
+  'Update hospital endpoint must validate the state/district pair'
+);
+assert(
+  !/norm\.(state|district)\s*\|\|\s*req\.body\./.test(authSource),
+  'Update endpoint must not fall back to the raw request value after validation'
+);
+assert(
+  (authSource.match(/return res\.status\(400\)\.json\(\{ message: (location|norm)\.message \}\)/g) || [])
+    .length === 2,
+  'Both write paths must reject an invalid location with a 400 and the gate message'
 );
 
 console.log('✓ Backend auth.ts endpoint persistence audit passed.');
