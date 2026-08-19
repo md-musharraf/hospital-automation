@@ -3803,6 +3803,7 @@ export default function SuperAdminPortal() {
               <WhatsAppTester
                 initialPhone={editWhatsapp || '+14155238886'}
                 defaultHospId={editHospId || 'general-hospital'}
+                adminSecret={adminSecret}
               />
             ) : null}
           </div>

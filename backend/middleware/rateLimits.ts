@@ -62,3 +62,26 @@ export const publicLimiter = rateLimit({
   legacyHeaders: false,
   message: { message: 'Too many requests. Please wait a moment and try again.' }
 });
+
+/**
+ * The brake on guessing ADMIN_SECRET.
+ *
+ * One shared string is the entire platform's master key: it creates and deletes
+ * tenants, resets any facility's password and reads every facility's data. The
+ * comparison is timing-safe, but that only closes the side channel — nothing
+ * stopped an attacker from simply trying, at the general limiter's 60 requests a
+ * minute, forever.
+ *
+ * Keyed on IP alone (there is no account to key on) and counted only when the
+ * attempt FAILS, so an owner working through the console all afternoon is never
+ * throttled while a guesser gets 10 tries per 15 minutes.
+ */
+export const adminSecretLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  keyGenerator: ipKey,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many admin passcode attempts. Please try again in 15 minutes.' }
+});

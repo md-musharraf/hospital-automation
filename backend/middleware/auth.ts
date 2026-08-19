@@ -75,3 +75,39 @@ export const ensureRole =
 
     return res.status(403).json({ message: `Access denied: ${roles.join(' or ')} only` });
   };
+
+/**
+ * Let through a signed-in facility OR the platform super-admin.
+ *
+ * Some consoles are rendered in both places. The WhatsApp tester is the reason
+ * this exists: a facility opens it from its own hub holding a JWT, and the
+ * platform owner opens the same panel from the admin portal holding the admin
+ * secret. Written as one middleware because the alternative — leaving the routes
+ * open so both callers work — is what they were, and it meant a stranger could
+ * read the message log and send WhatsApp from the hospital's number.
+ *
+ * The admin secret is checked first and compared in constant time; failing that,
+ * this falls through to the ordinary JWT path (which also applies the licence
+ * check, so a lapsed facility does not slip in here).
+ */
+export const authenticateStaffOrAdmin: RequestHandler = (
+  req: any,
+  res: Response,
+  next: NextFunction
+): any => {
+  const submitted = req.headers['x-admin-secret'];
+  const expected = process.env.ADMIN_SECRET;
+
+  if (submitted && expected) {
+    // Required lazily: utils/env pulls in the environment assertions, and this
+    // module is imported by rateLimits before those are meaningful.
+    const { safeCompare } = require('../utils/env');
+    if (safeCompare(String(submitted), expected)) {
+      req.user = { role: 'super-admin' };
+      return next();
+    }
+    return res.status(401).json({ message: 'Unauthorized: Invalid Admin Secret Passcode' });
+  }
+
+  return authenticateToken(req, res, next);
+};

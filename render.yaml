@@ -61,7 +61,10 @@ services:
 
       # --- Secrets. Every one of these is `sync: false`: Render prompts for the
       # value once and stores it, and it never lands in this file or in git. ---
-      - key: MONGO_URI
+      # The name the code actually reads (backend/index.ts + utils/env.ts). Named
+      # MONGO_URI here once, which nothing reads — the boot check then refused to
+      # start a correctly configured deploy.
+      - key: MONGODB_URI
         sync: false
       - key: JWT_SECRET
         sync: false
@@ -76,6 +79,8 @@ services:
       - key: META_PHONE_NUMBER_ID
         sync: false
       - key: META_DISPLAY_NUMBER
+        sync: false
+      - key: META_VERIFY_TOKEN
         sync: false
 
       # ImageKit. Optional in the same way: unconfigured, reports fall back to

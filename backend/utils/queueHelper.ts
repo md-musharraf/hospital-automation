@@ -3,7 +3,7 @@ import Doctor from '../models/Doctor';
 import Token from '../models/Token';
 import logger from './logger';
 import { startOfToday } from './dates';
-import { shiftLeadMinutes, describeNextSitting } from './shiftHelper';
+import { shiftLeadMinutes, describeNextSitting, delayNotice, todayOpdHours } from './shiftHelper';
 
 // How many front positions get a "your turn is near — please come now" ping.
 // Positions 1 and 2 in the waiting line, so a patient can wait at home / outside
@@ -1101,4 +1101,60 @@ export async function isDoctorFull(doctor: any): Promise<boolean> {
   if (limit <= 0) return false;
   const count = await getTodayTokenCount(doctor._id);
   return count >= limit;
+}
+
+/**
+ * One queue, reduced to what a waiting-room TV is allowed to show.
+ *
+ * This is an ALLOW-LIST and the security boundary for `GET /public-tv-queues`,
+ * which is unauthenticated because the screen on the wall has no login. It lives
+ * here as a named function, rather than inline in the route, so it can be tested
+ * against a fully-populated queue and so the list of what escapes is one
+ * reviewable place.
+ *
+ * The route used to answer with `{ ...queue.toObject() }` over populated tokens
+ * and patients. That handed anyone who sent an unauthenticated GET every waiting
+ * patient's phone number, age and gender, and each token's `symptoms`,
+ * `chatHistory`, `labTests`, `prescription` and `patientAlerts`.
+ *
+ * Two rules:
+ *   1. Build the object field by field. Never spread a document. A projection
+ *      passed to `populate()` is not sufficient either — the in-memory mock
+ *      ignores populate's select argument, so the dev server would still serve
+ *      the full record.
+ *   2. If it isn't legible from across a waiting room, it does not belong here.
+ */
+export function publicQueueView(queue: any): Record<string, any> {
+  if (!queue) return null as any;
+
+  // The token number is what the room is watching for. A first name rides along
+  // only for the patient currently called in — the display announces that one
+  // out loud already. Never a phone number, an age, or anything clinical.
+  const publicToken = (token: any, withName: boolean) => {
+    if (!token) return null;
+    return {
+      _id: token._id,
+      tokenNumber: token.tokenNumber,
+      ...(withName ? { patient: { name: (token.patient && token.patient.name) || '' } } : {})
+    };
+  };
+
+  const activeQueue = Array.isArray(queue.activeQueue) ? queue.activeQueue : [];
+
+  return {
+    _id: queue._id,
+    doctor: queue.doctor
+      ? {
+          _id: queue.doctor._id,
+          name: queue.doctor.name,
+          department: queue.doctor.department,
+          currentRoom: queue.doctor.currentRoom
+        }
+      : null,
+    currentToken: publicToken(queue.currentToken, true),
+    waitingCount: activeQueue.length,
+    activeQueue: activeQueue.map((t: any) => publicToken(t, false)),
+    delay: queue.doctor ? delayNotice(queue.doctor) : null,
+    opdHoursToday: queue.doctor ? todayOpdHours(queue.doctor) : ''
+  };
 }

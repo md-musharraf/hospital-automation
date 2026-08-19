@@ -3,8 +3,19 @@ import { BACKEND_URL } from '../App';
 
 export default function WhatsAppTester({
   initialPhone = '+14155238886',
-  defaultHospId = 'general-hospital'
+  defaultHospId = 'general-hospital',
+  adminSecret = ''
 }) {
+  // The operator endpoints behind this panel are staff-only now: they expose the
+  // outbound message log (patient numbers and message text) and can send
+  // WhatsApp from the hospital's own number. The panel is rendered in two
+  // places, so it carries whichever credential its host has — the admin secret
+  // in the owner portal, the facility's own token in the hospital hub.
+  const authHeaders = () => {
+    if (adminSecret) return { 'X-Admin-Secret': adminSecret };
+    const token = localStorage.getItem('facilityToken');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
   const [waNumber, setWaNumber] = useState(initialPhone);
   const [hospSlug, setHospSlug] = useState(defaultHospId);
   const [userMsg, setUserMsg] = useState('Hi');
@@ -22,7 +33,9 @@ export default function WhatsAppTester({
   // Fetch current WhatsApp API Engine Configuration
   const fetchConfig = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/chat/whatsapp/config`);
+      const res = await fetch(`${BACKEND_URL}/api/v1/chat/whatsapp/config`, {
+        headers: authHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         setConfig(data);
@@ -51,7 +64,7 @@ export default function WhatsAppTester({
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/chat/whatsapp/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ whatsappNumber: waNumber, isAutoWorking: true })
       });
 
@@ -77,7 +90,7 @@ export default function WhatsAppTester({
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/chat/whatsapp/send-test`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ phone: incomingSender, type })
       });
       const data = await res.json();

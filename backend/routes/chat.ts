@@ -19,6 +19,7 @@ const {
   leaveByLabel,
   travelMinutesOf,
   isInTransit,
+  publicQueueView,
   PREP_BUFFER_MINUTES
 } = require('../utils/queueHelper');
 const {
@@ -40,6 +41,8 @@ const { stageMessage } = require('../utils/journeyHelper');
 const { describeNextSitting } = require('../utils/shiftHelper');
 const { onlyToday } = require('../utils/dates');
 const { findPatientByPhone } = require('../utils/patientLookup');
+const { authenticateStaffOrAdmin } = require('../middleware/auth');
+const { publicLimiter } = require('../middleware/rateLimits');
 
 // Bilingual Translation Dictionary
 const dictionary = {
@@ -2680,7 +2683,7 @@ router.post('/whatsapp', async (req, res) => {
 });
 
 // GET public queue wait times and WhatsApp config
-router.get('/queues/public-status', async (req, res) => {
+router.get('/queues/public-status', publicLimiter, async (req, res) => {
   try {
     const { hospitalId } = req.query;
 
@@ -2731,10 +2734,13 @@ router.get('/queues/public-status', async (req, res) => {
   }
 });
 
-// GET sanitized live queue data for the unauthenticated waiting-room TV display
-// (optionally scoped to one hospital via ?hospitalId=). No passwordHash or
-// other sensitive fields are ever populated here.
-router.get('/public-tv-queues', async (req, res) => {
+// GET live queue data for the waiting-room TV display.
+//
+// This endpoint is UNAUTHENTICATED — the screen on the wall has no login — and
+// the room it hangs in is open to the street, so every field that leaves here
+// goes through publicQueueView's allow-list. See that function for what this
+// used to answer with.
+router.get('/public-tv-queues', publicLimiter, async (req, res) => {
   try {
     const { hospitalId } = req.query;
 
@@ -2745,7 +2751,7 @@ router.get('/public-tv-queues', async (req, res) => {
     }
 
     const queues = await Queue.find(filter)
-      .populate('doctor', '-passwordHash')
+      .populate('doctor')
       .populate({
         path: 'currentToken',
         populate: { path: 'patient' }
@@ -2755,20 +2761,13 @@ router.get('/public-tv-queues', async (req, res) => {
         populate: { path: 'patient' }
       });
 
-    // The waiting room is where a delay costs the most: everyone here came for
-    // the printed time and is now sitting because leaving risks missing the
-    // call. The screen has to say so, not just the WhatsApp they may not read.
-    const { delayNotice, todayOpdHours } = require('../utils/shiftHelper');
-    res.json(
-      queues.map((queue) => {
-        const plain = typeof queue.toObject === 'function' ? queue.toObject() : { ...queue };
-        return {
-          ...plain,
-          delay: queue.doctor ? delayNotice(queue.doctor) : null,
-          opdHoursToday: queue.doctor ? todayOpdHours(queue.doctor) : ''
-        };
-      })
-    );
+    // publicQueueView is the allow-list, and it is a named function in
+    // queueHelper so it can be tested against a fully-populated queue — see
+    // tests/public-tv-queues.test.js. The waiting room is also where a delay
+    // costs the most (everyone here came for the printed time and is now
+    // sitting because leaving risks missing the call), so it carries the delay
+    // banner too.
+    res.json(queues.map(publicQueueView));
   } catch (error: any) {
     logger.error('Error fetching public TV queues', { err: error });
     res.status(500).json({ message: 'Server error' });
@@ -2783,7 +2782,7 @@ router.get('/public-tv-queues', async (req, res) => {
  * credential here, and the worst a stranger holding one can do is mark someone's
  * own notifications as seen.
  */
-router.post('/token/:tokenId/alerts/read', async (req, res) => {
+router.post('/token/:tokenId/alerts/read', publicLimiter, async (req, res) => {
   try {
     const { markAlertsRead } = require('../utils/patientNotify');
     const cleared = await markAlertsRead(req.params.tokenId);
@@ -2794,7 +2793,7 @@ router.post('/token/:tokenId/alerts/read', async (req, res) => {
   }
 });
 
-router.get('/token/:tokenId', async (req, res) => {
+router.get('/token/:tokenId', publicLimiter, async (req, res) => {
   try {
     const { tokenId } = req.params;
     const token = await Token.findById(tokenId).populate('patient').populate('doctor', '-passwordHash');
@@ -2921,7 +2920,7 @@ const DIRECTORY_FIELDS = [
   'secondaryColor'
 ];
 
-router.get('/hospitals', async (req, res) => {
+router.get('/hospitals', publicLimiter, async (req, res) => {
   try {
     const picker = req.query.view === 'picker';
     const dbHospitals = await Hospital.find({});
@@ -2989,7 +2988,7 @@ router.get('/hospital/:hospitalId', async (req, res) => {
 // Public and unauthenticated by design — it is a marketing page — so it must
 // only ever expose what a visitor could read off a signboard. The doctor
 // projection below is an allow-list for exactly that reason.
-router.get('/hospital/:hospitalId/landing', async (req, res) => {
+router.get('/hospital/:hospitalId/landing', publicLimiter, async (req, res) => {
   try {
     const { hospitalId } = req.params;
     const hospital = await Hospital.findOne({ id: hospitalId });
@@ -3071,7 +3070,7 @@ router.get('/hospital/:hospitalId/doctors', async (req, res) => {
 });
 
 // POST delay token by 3 places
-router.post('/token/delay', async (req, res) => {
+router.post('/token/delay', publicLimiter, async (req, res) => {
   try {
     const { tokenId } = req.body;
     if (!tokenId) {
@@ -3116,8 +3115,19 @@ router.post('/token/delay', async (req, res) => {
   }
 });
 
+// ─── WhatsApp operator console ───────────────────────────────────────────────
+// Everything from here to the webhooks is STAFF-ONLY (a facility JWT) or
+// super-admin (the admin secret). All five were open to the internet, which
+// meant a stranger could read the outbound message log — patient phone numbers
+// and the full text of every bill and lab-report alert — flip the facility's
+// public WhatsApp number, and send arbitrary WhatsApp messages FROM the
+// hospital, at the hospital's expense and over its verified sender name.
+//
+// The webhooks below stay open on purpose: Meta calls them, and they carry
+// their own verify-token handshake instead.
+
 // GET WhatsApp API Engine Configuration & Status
-router.get('/whatsapp/config', (req, res) => {
+router.get('/whatsapp/config', authenticateStaffOrAdmin, (req, res) => {
   try {
     const config = getWhatsAppConfig();
     res.json(config);
@@ -3128,7 +3138,7 @@ router.get('/whatsapp/config', (req, res) => {
 });
 
 // POST Update WhatsApp API Sender Number & Auto-Start Engine
-router.post('/whatsapp/config', async (req, res) => {
+router.post('/whatsapp/config', authenticateStaffOrAdmin, async (req, res) => {
   try {
     const { whatsappNumber, isAutoWorking } = req.body;
     if (!whatsappNumber || typeof whatsappNumber !== 'string') {
@@ -3159,7 +3169,7 @@ router.post('/whatsapp/config', async (req, res) => {
 });
 
 // POST Trigger test outgoing WhatsApp notification
-router.post('/whatsapp/send-test', async (req, res) => {
+router.post('/whatsapp/send-test', authenticateStaffOrAdmin, async (req, res) => {
   try {
     const { phone, message, type } = req.body;
     const recipientPhone = phone || '+919876543210';
@@ -3233,7 +3243,7 @@ router.get('/whatsapp/qr/:hospitalId', async (req, res) => {
 // says plainly whether the token is VALID, EXPIRED (code 190), or BLOCKED by Meta
 // (code 200) — so you can verify a newly-pasted token in one click instead of
 // booking a test token and hunting through logs.
-router.get('/whatsapp/health', async (req, res) => {
+router.get('/whatsapp/health', authenticateStaffOrAdmin, async (req, res) => {
   try {
     const health = await checkMetaToken();
     res.status(health.ok ? 200 : 503).json(health);
@@ -3244,7 +3254,7 @@ router.get('/whatsapp/health', async (req, res) => {
 });
 
 // GET WhatsApp Message History Audit Log
-router.get('/whatsapp/history', (req, res) => {
+router.get('/whatsapp/history', authenticateStaffOrAdmin, (req, res) => {
   try {
     const history = getWhatsAppHistory(30);
     res.json(history);

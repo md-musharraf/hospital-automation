@@ -44,7 +44,7 @@ const { normalizeEmail } = require('@careeai/shared');
 const logger = require('../utils/logger');
 // Keyed by IP *and* account, so one reception desk's staff do not share a single
 // ten-attempt budget between them. See middleware/rateLimits.js.
-const { loginLimiter } = require('../middleware/rateLimits');
+const { loginLimiter, adminSecretLimiter } = require('../middleware/rateLimits');
 
 /**
  * The facility session — everything the console needs to draw itself.
@@ -428,7 +428,12 @@ router.get('/facility/team', authenticateToken, async (req, res) => {
 // The comparison is timing-safe. The endpoint is unauthenticated by definition
 // (it is what grants admin access), so a plain `!==` hands an attacker a
 // character-by-character oracle for the one secret that guards tenant creation.
-const verifyAdminSecret = (req, res, next) => {
+//
+// Guessing is rate-limited too, on every route that uses this and not just the
+// /verify probe — a limiter on the front door is worth nothing while thirty
+// other doors take the same key. Failures only, so ordinary console use is
+// never throttled.
+const checkAdminSecret = (req, res, next) => {
   const submitted = req.headers['x-admin-secret'] || req.body.adminSecret;
   const expected = process.env.ADMIN_SECRET;
 
@@ -446,6 +451,8 @@ const verifyAdminSecret = (req, res, next) => {
 
   next();
 };
+
+const verifyAdminSecret = [adminSecretLimiter, checkAdminSecret];
 
 // Verify Super Admin Passcode
 router.post('/super-admin/verify', verifyAdminSecret, (req, res) => {
