@@ -1,3 +1,11 @@
+import {
+  getAllStates,
+  getDistrictsForState,
+  isValidState,
+  isValidDistrict,
+  normalizeLocation
+} from '@careeai/shared';
+
 // Location fallback helper.
 //
 // The location-based discovery flow (State → District → facility) needs a state
@@ -41,19 +49,44 @@ export interface ResolvedLocation {
 
 /**
  * Returns { state, district } for a facility, preferring its explicitly-stored
- * values and falling back to a city-derived guess. District falls back to the
- * city itself (the city IS the district for most practical filtering); state
- * falls back to the city map, then to the city name, then to 'Other'.
+ * values and falling back to a city-derived guess using @careeai/shared.
+ * District falls back to canonical district matching the city or the city itself;
+ * state falls back to city map, canonical state resolution, then city name, then 'Other'.
  */
 export function resolveLocation({
   state,
   district,
   city
 }: { state?: string | null; district?: string | null; city?: string | null } = {}): ResolvedLocation {
+  const cleanState = (state || '').trim();
+  const cleanDistrict = (district || '').trim();
   const cleanCity = (city || '').trim();
-  const derivedState = CITY_TO_STATE[cleanCity.toLowerCase()] || '';
+
+  // If state is already provided, attempt canonical normalization
+  if (cleanState) {
+    const norm = normalizeLocation(cleanState, cleanDistrict || cleanCity);
+    if (isValidState(norm.state)) {
+      return {
+        state: norm.state,
+        district: norm.district || cleanDistrict || cleanCity || norm.state
+      };
+    }
+  }
+
+  // Fallback: derive state from city lookup map or check if city is a state
+  const derivedFromMap = cleanCity ? CITY_TO_STATE[cleanCity.toLowerCase()] : '';
+  const candidateState = derivedFromMap || (isValidState(cleanCity) ? cleanCity : '');
+
+  if (candidateState) {
+    const norm = normalizeLocation(candidateState, cleanDistrict || cleanCity);
+    return {
+      state: norm.state,
+      district: norm.district || cleanDistrict || cleanCity || norm.state
+    };
+  }
+
   return {
-    state: (state && state.trim()) || derivedState || cleanCity || 'Other',
-    district: (district && district.trim()) || cleanCity || 'Other'
+    state: cleanState || cleanCity || 'Other',
+    district: cleanDistrict || cleanCity || 'Other'
   };
 }

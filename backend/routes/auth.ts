@@ -40,7 +40,8 @@ const {
 } = require('../utils/licenseHelper');
 const { invalidateLicense } = require('../middleware/license');
 const { safeCompare, isProduction } = require('../utils/env');
-const { normalizeEmail } = require('@careeai/shared');
+const { normalizeEmail, normalizeLocation } = require('@careeai/shared');
+const { resolveLocation } = require('../utils/locationHelper');
 const logger = require('../utils/logger');
 // Keyed by IP *and* account, so one reception desk's staff do not share a single
 // ten-attempt budget between them. See middleware/rateLimits.js.
@@ -714,8 +715,19 @@ router.post('/super-admin/register-hospital', verifyAdminSecret, async (req, res
       city,
       coordinates,
       type,
-      state: b.state || '',
-      district: b.district || '',
+      state:
+        b.state && b.state.trim()
+          ? normalizeLocation(b.state, b.district).state || b.state.trim()
+          : resolveLocation({ state: b.state, district: b.district, city: b.city || city }).state !== 'Other'
+            ? resolveLocation({ state: b.state, district: b.district, city: b.city || city }).state
+            : '',
+      district:
+        b.district && b.district.trim()
+          ? normalizeLocation(b.state, b.district).district || b.district.trim()
+          : resolveLocation({ state: b.state, district: b.district, city: b.city || city }).district !==
+              'Other'
+            ? resolveLocation({ state: b.state, district: b.district, city: b.city || city }).district
+            : '',
       logoUrl: b.logoUrl || '',
       heroImage: b.heroImage || coverImage || '',
       galleryImages: b.galleryImages || (coverImage ? [coverImage] : []),
@@ -1167,8 +1179,17 @@ router.put('/super-admin/hospital/:id', verifyAdminSecret, async (req, res) => {
     if (coverImage !== undefined) hospital.coverImage = coverImage;
     if (description !== undefined) hospital.description = description;
     if (city !== undefined) hospital.city = city;
-    if (req.body.state !== undefined) hospital.state = req.body.state;
-    if (req.body.district !== undefined) hospital.district = req.body.district;
+    if (req.body.state !== undefined || req.body.district !== undefined) {
+      const stateToUse = req.body.state !== undefined ? req.body.state : hospital.state;
+      const districtToUse = req.body.district !== undefined ? req.body.district : hospital.district;
+      const norm = normalizeLocation(stateToUse, districtToUse);
+      if (req.body.state !== undefined) {
+        hospital.state = norm.state || req.body.state;
+      }
+      if (req.body.district !== undefined) {
+        hospital.district = norm.district || req.body.district;
+      }
+    }
     if (coordinates !== undefined) hospital.coordinates = coordinates;
     if (type !== undefined) hospital.type = type;
     if (logoUrl !== undefined) hospital.logoUrl = logoUrl;

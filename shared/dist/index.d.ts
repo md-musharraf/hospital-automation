@@ -6,4 +6,5 @@
  */
 export * from './fieldTypes';
 export * from './parseBody';
+export * from './locations';
 //# sourceMappingURL=index.d.ts.map

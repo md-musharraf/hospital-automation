@@ -255,6 +255,37 @@ async function say(sessionId, message) {
   check('a later "hi" re-opens the hospital list', /Which hospital or clinic/i.test(reply.flat), reply.flat);
   check('with the last facility offered first', /BrightDental/.test(reply.flat), reply.flat);
 
+  section('Direct Landing Page WhatsApp Deep-Linking & Facility Auto-Lock');
+  {
+    // Format 1: Landing Page Button Text e.g. "Hi, I want to book an appointment at Bright Dental Clinic (ID: bright-dental)"
+    let sDeep = 'wa_919000000005';
+    let res = await waSay(
+      sDeep,
+      'Hi, I want to book an appointment at Bright Dental Clinic (ID: bright-dental)'
+    );
+    check(
+      'landing page button prefilled text auto-locks facility',
+      /Welcome to BrightDental/i.test(res.flat),
+      res.flat
+    );
+    check('does not show 200 hospital selection list', !/Which hospital or clinic/i.test(res.flat), res.flat);
+
+    // Format 2: Direct Tag e.g. "@bright-dental"
+    let sTag = 'wa_919000000006';
+    res = await waSay(sTag, 'Hi @bright-dental');
+    check('@ tag format auto-locks facility', /Welcome to BrightDental/i.test(res.flat), res.flat);
+
+    // Format 3: QR Prefix e.g. "HI_bright-dental"
+    let sQr = 'wa_919000000007';
+    res = await waSay(sQr, 'HI_bright-dental');
+    check('HI_ prefix auto-locks facility', /Welcome to BrightDental/i.test(res.flat), res.flat);
+
+    // Format 4: Natural text "Book at bright-dental"
+    let sNatural = 'wa_919000000008';
+    res = await waSay(sNatural, 'Book at bright-dental');
+    check('natural "Book at <id>" auto-locks facility', /Welcome to BrightDental/i.test(res.flat), res.flat);
+  }
+
   section('The web widget never sees the picker');
   session = 'web_facility';
   await say(session, 'hi');

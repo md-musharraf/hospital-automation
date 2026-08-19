@@ -6,3 +6,4 @@
  */
 export * from './fieldTypes';
 export * from './parseBody';
+export * from './locations';

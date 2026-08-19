@@ -18,6 +18,13 @@ import {
 } from './FacilityProfileEditor';
 import ImageUploadField, { UploadCredentialsProvider } from './ImageUploadField';
 import { EmailInput } from './fields/NormalizedInput';
+import {
+  getAllStates,
+  getDistrictsForState,
+  isValidState,
+  isValidDistrict,
+  normalizeLocation
+} from '@careeai/shared';
 
 /**
  * Every facility's subscription on one screen, worst first.
@@ -416,6 +423,7 @@ export default function SuperAdminPortal() {
   const [city, setCity] = useState('');
   const [regState, setRegState] = useState('');
   const [district, setDistrict] = useState('');
+  const [pincode, setPincode] = useState('');
   const [lat, setLat] = useState('28.6139');
   const [lng, setLng] = useState('77.2090');
   const [type, setType] = useState('Hospital');
@@ -479,6 +487,9 @@ export default function SuperAdminPortal() {
   const [editName, setEditName] = useState('');
   const [editType, setEditType] = useState('Hospital');
   const [editCity, setEditCity] = useState('');
+  const [editState, setEditState] = useState('');
+  const [editDistrict, setEditDistrict] = useState('');
+  const [editPincode, setEditPincode] = useState('');
   const [editLat, setEditLat] = useState('');
   const [editLng, setEditLng] = useState('');
   const [editPhone, setEditPhone] = useState('');
@@ -687,8 +698,28 @@ export default function SuperAdminPortal() {
       setEditName(hosp.name);
       setEditType(hosp.type || 'Hospital');
       setEditCity(hosp.city || '');
-      setEditLat(hosp.coordinates?.lat || 28.6139);
-      setEditLng(hosp.coordinates?.lng || 77.209);
+
+      const resolved = normalizeLocation(hosp.state || hosp.city, hosp.district || hosp.city);
+      const chosenState =
+        hosp.state && isValidState(hosp.state)
+          ? hosp.state
+          : isValidState(resolved.state)
+            ? resolved.state
+            : 'Delhi';
+      const dists = getDistrictsForState(chosenState);
+      const chosenDistrict =
+        hosp.district && isValidDistrict(chosenState, hosp.district)
+          ? hosp.district
+          : isValidDistrict(chosenState, resolved.district)
+            ? resolved.district
+            : dists[0] || '';
+
+      setEditState(chosenState);
+      setEditDistrict(chosenDistrict);
+      setEditPincode(hosp.pincode || '');
+
+      setEditLat(hosp.coordinates?.lat !== undefined ? hosp.coordinates.lat : 28.6139);
+      setEditLng(hosp.coordinates?.lng !== undefined ? hosp.coordinates.lng : 77.209);
       setEditAddress(hosp.address || '');
       setEditPhone(hosp.phone || '');
       setEditWhatsapp(hosp.whatsappNumber || '');
@@ -1059,6 +1090,7 @@ export default function SuperAdminPortal() {
       name,
       slug: hospId,
       address,
+      pincode,
       phone,
       whatsappNumber,
       coverImage:
@@ -1072,8 +1104,8 @@ export default function SuperAdminPortal() {
       state: regState,
       district,
       coordinates: {
-        lat: parseFloat(lat),
-        lng: parseFloat(lng)
+        lat: parseFloat(lat) || 0,
+        lng: parseFloat(lng) || 0
       },
       type,
       // The one credential for this facility. Validated on the server too, and
@@ -1215,6 +1247,7 @@ export default function SuperAdminPortal() {
       name: editName,
       slug: editHospId,
       address: editAddress,
+      pincode: editPincode,
       phone: editPhone,
       whatsappNumber: editWhatsapp,
       coverImage: editCoverImage,
@@ -1223,9 +1256,11 @@ export default function SuperAdminPortal() {
       doctorCount: parseInt(editDoctorCount as any) || 1,
       description: editDescription,
       city: editCity,
+      state: editState,
+      district: editDistrict,
       coordinates: {
-        lat: parseFloat(editLat),
-        lng: parseFloat(editLng)
+        lat: parseFloat(editLat) || 0,
+        lng: parseFloat(editLng) || 0
       },
       type: editType,
       parentHospital: editParentHospital || null,
@@ -1323,11 +1358,14 @@ export default function SuperAdminPortal() {
   }
 
   const filteredHospitals = hospitalList.filter((h) => {
+    const q = facilitySearchQuery.toLowerCase();
     const matchesSearch =
       !facilitySearchQuery ||
-      h.name.toLowerCase().includes(facilitySearchQuery.toLowerCase()) ||
-      h.city.toLowerCase().includes(facilitySearchQuery.toLowerCase()) ||
-      h.id.toLowerCase().includes(facilitySearchQuery.toLowerCase());
+      (h.name && h.name.toLowerCase().includes(q)) ||
+      (h.city && h.city.toLowerCase().includes(q)) ||
+      (h.state && h.state.toLowerCase().includes(q)) ||
+      (h.district && h.district.toLowerCase().includes(q)) ||
+      (h.id && h.id.toLowerCase().includes(q));
 
     if (facilityFilterType === 'All') return matchesSearch;
     return matchesSearch && h.type === facilityFilterType;
@@ -1858,27 +1896,59 @@ export default function SuperAdminPortal() {
                     {/* State & District power the patient-facing State → District facility finder */}
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block mb-1">State</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Delhi"
+                        <label className="block mb-1">State / UT *</label>
+                        <select
                           value={regState}
-                          onChange={(e) => setRegState(e.target.value)}
-                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                        />
+                          onChange={(e) => {
+                            const nextState = e.target.value;
+                            setRegState(nextState);
+                            const dists = getDistrictsForState(nextState);
+                            setDistrict(dists[0] || '');
+                          }}
+                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all cursor-pointer"
+                        >
+                          <option value="">Select State / UT</option>
+                          {getAllStates().map((st) => (
+                            <option key={st} value={st}>
+                              {st}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div>
-                        <label className="block mb-1">District</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. New Delhi"
+                        <label className="block mb-1">District *</label>
+                        <select
                           value={district}
                           onChange={(e) => setDistrict(e.target.value)}
+                          disabled={!regState}
+                          className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {!regState ? (
+                            <option value="">Select State first</option>
+                          ) : (
+                            <>
+                              <option value="">Select District</option>
+                              {getDistrictsForState(regState).map((dist) => (
+                                <option key={dist} value={dist}>
+                                  {dist}
+                                </option>
+                              ))}
+                            </>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <div>
+                        <label className="block mb-1">Pincode</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 110001"
+                          value={pincode}
+                          onChange={(e) => setPincode(e.target.value)}
                           className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
                         />
                       </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="block mb-1">Latitude *</label>
                         <input
@@ -3127,15 +3197,70 @@ export default function SuperAdminPortal() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block mb-1">City Location *</label>
+                    <input
+                      type="text"
+                      value={editCity}
+                      onChange={(e) => setEditCity(e.target.value)}
+                      className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
+                      required
+                    />
+                  </div>
+                  {/* State & District cascading dropdowns */}
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block mb-1">City Location *</label>
+                      <label className="block mb-1">State / UT *</label>
+                      <select
+                        value={editState}
+                        onChange={(e) => {
+                          const nextState = e.target.value;
+                          setEditState(nextState);
+                          const dists = getDistrictsForState(nextState);
+                          setEditDistrict(dists[0] || '');
+                        }}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all cursor-pointer"
+                      >
+                        <option value="">Select State / UT</option>
+                        {getAllStates().map((st) => (
+                          <option key={st} value={st}>
+                            {st}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block mb-1">District *</label>
+                      <select
+                        value={editDistrict}
+                        onChange={(e) => setEditDistrict(e.target.value)}
+                        disabled={!editState}
+                        className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {!editState ? (
+                          <option value="">Select State first</option>
+                        ) : (
+                          <>
+                            <option value="">Select District</option>
+                            {getDistrictsForState(editState).map((dist) => (
+                              <option key={dist} value={dist}>
+                                {dist}
+                              </option>
+                            ))}
+                          </>
+                        )}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div>
+                      <label className="block mb-1">Pincode</label>
                       <input
                         type="text"
-                        value={editCity}
-                        onChange={(e) => setEditCity(e.target.value)}
+                        placeholder="e.g. 110001"
+                        value={editPincode}
+                        onChange={(e) => setEditPincode(e.target.value)}
                         className="w-full bg-[var(--bg-color)] border border-[var(--border-color)]/60 focus:border-[var(--primary-color)] rounded-xl px-3.5 py-2 outline-none text-xs text-[var(--text-color)] font-semibold transition-all"
-                        required
                       />
                     </div>
                     <div>

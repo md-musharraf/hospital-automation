@@ -1698,6 +1698,98 @@ async function beginFlow({
   return { messages: [...leadMessages, { sender: 'bot', text: prompt }], options: [] };
 }
 
+/**
+ * Detect if the message contains an explicit hospital trigger / deep-link
+ * from a landing page, QR code, or direct patient command.
+ *
+ * Supported formats:
+ *  1. Structured Landing Page Text: "Hi, I want to book an appointment at Ashoka life care Hospital (ID: ashoka-life-care-hospital)"
+ *  2. Bracket/Paren ID/Code: "(ID: xyz)", "[ID: xyz]", "Code: xyz", "ID: xyz"
+ *  3. Tag / Hashtag: "@ashoka-life-care-hospital", "#ashoka-life-care-hospital"
+ *  4. Prefixes: "HI_xyz", "BOOK_xyz", "START_xyz", "HOSP_xyz"
+ *  5. Natural language trigger: "Hi ashoka-life-care-hospital", "Book at ashoka-life-care-hospital", "Token for ashoka-life-care-hospital"
+ *  6. Direct slug or ID: "ashoka-life-care-hospital"
+ */
+async function detectDirectHospitalTrigger(cleanMsg: string) {
+  if (!cleanMsg || cleanMsg.length < 3) return null;
+
+  // 1. Explicit ID/Code in parentheses, brackets, or key-value format
+  const idPattern = /(?:\(|\[|\b)(?:id|code|hosp_id|facility_id)\s*[:=]\s*([a-z0-9_-]+)(?:\)|\]|\b)/i;
+  const idMatch = cleanMsg.match(idPattern);
+  if (idMatch) {
+    const cand = idMatch[1].trim().toLowerCase();
+    const hosp = await Hospital.findOne({ $or: [{ id: cand }, { slug: cand }] });
+    if (hosp) return hosp;
+  }
+
+  // 2. Tag format e.g. "@ashoka-life-care-hospital" or "#ashoka-life-care-hospital"
+  const tagMatch = cleanMsg.match(/[@#]([a-z0-9_-]{3,})/i);
+  if (tagMatch) {
+    const cand = tagMatch[1].trim().toLowerCase();
+    const hosp = await Hospital.findOne({ $or: [{ id: cand }, { slug: cand }] });
+    if (hosp) return hosp;
+  }
+
+  // 3. Prefix triggers e.g. "HI_xyz", "BOOK_xyz", "START_xyz", "HOSP_xyz"
+  const prefixMatch = cleanMsg.match(/^(?:hi_|book_|start_|hosp_)([a-z0-9_-]+)$/i);
+  if (prefixMatch) {
+    const cand = prefixMatch[1].trim().toLowerCase();
+    const hosp = await Hospital.findOne({ $or: [{ id: cand }, { slug: cand }] });
+    if (hosp) return hosp;
+  }
+
+  // 4. "Hi <hospitalId>" or "Book <hospitalId>" or "Appointment at <hospitalId>" or "Book at <hospitalId>"
+  const actionMatch = cleanMsg.match(
+    /^(?:hi|hello|hey|namaste|book|appointment|token|start)\s+(?:at|for|in)?\s*([a-z0-9_-]{3,})$/i
+  );
+  if (actionMatch) {
+    const cand = actionMatch[1].trim().toLowerCase();
+    const hosp = await Hospital.findOne({ $or: [{ id: cand }, { slug: cand }] });
+    if (hosp) return hosp;
+  }
+
+  // 5. Check if cleanMsg exactly matches a hospital id or slug (excluding common chat keywords)
+  const cleanId = cleanMsg.trim().toLowerCase();
+  const reservedWords = [
+    'menu',
+    'help',
+    'info',
+    'back',
+    'reset',
+    'restart',
+    'start',
+    'cancel',
+    'hindi',
+    'english',
+    'male',
+    'female',
+    'other',
+    'today',
+    'more',
+    'yes',
+    'no',
+    'hi',
+    'hello',
+    'hey',
+    'namaste',
+    'peeche',
+    'wapas',
+    'shuru',
+    'status',
+    'queue',
+    'refill',
+    'doctor',
+    'staff',
+    'admin'
+  ];
+  if (!reservedWords.includes(cleanId) && /^[a-z0-9_-]{3,}$/i.test(cleanId)) {
+    const hosp = await Hospital.findOne({ $or: [{ id: cleanId }, { slug: cleanId }] });
+    if (hosp) return hosp;
+  }
+
+  return null;
+}
+
 async function processChatMessage({ sessionId, message, hospitalId, socketIo }) {
   let session = await ChatSession.findOne({ sessionId });
   if (!session) {
@@ -1726,36 +1818,41 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
   const cleanMsg = message ? message.trim() : '';
 
-  // Direct Hospital QR Code Trigger Detector (e.g. "HI_general-hospital", "BOOK_general-hospital", "HI_CITY_CARE")
-  let qrHospital = null;
-  const qrPrefixMatch = cleanMsg.match(/^(?:hi_|book_|hosp_)?([a-z0-9_-]+)$/i);
-  if (qrPrefixMatch && cleanMsg.length >= 3) {
-    const candidateIdOrSlug = qrPrefixMatch[1].toLowerCase();
-    qrHospital = await Hospital.findOne({
-      $or: [
-        { id: candidateIdOrSlug },
-        { slug: candidateIdOrSlug },
-        { id: cleanMsg.toLowerCase() },
-        { slug: cleanMsg.toLowerCase() }
-      ]
-    });
-  }
+  // Direct Hospital Trigger Detector (from landing page deep link, QR scan, or explicit tag/ID)
+  const directHospital = await detectDirectHospitalTrigger(cleanMsg);
+  if (directHospital) {
+    const knownLang = (session.tempData && session.tempData.language) || null;
 
-  // If message is a Hospital QR Code trigger scan
-  if (qrHospital) {
+    session.tempData = {
+      ...(session.tempData || {}),
+      hospitalId: directHospital.id,
+      facilityChosen: true,
+      facilityLocked: true,
+      viaQr: true
+    };
+
+    if (knownLang) {
+      const t0 = dictionary[knownLang];
+      return await backToMenu(session, t0, knownLang, directHospital.id, [
+        {
+          sender: 'bot',
+          text: `🏥 *Welcome to ${directHospital.name}!*\n📍 ${directHospital.address}${directHospital.city ? ', ' + directHospital.city : ''}\n📞 Phone: ${directHospital.phone}`
+        }
+      ]);
+    }
+
     session.currentState = 'LANGUAGE';
-    session.tempData = { hospitalId: qrHospital.id, facilityChosen: true, facilityLocked: true, viaQr: true };
     session.markModified && session.markModified('tempData');
     await session.save();
 
-    const rawWhatsapp = qrHospital.whatsappNumber || getPrimaryWhatsAppNumber();
+    const rawWhatsapp = directHospital.whatsappNumber || getPrimaryWhatsAppNumber();
     const num = rawWhatsapp.replace(/^whatsapp:/i, '');
 
     return {
       messages: [
         {
           sender: 'bot',
-          text: `🏥 *Welcome to ${qrHospital.name}!*\n📍 ${qrHospital.address}, ${qrHospital.city}\n📞 Phone: ${qrHospital.phone}\n\nPlease select your preferred language / अपनी पसंदीदा भाषा चुनें:\n• English\n• हिन्दी\n\n(Tip: Reply "Info" for facility photos & services)`
+          text: `🏥 *Welcome to ${directHospital.name}!*\n📍 ${directHospital.address}${directHospital.city ? ', ' + directHospital.city : ''}\n📞 Phone: ${directHospital.phone}\n\nPlease select your preferred language / अपनी पसंदीदा भाषा चुनें:\n• English\n• हिन्दी\n\n(Tip: Reply "Info" for facility photos & services)`
         }
       ],
       options: ['English', 'हिन्दी', 'Facility Info']
@@ -3289,7 +3386,7 @@ router.get('/whatsapp/qr/:hospitalId', async (req, res) => {
 
     const waConfig = getWhatsAppConfig();
     const cleanNumber = (waConfig.whatsappNumber || '+13613160967').replace(/\D/g, '');
-    const prefilledText = `HI_${hospital.id}`;
+    const prefilledText = `Hi, I want to book an appointment at ${hospital.name} (ID: ${hospital.id})`;
     const waDeepLink = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(prefilledText)}`;
     const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(waDeepLink)}`;
 

@@ -22,4 +22,5 @@ Object.defineProperty(exports, "__esModule", { value: true });
  */
 __exportStar(require("./fieldTypes"), exports);
 __exportStar(require("./parseBody"), exports);
+__exportStar(require("./locations"), exports);
 //# sourceMappingURL=index.js.map

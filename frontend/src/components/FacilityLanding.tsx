@@ -106,8 +106,9 @@ export default function FacilityLanding() {
 
   const { facility, template } = page;
   const bookingHref = `/hospital/${facility.id}`;
+  const prefilledWaText = `Hi, I want to book an appointment at ${facility.name} (ID: ${facility.id})`;
   const waHref = facility.whatsappNumber
-    ? `https://wa.me/${facility.whatsappNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent('Hi')}`
+    ? `https://wa.me/${facility.whatsappNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(prefilledWaText)}`
     : '';
 
   const ctx = { page, theme, bookingHref, waHref, navigate };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BACKEND_URL } from '../App';
 import { getFacilityTheme } from '../theme/facilityThemes';
@@ -11,12 +11,12 @@ import DeferUntilVisible from './DeferUntilVisible';
 const WhatsAppTester = React.lazy(() => import('./WhatsAppTester'));
 
 export default function HospitalHub() {
-  const [hospitals, setHospitals] = useState([]);
+  const [hospitals, setHospitals] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedState, setSelectedState] = useState('All');
   const [selectedDistrict, setSelectedDistrict] = useState('All');
   const [selectedType, setSelectedType] = useState('All');
-  const [userCoords, setUserCoords] = useState(null);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -39,7 +39,7 @@ export default function HospitalHub() {
   }, []);
 
   // Haversine formula to calculate distance in km between two lat/lng coordinates
-  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371; // Earth's radius in kilometers
     const dLat = ((lat2 - lat1) * Math.PI) / 180;
     const dLon = ((lon2 - lon1) * Math.PI) / 180;
@@ -75,25 +75,40 @@ export default function HospitalHub() {
     );
   };
 
-  // Location cascade: choose State → District → facility.
-  const states = ['All', ...Array.from(new Set(hospitals.map((h) => h.state).filter(Boolean))).sort()];
-  // Districts depend on the chosen state (all districts when state = 'All').
-  const districts = [
-    'All',
-    ...Array.from(
-      new Set(
-        hospitals
-          .filter((h) => selectedState === 'All' || h.state === selectedState)
-          .map((h) => h.district)
-          .filter(Boolean)
-      )
-    ).sort()
-  ];
+  // Smart dynamic active-location filters:
+  // Derive State options with counts dynamically from active hospitals
+  const stateCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const h of hospitals) {
+      if (h.state) {
+        counts[h.state] = (counts[h.state] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [hospitals]);
 
-  // When the state changes, a previously-picked district may no longer belong to
-  // it — snap the district back to 'All' so the list never shows an empty result
-  // from a stale pairing.
-  const handleStateChange = (st) => {
+  const activeStates = useMemo(() => {
+    return Object.keys(stateCounts).sort((a, b) => a.localeCompare(b));
+  }, [stateCounts]);
+
+  // Derive District options with counts dynamically from active hospitals (cascaded by selectedState)
+  const districtCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    const relevantHospitals = hospitals.filter((h) => selectedState === 'All' || h.state === selectedState);
+    for (const h of relevantHospitals) {
+      if (h.district) {
+        counts[h.district] = (counts[h.district] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [hospitals, selectedState]);
+
+  const activeDistricts = useMemo(() => {
+    return Object.keys(districtCounts).sort((a, b) => a.localeCompare(b));
+  }, [districtCounts]);
+
+  // When the state changes, snap the district back to 'All' so the list never shows a stale pairing.
+  const handleStateChange = (st: string) => {
     setSelectedState(st);
     setSelectedDistrict('All');
   };
@@ -151,17 +166,12 @@ export default function HospitalHub() {
   ];
 
   // Animate sections/cards in as they scroll into view (re-scan after data loads).
-  // Render a page at a time. At 200 partner facilities the unpaginated grid put
-  // 204 cards, 204 images and 7,400 DOM nodes on the page in one go, which is a
-  // slow first paint on the mid-range Android most patients are holding — and
-  // nobody scrolls 200 cards anyway. The filters above still search the whole
-  // set; this only limits what is drawn.
+  // Render a page at a time.
   const PAGE_SIZE = 24;
   const [shown, setShown] = useState(PAGE_SIZE);
   const visibleHospitals = filteredHospitals.slice(0, shown);
 
-  // Narrowing the filters must start the list again from the top, or a search
-  // that matches 5 facilities would still be showing a "Show more" button.
+  // Narrowing the filters must start the list again from the top
   useEffect(() => {
     setShown(PAGE_SIZE);
   }, [searchQuery, selectedType, selectedState, selectedDistrict]);
@@ -290,9 +300,10 @@ export default function HospitalHub() {
                         onChange={(e) => handleStateChange(e.target.value)}
                         className="w-full appearance-none bg-[var(--card-bg)] border border-[var(--border-color)]/60 rounded-xl pl-9 pr-8 py-2.5 text-xs font-bold text-[var(--text-color)] outline-none focus:border-[var(--primary-color)] transition-colors cursor-pointer"
                       >
-                        {states.map((st) => (
+                        <option value="All">All States ({hospitals.length})</option>
+                        {activeStates.map((st) => (
                           <option key={st} value={st}>
-                            {st === 'All' ? 'All States' : st}
+                            {st} ({stateCounts[st]})
                           </option>
                         ))}
                       </select>
@@ -308,12 +319,17 @@ export default function HospitalHub() {
                       <select
                         value={selectedDistrict}
                         onChange={(e) => setSelectedDistrict(e.target.value)}
-                        disabled={districts.length <= 1}
+                        disabled={activeDistricts.length === 0}
                         className="w-full appearance-none bg-[var(--card-bg)] border border-[var(--border-color)]/60 rounded-xl pl-9 pr-8 py-2.5 text-xs font-bold text-[var(--text-color)] outline-none focus:border-[var(--primary-color)] transition-colors cursor-pointer disabled:opacity-50"
                       >
-                        {districts.map((d) => (
-                          <option key={d} value={d}>
-                            {d === 'All' ? 'All Districts' : d}
+                        <option value="All">
+                          {selectedState === 'All'
+                            ? `All Districts (${hospitals.length})`
+                            : `All in ${selectedState} (${stateCounts[selectedState] || 0})`}
+                        </option>
+                        {activeDistricts.map((dist) => (
+                          <option key={dist} value={dist}>
+                            {dist} ({districtCounts[dist]})
                           </option>
                         ))}
                       </select>
@@ -346,211 +362,8 @@ export default function HospitalHub() {
         </div>
       </section>
 
-      {/* 2. Live Metrics Infotech Row */}
-      <section className="bg-[var(--card-bg)] border-b border-[var(--border-color)]/25 py-8 px-6 sm:px-12 relative z-10 shadow-sm shadow-black/5">
-        <div className="reveal max-w-[1280px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-          {[
-            {
-              value: '-42%',
-              label: 'Lounge Wait Time',
-              icon: 'schedule',
-              color: 'text-[var(--primary-color)]'
-            },
-            {
-              value: '99.8%',
-              label: 'Dispatch Accuracy',
-              icon: 'verified',
-              color: 'text-[var(--tertiary-color)]'
-            },
-            { value: '12K+', label: 'SMS Reminders Sent', icon: 'sms', color: 'text-[var(--primary-color)]' },
-            {
-              value: '150+',
-              label: 'Connected Clinics',
-              icon: 'local_hospital',
-              color: 'text-[var(--tertiary-color)]'
-            }
-          ].map((stat, idx) => (
-            <div
-              key={idx}
-              className="space-y-1.5 p-3 rounded-2xl bg-[var(--bg-color)]/30 border border-[var(--border-color)]/20 shadow-sm flex flex-col items-center"
-            >
-              <div
-                className={`w-10 h-10 rounded-full bg-[var(--bg-color)] border border-[var(--border-color)]/40 flex items-center justify-center ${stat.color} mb-1 shadow-inner`}
-              >
-                <span className="material-symbols-outlined text-[20px]">{stat.icon}</span>
-              </div>
-              <p className="text-2xl md:text-3xl font-black text-[var(--text-color)] leading-none">
-                {stat.value}
-              </p>
-              <p className="text-[10px] md:text-xs text-[var(--text-secondary)] font-bold">{stat.label}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* 3. Advanced Solutions Grid Section */}
-      <section className="py-16 px-6 sm:px-12 max-w-[1280px] mx-auto text-left">
-        <div className="reveal text-center max-w-xl mx-auto mb-12 space-y-2">
-          <span className="text-[10px] uppercase font-black text-[var(--primary-color)] tracking-widest bg-[var(--primary-color)]/10 px-3 py-1 rounded-full">
-            Modular Technology
-          </span>
-          <h2 className="text-3xl font-black text-[var(--text-color)]">Healthcare Infotech Modules</h2>
-          <p className="text-xs text-[var(--text-secondary)] font-semibold leading-relaxed">
-            Our advanced SaaS queue ecosystem is powered by unified clinics integration, AI patient support,
-            and multi-tenant admin consoles.
-          </p>
-        </div>
-
-        <div className="reveal grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-          {[
-            {
-              title: 'Live Queue Telemetry',
-              desc: 'Real-time dashboard visualization for waiting halls. Includes TV audio paging, ABSENT skips, and cabin check-in updates.',
-              icon: 'tv',
-              color:
-                'bg-[var(--primary-color)]/10 border-[var(--primary-color)]/20 text-[var(--primary-color)]'
-            },
-            {
-              title: 'AI Symptom Triage',
-              desc: 'Symptom-checking chatbot routes bookings instantly to appropriate doctors, reducing consultation overhead and queue lengths.',
-              icon: 'smart_toy',
-              color:
-                'bg-[var(--tertiary-color)]/10 border-[var(--tertiary-color)]/20 text-[var(--tertiary-color)]'
-            },
-            {
-              title: 'B2B Multi-Tenant Dashboard',
-              desc: 'Separate, scoped panels for Doctors, Staff, and Lab tech assistants. Complete credential isolation guarantees patient privacy.',
-              icon: 'shield',
-              color: 'bg-[var(--primary-color)]/15 border-[var(--primary-color)]/20 text-[var(--text-color)]'
-            },
-            {
-              title: 'Smart SMS Follow-ups',
-              desc: 'Autonomous revisit-triggering engine that automates SMS logs to recover checkups, reminding patients scheduled for followups.',
-              icon: 'sms',
-              color:
-                'bg-[var(--tertiary-color)]/15 border-[var(--tertiary-color)]/20 text-[var(--tertiary-text)]'
-            }
-          ].map((sol, idx) => (
-            <div
-              key={idx}
-              className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between"
-            >
-              <div className="space-y-4">
-                <div
-                  className={`w-12 h-12 rounded-xl border flex items-center justify-center ${sol.color} shadow-sm`}
-                >
-                  <span className="material-symbols-outlined text-[24px]">{sol.icon}</span>
-                </div>
-                <h4 className="font-extrabold text-sm text-[var(--text-color)] leading-tight">{sol.title}</h4>
-                <p className="text-xs text-[var(--text-secondary)] font-medium leading-relaxed">{sol.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* 4. Interactive Step-by-Step Workflow ("How it Works") */}
-      <section className="py-12 bg-[var(--card-bg)] border-t border-b border-[var(--border-color)]/25 px-6 sm:px-12">
-        <div className="max-w-[1280px] mx-auto text-left">
-          <div className="reveal text-center mb-12 space-y-2">
-            <h2 className="text-3xl font-black text-[var(--text-color)]">The Patient Journey</h2>
-            <p className="text-xs text-[var(--text-secondary)] font-semibold">
-              How CareeAi streamlines queue bookings in three fast steps.
-            </p>
-          </div>
-
-          <div className="reveal grid grid-cols-1 md:grid-cols-3 gap-8 relative">
-            {/* Timeline connectors (visible on desktop) */}
-            <div className="hidden md:block absolute top-12 left-[15%] right-[15%] h-[2px] bg-gradient-to-r from-[var(--primary-color)] via-[var(--secondary-color)] to-[var(--tertiary-color)] z-0"></div>
-
-            {[
-              {
-                step: '01',
-                title: 'Select Clinical Facility',
-                desc: 'Filter clinics by city or run GPS locator to discover nearest facilities with active wait times.',
-                icon: 'location_on',
-                color: 'bg-[var(--primary-color)]'
-              },
-              {
-                step: '02',
-                title: 'Complete AI Triage Chat',
-                desc: 'Interact with the hospital chatbot to input details, describe symptoms, and get doctor routing.',
-                icon: 'chat',
-                color: 'bg-[var(--secondary-color)]'
-              },
-              {
-                step: '03',
-                title: 'Obtain Live Wait Token',
-                desc: 'Get your live queue ticket on WhatsApp or browser. Follow real-time lounge TV announcements.',
-                icon: 'qr_code_2',
-                color: 'bg-[var(--tertiary-color)]'
-              }
-            ].map((flow, idx) => (
-              <div
-                key={idx}
-                className="relative z-10 flex flex-col items-center text-center space-y-4 max-w-sm mx-auto"
-              >
-                <div
-                  className={`w-16 h-16 rounded-full ${flow.color} text-white flex items-center justify-center font-black text-xl shadow-lg border-4 border-[var(--card-bg)]`}
-                >
-                  <span className="material-symbols-outlined text-[26px]">{flow.icon}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] font-black uppercase text-[var(--primary-color)] tracking-wider">
-                    Step {flow.step}
-                  </span>
-                  <h4 className="font-extrabold text-sm text-[var(--text-color)] mt-1 mb-2">{flow.title}</h4>
-                  <p className="text-xs text-[var(--text-secondary)] font-medium leading-relaxed max-w-xs">
-                    {flow.desc}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* 4.5 Live WhatsApp Business API Webhook Simulator */}
-      <section className="py-12 px-6 sm:px-12 max-w-[1280px] mx-auto text-left">
-        <div className="text-center max-w-xl mx-auto mb-8 space-y-2">
-          <span className="text-[10px] uppercase font-black text-emerald-500 tracking-widest bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
-            Omnichannel Integration
-          </span>
-          <h2 className="text-3xl font-black text-[var(--text-color)]">Live WhatsApp Chatbot Engine</h2>
-          <p className="text-xs text-[var(--text-secondary)] font-semibold leading-relaxed">
-            Test how any WhatsApp Business number acts as an AI booking assistant, symptom triager, and
-            digital prescription dispenser.
-          </p>
-        </div>
-
-        <DeferUntilVisible
-          minHeight={420}
-          fallback={
-            <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30">
-              <span className="material-symbols-outlined text-[36px] text-[var(--primary-color)] animate-spin">
-                refresh
-              </span>
-              <p className="text-xs font-bold text-[var(--text-secondary)]">Loading live chatbot engine…</p>
-            </div>
-          }
-        >
-          <Suspense
-            fallback={
-              <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30">
-                <span className="material-symbols-outlined text-[36px] text-[var(--primary-color)] animate-spin">
-                  refresh
-                </span>
-                <p className="text-xs font-bold text-[var(--text-secondary)]">Loading live chatbot engine…</p>
-              </div>
-            }
-          >
-            <WhatsAppTester initialPhone="+14155238886" defaultHospId="general-hospital" />
-          </Suspense>
-        </DeferUntilVisible>
-      </section>
-
-      {/* 5. Partner Hospital Directory Grid */}
-      <div className="max-w-[1280px] mx-auto py-16 px-6 sm:px-8">
+      {/* 2. Partner Hospital Directory Grid (Positioned directly beneath Hero filters for instant results) */}
+      <section id="facility-directory" className="max-w-[1280px] mx-auto py-12 md:py-16 px-6 sm:px-8">
         <div className="flex justify-between items-center mb-8 text-left">
           <div>
             <h2 className="text-xl sm:text-2xl font-black">Partner Hospital & Facility Directory</h2>
@@ -715,10 +528,7 @@ export default function HospitalHub() {
                       </span>
                     </div>
 
-                    {/* CTA Footer — the card opens the facility's own landing
-                      page; "Book Token" is the express lane straight into its
-                      booking portal for patients who already know where they
-                      are going. */}
+                    {/* CTA Footer */}
                     <div className="mt-auto pt-4 border-t border-[var(--border-color)]/30 flex justify-between items-center gap-2">
                       <button
                         onClick={(e) => {
@@ -758,10 +568,213 @@ export default function HospitalHub() {
             </p>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* 6. Trust & Guarantee Section */}
-      <div className="bg-[var(--card-bg)] border-t border-[var(--border-color)]/30 py-12 px-6 sm:px-8 text-center text-xs text-[var(--text-secondary)] font-semibold">
+      {/* 3. Live Metrics Infotech Row */}
+      <section className="bg-[var(--card-bg)] border-t border-b border-[var(--border-color)]/25 py-8 px-6 sm:px-12 relative z-10 shadow-sm shadow-black/5">
+        <div className="reveal max-w-[1280px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+          {[
+            {
+              value: '-42%',
+              label: 'Lounge Wait Time',
+              icon: 'schedule',
+              color: 'text-[var(--primary-color)]'
+            },
+            {
+              value: '99.8%',
+              label: 'Dispatch Accuracy',
+              icon: 'verified',
+              color: 'text-[var(--tertiary-color)]'
+            },
+            { value: '12K+', label: 'SMS Reminders Sent', icon: 'sms', color: 'text-[var(--primary-color)]' },
+            {
+              value: '150+',
+              label: 'Connected Clinics',
+              icon: 'local_hospital',
+              color: 'text-[var(--tertiary-color)]'
+            }
+          ].map((stat, idx) => (
+            <div
+              key={idx}
+              className="space-y-1.5 p-3 rounded-2xl bg-[var(--bg-color)]/30 border border-[var(--border-color)]/20 shadow-sm flex flex-col items-center"
+            >
+              <div
+                className={`w-10 h-10 rounded-full bg-[var(--bg-color)] border border-[var(--border-color)]/40 flex items-center justify-center ${stat.color} mb-1 shadow-inner`}
+              >
+                <span className="material-symbols-outlined text-[20px]">{stat.icon}</span>
+              </div>
+              <p className="text-2xl md:text-3xl font-black text-[var(--text-color)] leading-none">
+                {stat.value}
+              </p>
+              <p className="text-[10px] md:text-xs text-[var(--text-secondary)] font-bold">{stat.label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* 4. Advanced Solutions Grid Section */}
+      <section className="py-16 px-6 sm:px-12 max-w-[1280px] mx-auto text-left">
+        <div className="reveal text-center max-w-xl mx-auto mb-12 space-y-2">
+          <span className="text-[10px] uppercase font-black text-[var(--primary-color)] tracking-widest bg-[var(--primary-color)]/10 px-3 py-1 rounded-full">
+            Modular Technology
+          </span>
+          <h2 className="text-3xl font-black text-[var(--text-color)]">Healthcare Infotech Modules</h2>
+          <p className="text-xs text-[var(--text-secondary)] font-semibold leading-relaxed">
+            Our advanced SaaS queue ecosystem is powered by unified clinics integration, AI patient support,
+            and multi-tenant admin consoles.
+          </p>
+        </div>
+
+        <div className="reveal grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          {[
+            {
+              title: 'Live Queue Telemetry',
+              desc: 'Real-time dashboard visualization for waiting halls. Includes TV audio paging, ABSENT skips, and cabin check-in updates.',
+              icon: 'tv',
+              color:
+                'bg-[var(--primary-color)]/10 border-[var(--primary-color)]/20 text-[var(--primary-color)]'
+            },
+            {
+              title: 'AI Symptom Triage',
+              desc: 'Symptom-checking chatbot routes bookings instantly to appropriate doctors, reducing consultation overhead and queue lengths.',
+              icon: 'smart_toy',
+              color:
+                'bg-[var(--tertiary-color)]/10 border-[var(--tertiary-color)]/20 text-[var(--tertiary-color)]'
+            },
+            {
+              title: 'B2B Multi-Tenant Dashboard',
+              desc: 'Separate, scoped panels for Doctors, Staff, and Lab tech assistants. Complete credential isolation guarantees patient privacy.',
+              icon: 'shield',
+              color: 'bg-[var(--primary-color)]/15 border-[var(--primary-color)]/20 text-[var(--text-color)]'
+            },
+            {
+              title: 'Smart SMS Follow-ups',
+              desc: 'Autonomous revisit-triggering engine that automates SMS logs to recover checkups, reminding patients scheduled for followups.',
+              icon: 'sms',
+              color:
+                'bg-[var(--tertiary-color)]/15 border-[var(--tertiary-color)]/20 text-[var(--tertiary-text)]'
+            }
+          ].map((sol, idx) => (
+            <div
+              key={idx}
+              className="bg-[var(--card-bg)] border border-[var(--border-color)]/30 rounded-2xl p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between"
+            >
+              <div className="space-y-4">
+                <div
+                  className={`w-12 h-12 rounded-xl border flex items-center justify-center ${sol.color} shadow-sm`}
+                >
+                  <span className="material-symbols-outlined text-[24px]">{sol.icon}</span>
+                </div>
+                <h4 className="font-extrabold text-sm text-[var(--text-color)] leading-tight">{sol.title}</h4>
+                <p className="text-xs text-[var(--text-secondary)] font-medium leading-relaxed">{sol.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* 5. Interactive Step-by-Step Workflow ("How it Works") */}
+      <section className="py-12 bg-[var(--card-bg)] border-t border-b border-[var(--border-color)]/25 px-6 sm:px-12">
+        <div className="max-w-[1280px] mx-auto text-left">
+          <div className="reveal text-center mb-12 space-y-2">
+            <h2 className="text-3xl font-black text-[var(--text-color)]">The Patient Journey</h2>
+            <p className="text-xs text-[var(--text-secondary)] font-semibold">
+              How CareeAi streamlines queue bookings in three fast steps.
+            </p>
+          </div>
+
+          <div className="reveal grid grid-cols-1 md:grid-cols-3 gap-8 relative">
+            {/* Timeline connectors (visible on desktop) */}
+            <div className="hidden md:block absolute top-12 left-[15%] right-[15%] h-[2px] bg-gradient-to-r from-[var(--primary-color)] via-[var(--secondary-color)] to-[var(--tertiary-color)] z-0"></div>
+
+            {[
+              {
+                step: '01',
+                title: 'Select Clinical Facility',
+                desc: 'Filter clinics by city or run GPS locator to discover nearest facilities with active wait times.',
+                icon: 'location_on',
+                color: 'bg-[var(--primary-color)]'
+              },
+              {
+                step: '02',
+                title: 'Complete AI Triage Chat',
+                desc: 'Interact with the hospital chatbot to input details, describe symptoms, and get doctor routing.',
+                icon: 'chat',
+                color: 'bg-[var(--secondary-color)]'
+              },
+              {
+                step: '03',
+                title: 'Obtain Live Wait Token',
+                desc: 'Get your live queue ticket on WhatsApp or browser. Follow real-time lounge TV announcements.',
+                icon: 'qr_code_2',
+                color: 'bg-[var(--tertiary-color)]'
+              }
+            ].map((flow, idx) => (
+              <div
+                key={idx}
+                className="relative z-10 flex flex-col items-center text-center space-y-4 max-w-sm mx-auto"
+              >
+                <div
+                  className={`w-16 h-16 rounded-full ${flow.color} text-white flex items-center justify-center font-black text-xl shadow-lg border-4 border-[var(--card-bg)]`}
+                >
+                  <span className="material-symbols-outlined text-[26px]">{flow.icon}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase text-[var(--primary-color)] tracking-wider">
+                    Step {flow.step}
+                  </span>
+                  <h4 className="font-extrabold text-sm text-[var(--text-color)] mt-1 mb-2">{flow.title}</h4>
+                  <p className="text-xs text-[var(--text-secondary)] font-medium leading-relaxed max-w-xs">
+                    {flow.desc}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* 6. Live WhatsApp Business API Webhook Simulator */}
+      <section className="py-12 px-6 sm:px-12 max-w-[1280px] mx-auto text-left">
+        <div className="text-center max-w-xl mx-auto mb-8 space-y-2">
+          <span className="text-[10px] uppercase font-black text-emerald-500 tracking-widest bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
+            Omnichannel Integration
+          </span>
+          <h2 className="text-3xl font-black text-[var(--text-color)]">Live WhatsApp Chatbot Engine</h2>
+          <p className="text-xs text-[var(--text-secondary)] font-semibold leading-relaxed">
+            Test how any WhatsApp Business number acts as an AI booking assistant, symptom triager, and
+            digital prescription dispenser.
+          </p>
+        </div>
+
+        <DeferUntilVisible
+          minHeight={420}
+          fallback={
+            <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30">
+              <span className="material-symbols-outlined text-[36px] text-[var(--primary-color)] animate-spin">
+                refresh
+              </span>
+              <p className="text-xs font-bold text-[var(--text-secondary)]">Loading live chatbot engine…</p>
+            </div>
+          }
+        >
+          <Suspense
+            fallback={
+              <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-[var(--card-bg)] rounded-2xl border border-[var(--border-color)]/30">
+                <span className="material-symbols-outlined text-[36px] text-[var(--primary-color)] animate-spin">
+                  refresh
+                </span>
+                <p className="text-xs font-bold text-[var(--text-secondary)]">Loading live chatbot engine…</p>
+              </div>
+            }
+          >
+            <WhatsAppTester initialPhone="+14155238886" defaultHospId="general-hospital" />
+          </Suspense>
+        </DeferUntilVisible>
+      </section>
+
+      {/* 7. Trust & Guarantee Section */}
+      <footer className="bg-[var(--card-bg)] border-t border-[var(--border-color)]/30 py-12 px-6 sm:px-8 text-center text-xs text-[var(--text-secondary)] font-semibold">
         <div className="max-w-2xl mx-auto space-y-4">
           <div className="flex justify-center space-x-6 text-[var(--text-color)] mb-2">
             <div className="flex items-center space-x-1">
@@ -786,7 +799,7 @@ export default function HospitalHub() {
             &copy; 2026 CareeAi Technologies Inc. All rights reserved.
           </p>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
