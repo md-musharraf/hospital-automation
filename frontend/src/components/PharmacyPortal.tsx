@@ -146,9 +146,9 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
     'in-stock': 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
     low: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
     out: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
-    unknown: 'bg-zinc-500/15 text-zinc-500'
+    untracked: 'bg-zinc-500/15 text-zinc-500'
   };
-  const LEVEL_TEXT = { 'in-stock': 'In stock', low: 'Low', out: 'OUT', unknown: 'Not listed' };
+  const LEVEL_TEXT = { 'in-stock': 'In stock', low: 'Low', out: 'OUT', untracked: 'Not tracked' };
 
   return (
     <div className="flex-grow flex flex-col md:flex-row overflow-hidden max-h-[calc(100vh-62px)] bg-[var(--bg-color)] text-[var(--text-color)] transition-colors duration-200">
@@ -473,7 +473,7 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
                     <div
                       key={i}
                       className={`p-4 rounded-xl border flex items-start space-x-3 ${
-                        level === 'out' || level === 'unknown'
+                        level === 'out'
                           ? 'bg-rose-500/5 border-rose-500/40'
                           : 'bg-[var(--bg-color)] border-[var(--border-color)]/50'
                       }`}
@@ -497,9 +497,10 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
                           {[med.dosage, med.duration, med.instructions].filter(Boolean).join(' • ') ||
                             'As directed'}
                         </p>
-                        {level === 'unknown' && (
-                          <p className="text-[12px] text-rose-500 font-bold mt-1">
-                            Not in your stock list — add it under the Stock tab if you carry it.
+                        {level === 'untracked' && (
+                          <p className="text-[12px] text-[var(--text-secondary)] font-semibold mt-1">
+                            Not in your stock list. Hand it over as normal — add it under Stock only if you
+                            want this one counted.
                           </p>
                         )}
                       </div>

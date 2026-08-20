@@ -162,5 +162,97 @@ const rx = (names, extra = {}) => ({
   const anon = dispenseMessage('', 'T-13', ['Paracetamol'], []);
   check('The greeting falls back rather than reading "Hello ,"', /Hello Patient,/.test(anon), anon);
 
+  section('Stock tracking is optional — an untracked medicine is not a shortage');
+
+  // A medical store carries thousands of items. Typing every one of them into
+  // this system is work nobody has time for, and treating an absent row as a
+  // shortage punished exactly the facilities that had not done it: the medicine
+  // was on the shelf, the counter handed it over, and the patient still got a
+  // WhatsApp saying it was unavailable.
+  const { consumeStock, levelOf, checkAvailability } = require(path.join(BACKEND, 'utils', 'stockHelper.js'));
+
+  check('A medicine with no inventory row reads as untracked, not out', levelOf(null) === 'untracked');
+  check('A row that has run out still reads as out', levelOf({ stockQty: 0 }) === 'out');
+  check('A stocked row reads as in-stock', levelOf({ stockQty: 5, reorderLevel: 2 }) === 'in-stock');
+
+  const HOSP = 'stock-hospital';
+  // The store tracks ONE medicine and carries the rest off-system.
+  await new models.Medicine({ hospital: HOSP, name: 'Amoxicillin', stockQty: 4, unit: 'tabs' }).save();
+  await new models.Medicine({ hospital: HOSP, name: 'Cetirizine', stockQty: 0, unit: 'tabs' }).save();
+
+  const result = await consumeStock(null, {
+    hospital: HOSP,
+    medicines: [{ name: 'Amoxicillin' }, { name: 'Paracetamol' }, { name: 'Cetirizine' }],
+    by: 'Counter',
+    tokenNumber: 'T-13'
+  });
+
+  check(
+    'The tracked, stocked medicine is deducted',
+    result.deducted.length === 1 && result.deducted[0].name === 'Amoxicillin',
+    result.deducted
+  );
+  check(
+    'The medicine nobody entered is NOT reported as a shortage',
+    result.shortages.every((sh) => sh.requested !== 'Paracetamol'),
+    result.shortages
+  );
+  check('…it is recorded as untracked instead', result.untracked.join() === 'Paracetamol', result.untracked);
+  check(
+    'The tracked medicine that genuinely ran out IS a shortage',
+    result.shortages.length === 1 && result.shortages[0].requested === 'Cetirizine',
+    result.shortages
+  );
+  check(
+    '…and says why, so it is not confused with an untracked one',
+    result.shortages[0].reason === 'out-of-stock',
+    result.shortages[0]
+  );
+
+  // The whole point: what the patient is told.
+  const handed = ['Amoxicillin', 'Paracetamol'];
+  const owed = result.shortages.map((sh) => sh.requested);
+  const msg = dispenseMessage('Gopi', 'T-13', handed, owed);
+  // The line that names what the patient still has to come back for.
+  const stillToCollect = (msg.split('Still to collect:')[1] || '').split(String.fromCharCode(10))[0];
+  check(
+    'The untracked medicine is not in the list of what is still owed',
+    !stillToCollect.includes('Paracetamol'),
+    stillToCollect
+  );
+  check(
+    '…it is in the list of what was handed over',
+    msg.split('Still to collect:')[0].includes('Paracetamol'),
+    msg.split('Still to collect:')[0]
+  );
+  check('…only the one that really ran out', /Still to collect: Cetirizine/.test(msg), msg);
+
+  // A facility that tracks NOTHING keeps working exactly as it did before any
+  // of this existed: everything is handed over, nobody is warned.
+  const emptyStore = await consumeStock(null, {
+    hospital: 'no-inventory-hospital',
+    medicines: [{ name: 'Paracetamol' }, { name: 'Xyz' }, { name: 'Rdfg' }],
+    by: 'Counter',
+    tokenNumber: 'T-14'
+  });
+  check(
+    'A facility with no inventory at all reports no shortages',
+    emptyStore.shortages.length === 0,
+    emptyStore.shortages
+  );
+  check('…and everything is simply untracked', emptyStore.untracked.length === 3, emptyStore.untracked);
+  check(
+    '…so that patient is told their medicines were handed over',
+    /have been handed over/.test(dispenseMessage('Gopi', 'T-14', ['Paracetamol', 'Xyz', 'Rdfg'], [])),
+    'full handover'
+  );
+
+  const availability = await checkAvailability(HOSP, ['Amoxicillin', 'Paracetamol']);
+  check(
+    'The doctor console sees the same distinction while prescribing',
+    availability[0].level === 'in-stock' && availability[1].level === 'untracked',
+    availability
+  );
+
   report();
 })();

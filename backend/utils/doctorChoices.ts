@@ -38,8 +38,12 @@ export interface DoctorChoice {
     photoUrl: string;
     /** Printed sitting hours for today, e.g. "9:00 AM – 1:00 PM". */
     hours: string;
-    /** Is the cabin open right now? */
+    /** Is the cabin open AND the doctor actually in it right now? */
     sitting: boolean;
+    /** The doctor's own status: Available, In Surgery, On Break, Unavailable. */
+    availability: string;
+    /** Inside their hours but out of the room — they are coming back. */
+    awayNow: boolean;
     /** True when this doctor keeps no fixed hours at all. */
     unscheduled: boolean;
     /** When they next sit, when they are not sitting now. */
@@ -87,8 +91,31 @@ export async function describeDoctorChoices(
 
       // What the patient is choosing between: open now, or open later, or a
       // doctor who keeps no fixed hours at all.
+      //
+      // Two clocks have to agree here. The shift says when this doctor sits;
+      // `availabilityStatus` says what they are doing at this moment, set by
+      // hand from the console. They were read separately, so a doctor who had
+      // marked themselves On Break was still announced to patients as "Sitting
+      // now" — the schedule was right and the room was empty.
+      const standing = String(doctor.availabilityStatus || 'Available');
+      const awayNow = standing === 'In Surgery' || standing === 'On Break';
+
       let when: string;
-      if (status.unscheduled) {
+      if (standing === 'Unavailable') {
+        const next = describeNextSitting(doctor, now);
+        when = hi
+          ? `⛔ अभी उपलब्ध नहीं${next ? ` · अगली बैठक: ${next}` : ''}`
+          : `⛔ Not available right now${next ? ` · Next: ${next}` : ''}`;
+      } else if (awayNow && (status.sitting || status.unscheduled)) {
+        // Inside their hours but out of the room. The patient can still book —
+        // the doctor is coming back — they simply should not be told the cabin
+        // is running when it is not.
+        const label = standing === 'In Surgery' ? 'In surgery' : 'On a break';
+        const labelHi = standing === 'In Surgery' ? 'सर्जरी में' : 'ब्रेक पर';
+        when = hi
+          ? `⏸️ ${labelHi} — जल्द लौटेंगे${hours ? ` · ${hours}` : ''} · ${waiting} इंतज़ार में`
+          : `⏸️ ${label} — back shortly${hours ? ` · ${hours}` : ''} · ${waiting} waiting`;
+      } else if (status.unscheduled) {
         when = hi ? '🕒 समय तय नहीं — कभी भी बुक करें' : '🕒 No fixed OPD hours — bookable any time';
       } else if (status.sitting) {
         when = hi
@@ -118,8 +145,12 @@ export async function describeDoctorChoices(
           room: doctor.currentRoom || '',
           photoUrl: doctor.photoUrl || '',
           hours,
-          sitting: Boolean(status.sitting),
+          sitting: Boolean(status.sitting) && standing !== 'Unavailable' && !awayNow,
           unscheduled: Boolean(status.unscheduled),
+          // What the doctor set by hand, so the card can say "on a break"
+          // rather than implying an empty cabin is open.
+          availability: standing,
+          awayNow,
           nextSitting: status.sitting ? '' : describeNextSitting(doctor, now),
           waiting,
           revisedStart: delay.delayed ? delay.revisedStart : '',

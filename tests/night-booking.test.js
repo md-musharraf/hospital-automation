@@ -404,5 +404,83 @@ const at = (y, m, d, h, min = 0) => new Date(y, m - 1, d, h, min, 0, 0);
     recalcToday.estimatedWaitTime
   );
 
+  section('A doctor is described by the live clock AND their own status');
+
+  // The shift says when this doctor sits. `availabilityStatus` says what they
+  // are doing at this moment. They were read separately, so a doctor who had
+  // marked themselves On Break was still announced to patients as "Sitting now"
+  // — the schedule was right and the room was empty.
+  const onBreakDoc = await new models.Doctor({
+    name: 'Dr. Break',
+    hospital: 'general-hospital',
+    department: 'General Medicine',
+    availabilityStatus: 'On Break',
+    shifts: []
+  }).save();
+  const inSurgeryDoc = await new models.Doctor({
+    name: 'Dr. Scalpel',
+    hospital: 'general-hospital',
+    department: 'Surgery',
+    availabilityStatus: 'In Surgery',
+    shifts: []
+  }).save();
+  const offDutyDoc = await new models.Doctor({
+    name: 'Dr. Away',
+    hospital: 'general-hospital',
+    department: 'ENT',
+    availabilityStatus: 'Unavailable',
+    shifts: []
+  }).save();
+
+  const live = await doctorChoiceMessage([onBreakDoc, inSurgeryDoc, offDutyDoc], 'Pick one:');
+  check(
+    'A doctor on a break is not announced as sitting',
+    !/Dr. Break[\s\S]*?Sitting now/.test(live.text),
+    live.text
+  );
+  check(
+    '…they are announced as on a break, coming back',
+    /On a break — back shortly/.test(live.text),
+    live.text
+  );
+  check('A doctor in surgery says so', /In surgery — back shortly/.test(live.text), live.text);
+  check('A doctor who is off is not offered as open', /Not available right now/.test(live.text), live.text);
+
+  const [breakCard, surgeryCard, awayCard] = live.doctorCards;
+  check('The card agrees: on a break is not "sitting"', breakCard.sitting === false, breakCard);
+  check('…and flags that they are coming back', breakCard.awayNow === true, breakCard);
+  check('…carrying the status itself', breakCard.availability === 'On Break', breakCard);
+  check(
+    'In surgery is the same shape',
+    surgeryCard.awayNow === true && surgeryCard.sitting === false,
+    surgeryCard
+  );
+  check(
+    'Off duty is not "away for a moment"',
+    awayCard.awayNow === false && awayCard.sitting === false,
+    awayCard
+  );
+
+  // An ordinary available doctor with no fixed hours is unaffected — this is the
+  // pharmacy/lab case, bookable whenever the counter is open.
+  const openDoc = await new models.Doctor({
+    name: 'Dr. Open',
+    hospital: 'general-hospital',
+    department: 'General Medicine',
+    availabilityStatus: 'Available',
+    shifts: []
+  }).save();
+  const openMenu = await doctorChoiceMessage([openDoc], 'Pick one:');
+  check(
+    'An available doctor with no fixed hours still reads as bookable',
+    /bookable any time/i.test(openMenu.text),
+    openMenu.text
+  );
+  check(
+    '…and their card says the cabin is open',
+    openMenu.doctorCards[0].awayNow === false,
+    openMenu.doctorCards[0]
+  );
+
   report();
 })();

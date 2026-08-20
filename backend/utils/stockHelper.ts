@@ -16,9 +16,16 @@ export const normalize = (s?: string | null): string =>
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 
-/** Stock level bucket for a row. */
+/**
+ * Stock level bucket for a row.
+ *
+ * `untracked` is not a problem state: it means this facility never entered the
+ * medicine, which is the normal case for a store that carries thousands of
+ * items and has typed in a few dozen. Treating it as a shortage told patients a
+ * medicine sitting on the shelf was unavailable.
+ */
 export function levelOf(med?: any): string {
-  if (!med) return 'unknown';
+  if (!med) return 'untracked';
   if (med.stockQty <= 0) return 'out';
   if (med.stockQty <= (med.reorderLevel || 0)) return 'low';
   return 'in-stock';
@@ -76,10 +83,11 @@ export async function checkAvailability(hospital: string, names: string[] = []):
 export async function consumeStock(
   io: any,
   { hospital, medicines = [], by, tokenNumber }: any
-): Promise<{ deducted: any[]; shortages: any[] }> {
+): Promise<{ deducted: any[]; shortages: any[]; untracked: string[] }> {
   const inventory = (await (Medicine as any).find({ hospital })) || [];
   const deducted: any[] = [];
   const shortages: any[] = [];
+  const untracked: string[] = [];
 
   for (const line of medicines) {
     const name = line && (line.name || line);
@@ -87,14 +95,45 @@ export async function consumeStock(
 
     const med = matchMedicine(inventory, name);
 
-    // A medicine we could NOT hand over is the most important thing that can
-    // happen at this counter — the patient leaves without part of their course.
-    // Raise it loudly (feed + pharmacy + reception) instead of silently skipping.
-    if (!med || med.stockQty <= 0) {
-      const reason = med ? 'out-of-stock' : 'not-in-inventory';
-      shortages.push({ requested: name, matched: med ? med.name : null, reason });
+    // NOT IN THE INVENTORY IS NOT OUT OF STOCK.
+    //
+    // A medical store carries thousands of items and typing every one of them
+    // into this system is work nobody has time for. Treating an absent row as a
+    // shortage punished exactly the facilities that had not done that data
+    // entry: the medicine was sitting on the shelf, the counter handed it over,
+    // and the patient still got a WhatsApp saying it was unavailable.
+    //
+    // So stock tracking is opt-in by nature — a facility tracks whatever it has
+    // chosen to enter, and everything else is assumed to be on the shelf. The
+    // storekeeper is still told, quietly, so they can add the row if they want
+    // it counted; the patient is not, because as far as they are concerned
+    // nothing went wrong.
+    if (!med) {
+      untracked.push(name);
+      await logActivity(io, {
+        hospital,
+        type: 'stock-untracked',
+        role: 'pharmacy',
+        actor: by || 'Pharmacy',
+        message: `${name} was handed over for ${tokenNumber || 'a patient'}. It is not in the inventory, so no stock was adjusted — add it if you want this counted.`,
+        tokenNumber,
+        severity: 'info'
+      });
+      continue;
+    }
 
-      const alert = { name: med ? med.name : name, stockQty: 0, level: 'out', reason, tokenNumber };
+    // A tracked medicine that has genuinely run out. This one the patient does
+    // need to hear about — they are leaving without part of their course.
+    if (med.stockQty <= 0) {
+      shortages.push({ requested: name, matched: med.name, reason: 'out-of-stock' });
+
+      const alert = {
+        name: med.name,
+        stockQty: 0,
+        level: 'out',
+        reason: 'out-of-stock',
+        tokenNumber
+      };
       toRole(io, 'pharmacy', hospital, 'stock-alert', alert);
       toRole(io, 'staff', hospital, 'stock-alert', alert);
       await logActivity(io, {
@@ -102,11 +141,9 @@ export async function consumeStock(
         type: 'stock-out',
         role: 'pharmacy',
         actor: by || 'Pharmacy',
-        message: med
-          ? `Could not dispense ${med.name} for ${tokenNumber || 'a patient'} — OUT OF STOCK.`
-          : `${name} was prescribed for ${tokenNumber || 'a patient'} but is not in the store's inventory.`,
+        message: `Could not dispense ${med.name} for ${tokenNumber || 'a patient'} — OUT OF STOCK.`,
         tokenNumber,
-        refId: med && med._id,
+        refId: med._id,
         severity: 'critical'
       });
       continue;
@@ -152,7 +189,7 @@ export async function consumeStock(
     toFacility(io, hospital, 'inventory-updated', { changed: deducted.map((d) => d.name) });
   }
 
-  return { deducted, shortages };
+  return { deducted, shortages, untracked };
 }
 
 /** Rows that need attention: at/below reorder level, out, expired or expiring. */

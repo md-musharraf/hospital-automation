@@ -1605,7 +1605,20 @@ export default function PatientPortal() {
                         .join('')
                         .slice(0, 2)
                         .toUpperCase();
-                      const isOpen = Boolean(card.sitting || card.unscheduled);
+                      // The doctor's own status and the shift clock, together —
+                      // "On a break" is neither "sitting now" nor "closed".
+                      const isOpen = Boolean(card.sitting || (card.unscheduled && !card.awayNow));
+                      const liveLabel = card.awayNow
+                        ? card.availability === 'In Surgery'
+                          ? 'In surgery — back shortly'
+                          : 'On a break — back shortly'
+                        : card.availability === 'Unavailable'
+                          ? 'Not available right now'
+                          : card.unscheduled
+                            ? 'Bookable any time'
+                            : card.sitting
+                              ? 'Sitting now'
+                              : 'Closed now';
 
                       return (
                         <div
@@ -1642,15 +1655,15 @@ export default function PatientPortal() {
                             <div className="flex items-center space-x-1.5">
                               <span
                                 className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                  isOpen ? 'bg-emerald-500' : 'bg-amber-500'
+                                  isOpen
+                                    ? 'bg-emerald-500'
+                                    : card.availability === 'Unavailable'
+                                      ? 'bg-rose-500'
+                                      : 'bg-amber-500'
                                 }`}
                               />
                               <span className="text-[10px] font-bold text-[var(--text-color)]">
-                                {card.unscheduled
-                                  ? 'Bookable any time'
-                                  : card.sitting
-                                    ? 'Sitting now'
-                                    : 'Closed now'}
+                                {liveLabel}
                               </span>
                             </div>
                             {card.hours && (

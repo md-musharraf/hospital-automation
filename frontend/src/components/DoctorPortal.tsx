@@ -1320,13 +1320,13 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                             'in-stock': 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
                             low: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
                             out: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
-                            unknown: 'bg-zinc-500/15 text-zinc-500'
+                            untracked: 'bg-zinc-500/15 text-zinc-500'
                           }[s.level];
                           const label = {
                             'in-stock': `In stock (${s.stockQty})`,
                             low: `Low (${s.stockQty} left)`,
                             out: 'OUT OF STOCK',
-                            unknown: 'Not in pharmacy list'
+                            untracked: 'Not tracked'
                           }[s.level];
                           return (
                             <span className={`px-1.5 py-0.5 rounded-full font-black text-[11px] ${style}`}>

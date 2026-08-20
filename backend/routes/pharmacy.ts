@@ -62,7 +62,9 @@ router.get('/prescriptions', authenticateToken, ensurePharmacy, async (req, res)
         const obj = t.toObject ? t.toObject() : { ...t };
         const names = (obj.prescription.medicines || []).map((m) => m.name).filter(Boolean);
         obj.stock = inventory.length > 0 ? await checkAvailability(hospital, names) : [];
-        obj.hasShortage = obj.stock.some((s) => s.level === 'out' || s.level === 'unknown');
+        // Only a medicine the store TRACKS and has run out of. An item the
+        // facility never entered is assumed to be on the shelf — see levelOf().
+        obj.hasShortage = obj.stock.some((s) => s.level === 'out');
         // What the counter still owes this patient, so the portal shows the same
         // answer the patient's tracker and the doctor's board are showing.
         obj.dispenseState = dispenseStateOf(obj.prescription);
@@ -148,7 +150,7 @@ router.get('/inventory', authenticateToken, ensurePharmacy, async (req, res) => 
       alertsOnly === 'true' ? decorated.filter((m) => m.level !== 'in-stock' || m.expiry) : decorated;
 
     // Problems first, then alphabetical — the order a storekeeper works in.
-    const rank = { out: 0, low: 1, unknown: 2, 'in-stock': 3 };
+    const rank = { out: 0, low: 1, untracked: 2, 'in-stock': 3 };
     filtered.sort((a, b) => rank[a.level] - rank[b.level] || a.name.localeCompare(b.name));
 
     res.json(filtered);
