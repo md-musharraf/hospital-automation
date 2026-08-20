@@ -150,6 +150,9 @@ export default function PatientPortal() {
     }
   ]);
   const [options, setOptions] = useState([]);
+  // Real sitting hours, cabin state and queue length for the doctor list, sent
+  // by the backend alongside the options. Empty for every other step.
+  const [doctorCards, setDoctorCards] = useState([]);
   const [inputText, setInputText] = useState('');
   const [sessionId] = useState(() => 'session_' + Math.random().toString(36).substr(2, 9));
   const [myToken, setMyToken] = useState(null);
@@ -229,6 +232,7 @@ export default function PatientPortal() {
         if (data.options) {
           setOptions(data.options);
         }
+        setDoctorCards(data.doctorCards || []);
       })
       .catch((err) => {
         console.error('Error auto-initializing chat options:', err);
@@ -424,6 +428,7 @@ export default function PatientPortal() {
       } else {
         setOptions([]);
       }
+      setDoctorCards(data.doctorCards || []);
       if (data.token) {
         setMyToken(data.token);
         setMessages((prev) => [
@@ -1580,55 +1585,97 @@ export default function PatientPortal() {
                   </div>
                 </div>
 
-                {/* Rich Triage Component: Doctor Bento Cards (If select doctor prompt) */}
+                {/* Doctor cards — every value here comes from the backend: the
+                    doctor's own sitting hours, whether that cabin is open right
+                    now, and how many are already waiting. The card used to show
+                    a hardcoded "4.9" rating and a "Free Slot" badge that was
+                    true of every doctor at every hour, which is the one place a
+                    patient looks for real information before choosing. */}
                 {isLastBotMessage && isSelectDoctorPrompt && options.length > 0 && (
                   <div className="flex overflow-x-auto gap-4 mt-3 ml-0 sm:ml-10 w-full max-w-[500px] no-scrollbar pb-2 shrink-0">
                     {options.map((opt, idx) => {
-                      // Parse Doctor Name and Dept
+                      const card = doctorCards[idx] || {};
                       const parts = opt.match(/(Dr\.\s+[^(]+)\s*\(([^)]+)\)/);
-                      const docName = parts ? parts[1].trim() : opt;
-                      const docDept = parts ? parts[2].trim() : 'General Practice';
-
-                      // Alternate colors/images for Dr. Sarah Smith & Dr. James Chen
-                      const isSarah = docName.toLowerCase().includes('sarah') || idx % 2 === 0;
-                      const imageUrl = isSarah
-                        ? 'https://lh3.googleusercontent.com/aida-public/AB6AXuBWdRlyEiC2Yx0HWgBSOach1egGcQ0IkKHDKXiKW95RHy3l-ZXQzsKhEAACSuq7LLYYYXPqx19hTAtvRNbRFPiF1dFioOaElurSxNksTJJp8UUTrgGOSBjZ6UY0RBLaNP2I2bjLyVD1Owse2cXuKTyp9Z5bNIwSTp8vM3fyy1dQfm8PHbYKXCDfUC_1IzepbJC7ByV-s4jkJQht1CncmvPAVtCo2eQDPjp8Eqn9wUxEMbXyMmhBcQLvpR0HL8CHTq3fHlK3pTgo4NyX'
-                        : 'https://lh3.googleusercontent.com/aida-public/AB6AXuBr7a9IwJ3lVwmiEIptsdjdBnkbqAq5y-oH7FGBDywOkQbEyKCpD5eqUJXGzZI8Sldi_VWAmtMDivwX3GBC7v4iGEam3qMA_cYxaFUo9OK9XAPj2knsB0UpcTz67MZV2MNojcCs30U58z1NBROK_R73S5k2pHk5I3J_VatiyypolMqf1A0fsLbjXqoN8Nl0-9GpZRISI3rxF1pIQwFCB1DIOLj26MIYOMDzj4P8JlhIo83exsG_D1jLKaZLV51cokSPWqrEXCTLy90N';
+                      const docName = card.name || (parts ? parts[1].trim() : opt);
+                      const docDept = card.department || (parts ? parts[2].trim() : 'General Practice');
+                      const initials = docName
+                        .replace(/^Dr\.?\s*/i, '')
+                        .split(/\s+/)
+                        .map((w) => w[0])
+                        .join('')
+                        .slice(0, 2)
+                        .toUpperCase();
+                      const isOpen = Boolean(card.sitting || card.unscheduled);
 
                       return (
                         <div
                           key={idx}
                           onClick={() => handleSendMessage(opt)}
-                          className="bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)]/45 p-4 shadow-[var(--card-shadow)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer relative overflow-hidden group border-l-4 border-l-[var(--secondary-color)] active:scale-[0.98] duration-100 w-56 shrink-0"
+                          className="bg-[var(--card-bg)] rounded-xl border border-[var(--border-color)]/45 p-4 shadow-[var(--card-shadow)] flex flex-col justify-between hover:shadow-md transition-all cursor-pointer relative overflow-hidden group border-l-4 border-l-[var(--secondary-color)] active:scale-[0.98] duration-100 w-60 shrink-0"
                         >
                           <div className="flex items-center space-x-3 mb-3">
-                            <div className="w-11 h-11 rounded-full overflow-hidden bg-zinc-200 border border-[var(--border-color)]/20 shrink-0">
-                              <img className="w-full h-full object-cover" src={imageUrl} alt={docName} />
+                            <div className="w-11 h-11 rounded-full overflow-hidden bg-[var(--primary-color)]/10 border border-[var(--border-color)]/20 shrink-0 flex items-center justify-center">
+                              {card.photoUrl ? (
+                                <img
+                                  className="w-full h-full object-cover"
+                                  src={card.photoUrl}
+                                  alt={docName}
+                                />
+                              ) : (
+                                <span className="text-[13px] font-black text-[var(--primary-color)]">
+                                  {initials}
+                                </span>
+                              )}
                             </div>
-                            <div>
-                              <h4 className="font-bold text-xs text-[var(--text-color)] group-hover:text-[var(--secondary-color)] transition-colors">
+                            <div className="min-w-0">
+                              <h4 className="font-bold text-xs text-[var(--text-color)] group-hover:text-[var(--secondary-color)] transition-colors truncate">
                                 {docName}
                               </h4>
-                              <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                              <p className="text-[10px] text-[var(--text-secondary)] font-medium truncate">
                                 {docDept}
+                                {card.room ? ` • ${card.room}` : ''}
                               </p>
                             </div>
                           </div>
-                          <div className="flex justify-between items-center mb-3">
-                            <div className="flex items-center space-x-0.5">
-                              <span className="material-symbols-outlined text-amber-500 text-[14px]">
-                                star
-                              </span>
+
+                          <div className="space-y-1.5 mb-3">
+                            <div className="flex items-center space-x-1.5">
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                  isOpen ? 'bg-emerald-500' : 'bg-amber-500'
+                                }`}
+                              />
                               <span className="text-[10px] font-bold text-[var(--text-color)]">
-                                {isSarah ? '4.9' : '4.8'}
+                                {card.unscheduled
+                                  ? 'Bookable any time'
+                                  : card.sitting
+                                    ? 'Sitting now'
+                                    : 'Closed now'}
                               </span>
                             </div>
-                            <span className="text-[9px] font-bold bg-[var(--primary-color)]/10 text-[var(--primary-color)] dark:text-zinc-300 px-2 py-0.5 rounded flex items-center">
-                              Free Slot
-                            </span>
+                            {card.hours && (
+                              <p className="text-[10px] text-[var(--text-secondary)] font-medium leading-snug">
+                                🕒 {card.hours}
+                              </p>
+                            )}
+                            {!card.sitting && card.nextSitting && (
+                              <p className="text-[10px] text-[var(--text-secondary)] font-medium leading-snug">
+                                Next: {card.nextSitting}
+                              </p>
+                            )}
+                            {card.revisedStart && (
+                              <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 leading-snug">
+                                ⏰ Starting {card.revisedStart} today
+                                {card.delayReason ? ` (${card.delayReason})` : ''}
+                              </p>
+                            )}
+                            <p className="text-[10px] text-[var(--text-secondary)] font-medium">
+                              {card.waiting === 0 ? 'No one waiting' : `${card.waiting} waiting`}
+                            </p>
                           </div>
+
                           <button className="w-full bg-[var(--primary-color)] text-[var(--primary-text)] group-hover:bg-[var(--primary-container)] group-hover:text-[var(--text-color)] py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-colors flex items-center justify-center space-x-1">
-                            <span>Select Specialist</span>
+                            <span>Book with {docName.replace(/^Dr\.?\s*/i, '').split(/\s+/)[0]}</span>
                             <span className="material-symbols-outlined text-[11px]">arrow_forward</span>
                           </button>
                         </div>

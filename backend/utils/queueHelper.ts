@@ -658,6 +658,54 @@ export async function applyDeferral(
 }
 
 /**
+ * Where a token booked for a FUTURE day stands in that day's list, and how long
+ * from now until its turn.
+ *
+ * A token for tomorrow must not sit in today's live queue — it would take a
+ * place in the line, push every patient still waiting today back by a whole
+ * consultation, and show up on the waiting-room screen as somebody who is not
+ * in the building. But the patient still has to be told where they stand and
+ * when to leave home, and the queue they are actually in does not exist yet.
+ *
+ * So the position is counted over the tokens already booked for that same day
+ * with the same doctor, and the wait is measured from now: the hours until that
+ * sitting opens, plus the patients ahead once it does. That is the same number
+ * the live queue would produce on the morning, which is what keeps the estimate
+ * quoted tonight and the estimate shown tomorrow from disagreeing.
+ */
+export async function scheduledPositionFor(
+  doctorId: string,
+  dateKey: string,
+  tokenId?: any
+): Promise<number> {
+  try {
+    const toks = await (Token as any).find({ doctor: doctorId, status: 'Waiting' });
+    const sameDay = (toks || []).filter((t: any) => t.appointmentDate === dateKey);
+    sameDay.sort(
+      (a: any, b: any) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+    );
+    if (!tokenId) return sameDay.length;
+    const idx = sameDay.findIndex((t: any) => String(t._id) === String(tokenId));
+    return idx < 0 ? sameDay.length : idx;
+  } catch (_) {
+    return 0;
+  }
+}
+
+/** The wait, in minutes from now, for a token booked into a future day's list. */
+export async function scheduledWaitMinutes(
+  doctor: any,
+  dateKey: string,
+  tokenId?: any,
+  now: Date = new Date()
+): Promise<number> {
+  const position = await scheduledPositionFor(doctor._id, dateKey, tokenId);
+  const pace = await measuredPaceMinutes(doctor._id, (doctor && doctor.averageCheckupTime) || 10);
+  // No in-cabin remainder to account for: nobody is in that cabin yet.
+  return estimateWaitMinutes(doctor, position, 0, { paceMinutes: pace, inCabinRemaining: 0, now });
+}
+
+/**
  * Rewrite every waiting patient's estimate for one cabin.
  *
  * Three things decide the answer and all three are read here rather than
@@ -700,6 +748,11 @@ export async function recalculateQueueTimes(doctorId: string): Promise<void> {
 
       // Still listed, but not in the line any more.
       if (token.status && token.status !== 'Waiting') continue;
+
+      // Booked for a later day. It should not be in this queue at all, but a
+      // token carried over by an older build still can be — and counting it
+      // would push everybody genuinely waiting today back by a consultation.
+      if (token.appointmentDate && token.appointmentDate > localDateKey(now)) continue;
 
       token.estimatedWaitTime = estimateWaitMinutes(doctor, pos, buffer, context);
       await token.save();

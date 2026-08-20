@@ -10,6 +10,8 @@ const {
   recalculateQueueTimes,
   formatApptTime,
   insertTokenByPriority,
+  scheduledWaitMinutes,
+  scheduledPositionFor,
   isDoctorFull,
   estimateWaitMinutes,
   projectedWaitMinutes,
@@ -44,8 +46,10 @@ const {
   localDateKey,
   formatHhMm,
   firstSittingOn,
-  dayName
+  dayName,
+  todayOpdHours
 } = require('../utils/shiftHelper');
+const { doctorChoiceMessage } = require('../utils/doctorChoices');
 const { resolveBookingSlot } = require('../utils/bookingSlot');
 const { onlyToday } = require('../utils/dates');
 const { findPatientByPhone } = require('../utils/patientLookup');
@@ -149,6 +153,8 @@ const dictionary = {
     statusInCabin: 'You are currently inside the cabin! Please proceed.',
     statusWaiting: (position, wait) =>
       `There are ${position - 1} patient(s) ahead of you. Estimated wait: ${wait} mins.`,
+    statusScheduled: (position, dateKey, sitting) =>
+      `Booked for ${dateKey}${sitting ? ` (${sitting})` : ''}. You are number ${position} in that day's list — there is nothing to do until then, we will message you before it starts.`,
     statusCompleted: (status) => `Status: ${status}. Checkup complete or token cancelled.`,
     tokenDetailsHeader: (tokenNumber) => `Token Details for ${tokenNumber}:`,
     tokenDetailsBody: (patient, doctor, dept, statusText) =>
@@ -293,6 +299,8 @@ const dictionary = {
     statusInCabin: 'आप वर्तमान में केबिन के अंदर हैं! कृपया आगे बढ़ें।',
     statusWaiting: (position, wait) =>
       `आपसे आगे ${position - 1} मरीज हैं। अनुमानित प्रतीक्षा समय: ${wait} मिनट।`,
+    statusScheduled: (position, dateKey, sitting) =>
+      `आपका टोकन ${dateKey}${sitting ? ` (${sitting})` : ''} के लिए बुक है। उस दिन की सूची में आपका नंबर ${position} है — तब तक कुछ करने की ज़रूरत नहीं, शुरू होने से पहले हम आपको संदेश भेजेंगे।`,
     statusCompleted: (status) =>
       `स्थिति: ${status === 'Completed' ? 'पूर्ण' : status}. चेकअप पूरा हो चुका है या टोकन रद्द कर दिया गया है.`,
     tokenDetailsHeader: (tokenNumber) => `टोकन विवरण ${tokenNumber} के लिए:`,
@@ -650,18 +658,37 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   });
   await saveTokenWithRetry(token);
 
-  let queue = await Queue.findOne({ doctor: selectedDoc._id });
-  if (!queue) {
-    queue = new Queue({ doctor: selectedDoc._id, activeQueue: [] });
-  }
+  // A token joins the live queue only on the day it is FOR.
+  //
+  // Tomorrow's booking used to be pushed into today's line the moment it was
+  // made, which put a patient who was at home in bed on the waiting-room screen,
+  // gave them a place in today's order, and pushed everybody still waiting today
+  // back by a whole consultation each. The queue is today's line; a booking for
+  // another day waits for the close-of-day job to put it in on the morning it
+  // belongs to (see `requeueScheduledTokens`).
+  if (!isNextDay) {
+    let queue = await Queue.findOne({ doctor: selectedDoc._id });
+    if (!queue) {
+      queue = new Queue({ doctor: selectedDoc._id, activeQueue: [] });
+    }
 
-  await insertTokenByPriority(queue, token);
-  await queue.save();
+    await insertTokenByPriority(queue, token);
+    await queue.save();
 
-  try {
-    await recalculateQueueTimes(selectedDoc._id);
-  } catch (qErr) {
-    logger.error('Error recalculating queue times', { err: qErr });
+    try {
+      await recalculateQueueTimes(selectedDoc._id);
+    } catch (qErr) {
+      logger.error('Error recalculating queue times', { err: qErr });
+    }
+  } else {
+    // Not in a queue yet, but the patient still needs to know when to leave
+    // home — counted from now, exactly as the live queue will count it tomorrow.
+    try {
+      token.estimatedWaitTime = await scheduledWaitMinutes(selectedDoc, appointmentDate, token._id);
+      await token.save();
+    } catch (qErr) {
+      logger.error('Error estimating a scheduled booking', { err: qErr });
+    }
   }
 
   session.currentState = 'COMPLETED';
@@ -1249,9 +1276,17 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
   session.currentState = 'AWAITING_DOCTOR_CHOICE';
   session.markModified && session.markModified('tempData');
   await session.save();
+  // Each doctor is shown with their own sitting hours and how their day stands,
+  // so the patient chooses knowing which cabin is open and which opens tomorrow.
+  const menu = await doctorChoiceMessage(
+    doctors,
+    text.selectDoctorPrompt,
+    (session.tempData && session.tempData.language) || 'en'
+  );
   return {
-    messages: [...msgs, { sender: 'bot', text: text.selectDoctorPrompt }],
-    options: doctors.map((d) => `${d.name} (${d.department})`)
+    messages: [...msgs, { sender: 'bot', text: menu.text }],
+    options: menu.options,
+    doctorCards: menu.doctorCards
   };
 }
 
@@ -1278,17 +1313,37 @@ async function lookupTokenStatus(tokenNumber, text, hospital) {
 
   const queue = await Queue.findOne({ doctor: token.doctor._id });
   let position = -1;
+  let inCabin = false;
   if (queue) {
     if (queue.currentToken && queue.currentToken.toString() === token._id.toString()) {
-      position = 0; // In cabin
+      inCabin = true;
     } else {
-      position = queue.activeQueue.findIndex((id) => id.toString() === token._id.toString()) + 1;
+      // `findIndex` returns -1 when the token is not in the line. Adding one
+      // turned that into 0, which read as "in cabin" — so a token that had been
+      // completed, or one booked for another day, was reported to the patient as
+      // being called in right now.
+      const idx = queue.activeQueue.findIndex((id) => id.toString() === token._id.toString());
+      position = idx < 0 ? -1 : idx + 1;
     }
   }
 
-  const statusText =
-    position === 0
-      ? text.statusInCabin
+  // Booked for a day that has not started. It is deliberately not in today's
+  // queue, so its place is counted among that day's bookings instead.
+  const scheduledAhead = Boolean(
+    !inCabin && position < 0 && token.appointmentDate && token.appointmentDate > localDateKey(new Date())
+  );
+  if (scheduledAhead) {
+    position = (await scheduledPositionFor(token.doctor._id, token.appointmentDate, token._id)) + 1;
+  }
+
+  const statusText = inCabin
+    ? text.statusInCabin
+    : scheduledAhead
+      ? text.statusScheduled(
+          position,
+          token.appointmentDate,
+          describeNextSitting(token.doctor, new Date()) || todayOpdHours(token.doctor)
+        )
       : position > 0
         ? text.statusWaiting(position, token.estimatedWaitTime)
         : text.statusCompleted(token.status);
@@ -2634,9 +2689,11 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     }
 
     if (!selectedDoc) {
+      const retry = await doctorChoiceMessage(doctors, text.invalidDoctor, lang);
       return {
-        messages: [{ sender: 'bot', text: text.invalidDoctor }],
-        options: docNames
+        messages: [{ sender: 'bot', text: retry.text }],
+        options: retry.options,
+        doctorCards: retry.doctorCards
       };
     }
 
@@ -2707,10 +2764,11 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
       if (session.tempData) delete session.tempData.suggestedDoctorId;
       session.markModified && session.markModified('tempData');
       await session.save();
-      const docNames = doctors.map((d) => `${d.name} (${d.department})`);
+      const manual = await doctorChoiceMessage(doctors, text.selectDoctorPrompt, lang);
       return {
-        messages: [{ sender: 'bot', text: text.selectDoctorPrompt }],
-        options: docNames
+        messages: [{ sender: 'bot', text: manual.text }],
+        options: manual.options,
+        doctorCards: manual.doctorCards
       };
     }
 

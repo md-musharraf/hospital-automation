@@ -26,6 +26,9 @@ const path = require('path');
 const { installMockDb } = require('./helpers/mockDb');
 const { section, check, report } = require('./helpers/assert');
 
+// chat.js pulls in middleware/auth, which refuses to load without a secret.
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-not-used-for-signing-here';
+
 const { BACKEND_DIST: BACKEND } = require('./helpers/backendPath');
 const { models } = installMockDb(BACKEND);
 
@@ -33,6 +36,8 @@ const { resolveBookingSlot, MAX_ROLL_DAYS } = require(path.join(BACKEND, 'utils'
 const { isDoctorFull, getTokenCountForDate } = require(path.join(BACKEND, 'utils', 'queueHelper.js'));
 const { localDateKey, firstSittingOn } = require(path.join(BACKEND, 'utils', 'shiftHelper.js'));
 const { requeueScheduledTokens } = require(path.join(BACKEND, 'jobs', 'dailyReset.js'));
+const { doctorChoiceMessage } = require(path.join(BACKEND, 'utils', 'doctorChoices.js'));
+const { recalculateQueueTimes } = require(path.join(BACKEND, 'utils', 'queueHelper.js'));
 
 /** A fixed instant, so nothing here depends on the hour the suite is run. */
 const at = (y, m, d, h, min = 0) => new Date(y, m - 1, d, h, min, 0, 0);
@@ -269,6 +274,134 @@ const at = (y, m, d, h, min = 0) => new Date(y, m - 1, d, h, min, 0, 0);
   check(
     'A doctor who does not sit that day reports nothing to announce',
     firstSittingOn(altDoc, at(2026, 8, 20, 0, 0)) === null
+  );
+
+  section('Today’s queue holds today’s patients only');
+
+  // Built relative to the real clock rather than a fixed date, because
+  // `finalizeBooking` reads `new Date()` itself: a doctor who sits only
+  // TOMORROW is after-hours no matter which hour this suite runs at.
+  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const tomorrowName = DAY_NAMES[new Date(Date.now() + 24 * 60 * 60 * 1000).getDay()];
+  const HOSP = 'sync-hospital';
+
+  await new models.Hospital({
+    id: HOSP,
+    name: 'Sync Care',
+    address: 'Main Road',
+    city: 'Patna',
+    phone: '+910000',
+    whatsappNumber: '+917484043690'
+  }).save();
+
+  const tomorrowOnlyDoc = await new models.Doctor({
+    _id: 'syncdoc',
+    name: 'Dr. Meera Sharma',
+    department: 'General Medicine',
+    currentRoom: 'Cabin 7',
+    averageCheckupTime: 10,
+    availabilityStatus: 'Available',
+    hospital: HOSP,
+    shifts: [{ label: 'Morning', start: '09:00', end: '13:00', days: [tomorrowName] }]
+  }).save();
+  await new models.Queue({ doctor: tomorrowOnlyDoc._id, activeQueue: [] }).save();
+
+  const { processChatMessage } = require(path.join(BACKEND, 'routes', 'chat.js'))._internals;
+  const chat = async (sessionId, message) => {
+    const result = await processChatMessage({ sessionId, message, hospitalId: HOSP });
+    return { ...result, flat: result.messages.map((m) => m.text).join(' | ') };
+  };
+
+  const cs = 'sync-booking';
+  for (const step of ['hi', 'English', '1', '+91 90000 11111', 'Meena Devi', '40', 'f', 'fever']) {
+    await chat(cs, step);
+  }
+  const listed = await chat(cs, '1');
+  const finished = await chat(cs, '30 minutes');
+  check('The booking completes', /Booking Complete/i.test(finished.flat), finished.flat);
+  check(
+    '…and says it is for another day',
+    /confirmed for/i.test(finished.flat) || /OPD/i.test(finished.flat),
+    finished.flat
+  );
+
+  const scheduled = models.Token._rows.find((t) => t.hospital === HOSP);
+  check('The token is marked as a future booking', scheduled && scheduled.isNextDay === true, scheduled);
+
+  // The point of the whole change: a patient who is at home tonight is not
+  // standing in today's line, is not on the waiting-room screen, and is not
+  // pushing anyone else's estimate out by a consultation.
+  const syncQueue = await models.Queue.findOne({ doctor: tomorrowOnlyDoc._id });
+  check(
+    'A booking for another day is NOT put in today’s live queue',
+    (syncQueue.activeQueue || []).length === 0,
+    syncQueue.activeQueue
+  );
+  check(
+    '…but the patient is still given a time to work back from',
+    scheduled && scheduled.estimatedWaitTime > 0,
+    scheduled && scheduled.estimatedWaitTime
+  );
+
+  section('The doctor list shows when each doctor actually sits');
+
+  const menu = await doctorChoiceMessage([morningDoc, tomorrowOnlyDoc], 'Pick one:');
+  check('Every doctor is still tappable', menu.options.length === 2, menu.options);
+  check(
+    'The option label stays short enough for a WhatsApp list row',
+    menu.options.every((o) => o.length <= 24 || /\(/.test(o)),
+    menu.options
+  );
+  check('The message names the sitting hours', /9:00 AM/.test(menu.text), menu.text);
+  check(
+    'A doctor who is not sitting today is shown as closed with their next sitting',
+    /Closed now/.test(menu.text) && /Next:/.test(menu.text),
+    menu.text
+  );
+  check(
+    '…and the one who is sitting is shown as open',
+    /Sitting now|No fixed OPD/.test(menu.text),
+    menu.text
+  );
+
+  const hindiMenu = await doctorChoiceMessage([tomorrowOnlyDoc], 'चुनें:', 'hi');
+  check(
+    'The same list speaks Hindi when the patient does',
+    /बंद|बैठे|समय/.test(hindiMenu.text),
+    hindiMenu.text
+  );
+
+  section('A queue estimate ignores tokens dated for a later day');
+
+  const mixedDoc = await new models.Doctor({
+    name: 'Dr. Mixed',
+    hospital: HOSP,
+    averageCheckupTime: 10,
+    shifts: []
+  }).save();
+  const todayTok = await new models.Token({
+    tokenNumber: 'M-1',
+    hospital: HOSP,
+    doctor: mixedDoc._id,
+    status: 'Waiting',
+    appointmentDate: localDateKey(new Date())
+  }).save();
+  const futureTok = await new models.Token({
+    tokenNumber: 'M-2',
+    hospital: HOSP,
+    doctor: mixedDoc._id,
+    status: 'Waiting',
+    appointmentDate: localDateKey(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000))
+  }).save();
+  // A queue left holding both, as an older build would have written it.
+  await new models.Queue({ doctor: mixedDoc._id, activeQueue: [futureTok._id, todayTok._id] }).save();
+
+  await recalculateQueueTimes(mixedDoc._id);
+  const recalcToday = models.Token._rows.find((t) => t.tokenNumber === 'M-1');
+  check(
+    'The patient here today is first in line, not second behind next week',
+    recalcToday.estimatedWaitTime === 0,
+    recalcToday.estimatedWaitTime
   );
 
   report();

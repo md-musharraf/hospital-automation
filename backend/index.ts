@@ -1,4 +1,11 @@
 require('dotenv').config();
+
+// Before anything reads a date. Every shift time, OPD day boundary and
+// printed turn time is wall-clock reasoning, and on a cloud host the process
+// clock is UTC until something says otherwise — which is how a 9:31 AM OPD
+// was announced to patients as 4:01 AM. See utils/timezone.ts.
+const { ACTIVE_TIMEZONE } = require('./utils/timezone');
+
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
 try {
@@ -56,7 +63,7 @@ const { apiLimiter } = require('./middleware/rateLimits');
 // to them — close-of-day, morning reminders — are stated in their local time, not
 // the hosting region's. Kept as one constant so a job can never silently inherit
 // UTC from the host again.
-const FACILITY_TIMEZONE = process.env.FACILITY_TIMEZONE || 'Asia/Kolkata';
+const FACILITY_TIMEZONE = ACTIVE_TIMEZONE;
 
 const app = express();
 const server = http.createServer(app);
@@ -794,6 +801,11 @@ const seedMockData = async () => {
 
 server.listen(PORT, () => {
   console.log(`Backend server listening on port ${PORT}`);
+  // Printed on every boot because the last time this was wrong, nothing said
+  // so: the queue was correct and only the clock it was quoted in was UTC, so
+  // patients were told a turn time 5½ hours in the past and the logs looked
+  // perfectly healthy. One line at startup makes it checkable in a glance.
+  console.log(`Facility clock: ${FACILITY_TIMEZONE} — local time is now ${new Date().toLocaleString()}`);
 });
 
 const repairDatabaseIndexes = async () => {
