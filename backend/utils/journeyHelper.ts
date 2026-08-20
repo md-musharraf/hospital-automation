@@ -9,6 +9,7 @@
 // mock DB (utils/mongooseMock.js) has no `schema.methods` support.
 
 import logger from './logger';
+import { pendingOf } from './prescriptionHelper';
 
 export const STAGES: string[] = [
   'Waiting',
@@ -69,7 +70,12 @@ export function hasPendingTests(token: any): boolean {
 /** Does this token carry medicines the pharmacy still has to hand over? */
 export function hasUndispensedRx(token: any): boolean {
   const rx = token && token.prescription;
-  return Boolean(rx && Array.isArray(rx.medicines) && rx.medicines.length > 0 && !rx.dispensed);
+  if (!rx || !Array.isArray(rx.medicines) || rx.medicines.length === 0) return false;
+  // Anything still owed keeps the patient at the pharmacy, on every board that
+  // shows them. A counter that could supply two of three items has not finished
+  // with this patient, and marking them done is how somebody goes home without
+  // part of their course and nobody notices.
+  return pendingOf(rx).length > 0;
 }
 
 /**

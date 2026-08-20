@@ -12,6 +12,13 @@ const ensurePharmacy = ensureRole('pharmacy');
 const { toRole, toDoctor, toFacility, logActivity, announceJourney } = require('../utils/realtime');
 const { setStage, deriveStage } = require('../utils/journeyHelper');
 const { checkAvailability, consumeStock, stockAlerts, levelOf, expiryFlag } = require('../utils/stockHelper');
+const {
+  pendingOf,
+  dispenseStateOf,
+  medicineKey,
+  listNames,
+  dispenseMessage
+} = require('../utils/prescriptionHelper');
 const logger = require('../utils/logger');
 
 // GET all tokens with a doctor's prescription in the pharmacist's facility.
@@ -38,9 +45,13 @@ router.get('/prescriptions', authenticateToken, ensurePharmacy, async (req, res)
           t.prescription && Array.isArray(t.prescription.medicines) && t.prescription.medicines.length > 0
       )
       .sort((a, b) => {
-        const ad = a.prescription.dispensed ? 1 : 0;
-        const bd = b.prescription.dispensed ? 1 : 0;
-        if (ad !== bd) return ad - bd; // undispensed first
+        // Anything still owed is still work, whether nothing was handed over or
+        // only the last item is missing. Sorting on the `dispensed` boolean sent
+        // a half-filled prescription to the bottom of the counter's list with
+        // the finished ones.
+        const ad = pendingOf(a.prescription).length > 0 ? 0 : 1;
+        const bd = pendingOf(b.prescription).length > 0 ? 0 : 1;
+        if (ad !== bd) return ad - bd;
         return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
       });
 
@@ -52,6 +63,10 @@ router.get('/prescriptions', authenticateToken, ensurePharmacy, async (req, res)
         const names = (obj.prescription.medicines || []).map((m) => m.name).filter(Boolean);
         obj.stock = inventory.length > 0 ? await checkAvailability(hospital, names) : [];
         obj.hasShortage = obj.stock.some((s) => s.level === 'out' || s.level === 'unknown');
+        // What the counter still owes this patient, so the portal shows the same
+        // answer the patient's tracker and the doctor's board are showing.
+        obj.dispenseState = dispenseStateOf(obj.prescription);
+        obj.pendingMedicines = pendingOf(obj.prescription);
         return obj;
       })
     );
@@ -80,7 +95,10 @@ router.get('/stats', authenticateToken, ensurePharmacy, async (req, res) => {
     const alerts = await stockAlerts(hospital);
 
     res.json({
-      pending: withRx.filter((t) => !t.prescription.dispensed).length,
+      // Counted the same way the list is ordered: outstanding means anything
+      // still owed, not merely "the button has never been pressed".
+      pending: withRx.filter((t) => pendingOf(t.prescription).length > 0).length,
+      partlyDispensed: withRx.filter((t) => dispenseStateOf(t.prescription) === 'partial').length,
       dispensedToday: withRx.filter(
         (t) =>
           t.prescription.dispensed &&
@@ -327,28 +345,47 @@ router.post('/prescriptions/:tokenId/dispense', authenticateToken, ensurePharmac
       return res.status(400).json({ message: 'This token has no prescription to dispense.' });
     }
 
-    if (token.prescription.dispensed) {
-      return res.status(400).json({ message: 'This prescription has already been dispensed.' });
+    // Only a COMPLETE handover closes this prescription. A counter that could
+    // supply two of three items has not finished with the patient, and the
+    // patient must be able to come back for the third once it is in stock —
+    // which the old "already dispensed" refusal made impossible.
+    const owedBefore = pendingOf(token.prescription);
+    if (owedBefore.length === 0) {
+      return res.status(400).json({ message: 'This prescription has already been dispensed in full.' });
     }
 
     const io = req.io;
     const by = req.user.username || 'Pharmacy';
 
+    // Try only what is still owed. Re-running this must not deduct stock a
+    // second time for medicines the patient already walked away with.
+    const owedKeys = new Set(owedBefore.map(medicineKey));
+    const toDispense = (token.prescription.medicines || []).filter((m: any) =>
+      owedKeys.has(medicineKey(m && m.name))
+    );
+
     // Take the medicines out of stock. Shortages are reported, never blocking:
     // a store may hold items off-system, and the patient is standing there.
     const { deducted, shortages } = await consumeStock(io, {
       hospital,
-      medicines: token.prescription.medicines,
+      medicines: toDispense,
       by,
       tokenNumber: token.tokenNumber
     });
 
-    token.prescription.dispensed = true;
+    // What the patient is walking away with, and what they are still owed.
+    const stillOwed = shortages.map((s: any) => String(s.requested));
+    const stillOwedKeys = new Set(stillOwed.map(medicineKey));
+    const handedOverNow = toDispense
+      .map((m: any) => String(m && m.name))
+      .filter((n: string) => n && !stillOwedKeys.has(medicineKey(n)));
+
+    token.prescription.pendingMedicines = stillOwed;
+    token.prescription.dispensed = stillOwed.length === 0;
     token.prescription.dispensedAt = new Date();
     token.prescription.dispensedBy = by;
-    if (shortages.length > 0) {
-      token.prescription.partialNote = `Not handed over (unavailable): ${shortages.map((s) => s.requested).join(', ')}`;
-    }
+    token.prescription.partialNote =
+      stillOwed.length > 0 ? `Not handed over (unavailable): ${listNames(stillOwed)}` : '';
     if (token.markModified) token.markModified('prescription');
 
     // Journey: medicines collected. If tests are still outstanding the derived
@@ -361,12 +398,13 @@ router.post('/prescriptions/:tokenId/dispense', authenticateToken, ensurePharmac
     if (patient && patient.phone) {
       try {
         const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
-        let msg = `Hello ${patient.name}, your medicines for token ${token.tokenNumber} have been handed over at our pharmacy counter.`;
-        if (shortages.length > 0) {
-          msg += `\n\n⚠️ Currently unavailable: ${shortages.map((s) => s.requested).join(', ')}. Please check back or ask the counter for an alternative.`;
-          msg += `\n⚠️ अभी उपलब्ध नहीं: ${shortages.map((s) => s.requested).join(', ')}। कृपया काउंटर पर विकल्प पूछें।`;
-        }
-        await sendWhatsAppNotification(patient.phone, msg);
+        // Three different things can have happened at that counter, and they
+        // now read as three different messages. The old text asserted the
+        // handover in its first sentence and contradicted it in the second.
+        await sendWhatsAppNotification(
+          patient.phone,
+          dispenseMessage(patient.name, token.tokenNumber, handedOverNow, stillOwed)
+        );
       } catch (waErr) {
         logger.error('Pharmacy WhatsApp notify failed', { err: waErr });
       }
@@ -374,12 +412,23 @@ router.post('/prescriptions/:tokenId/dispense', authenticateToken, ensurePharmac
 
     // Live: the doctor sees their patient actually got the medicines, and a
     // shortage reaches them immediately so they can prescribe an alternative.
-    toDoctor(io, String(doctor._id), 'rx-dispensed', {
+    // Every screen is told the same thing: what was handed over, what is still
+    // owed, and whether this patient is finished at the counter. They used to
+    // receive only `shortages` and infer the rest, which is how the doctor's
+    // board could show a patient as done while they were still owed medicines.
+    const dispenseState = dispenseStateOf(token.prescription);
+    const outcome = {
       tokenId: String(token._id),
       tokenNumber: token.tokenNumber,
+      state: dispenseState,
+      handedOver: handedOverNow,
+      pending: stillOwed,
       shortages
-    });
-    toRole(io, 'pharmacy', hospital, 'pharmacy-updated', { tokenId: String(token._id) });
+    };
+
+    toDoctor(io, String(doctor._id), 'rx-dispensed', outcome);
+    toRole(io, 'pharmacy', hospital, 'pharmacy-updated', outcome);
+    toRole(io, 'staff', hospital, 'pharmacy-updated', outcome);
 
     await announceJourney(io, {
       hospital,
@@ -389,16 +438,26 @@ router.post('/prescriptions/:tokenId/dispense', authenticateToken, ensurePharmac
       actor: by,
       type: 'rx-dispensed',
       message:
-        shortages.length > 0
-          ? `Medicines dispensed for ${token.tokenNumber} — ${shortages.length} item(s) unavailable: ${shortages.map((s) => s.requested).join(', ')}.`
-          : `Medicines dispensed for ${token.tokenNumber}${deducted.length ? ` (${deducted.length} item(s) stock-adjusted)` : ''}.`,
-      severity: shortages.length > 0 ? 'warning' : 'success'
+        stillOwed.length === 0
+          ? `Medicines dispensed for ${token.tokenNumber}${deducted.length ? ` (${deducted.length} item(s) stock-adjusted)` : ''}.`
+          : handedOverNow.length === 0
+            ? `NOTHING handed over for ${token.tokenNumber} — ${listNames(stillOwed)} out of stock. The patient is still owed their course.`
+            : `Partly dispensed for ${token.tokenNumber} — still owed: ${listNames(stillOwed)}.`,
+      severity: stillOwed.length > 0 ? 'warning' : 'success'
     });
 
     // Re-fetch populated for the client response (this copy is NOT saved).
     const updated = await Token.findById(tokenId).populate('patient').populate('doctor', '-passwordHash');
     res.json({
-      message: `Medicines for token ${token.tokenNumber} marked as dispensed.`,
+      message:
+        stillOwed.length === 0
+          ? `Medicines for token ${token.tokenNumber} handed over in full.`
+          : handedOverNow.length === 0
+            ? `Nothing could be handed over for ${token.tokenNumber}. Still owed: ${listNames(stillOwed)}.`
+            : `Partly handed over for ${token.tokenNumber}. Still owed: ${listNames(stillOwed)}.`,
+      state: dispenseState,
+      handedOver: handedOverNow,
+      pending: stillOwed,
       token: updated,
       deducted,
       shortages

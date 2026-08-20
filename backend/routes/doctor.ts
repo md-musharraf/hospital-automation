@@ -35,6 +35,7 @@ const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { toRole, toFacility, logActivity, announceJourney } = require('../utils/realtime');
 const { setStage, deriveStage, hasUndispensedRx } = require('../utils/journeyHelper');
+const { normalizeMedicines } = require('../utils/prescriptionHelper');
 const { checkAvailability } = require('../utils/stockHelper');
 const logger = require('../utils/logger');
 const { prescriptionUrl } = require('../utils/env');
@@ -322,10 +323,17 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
       token.status = 'Completed';
       token.completedAt = new Date();
       if (medicines || advice) {
+        // Cleaned before storage: a trailing space in "Paracetamol " is what
+        // printed "Currently unavailable: Paracetamol , Xyz" to a patient, and
+        // it also stops the name matching the same medicine in the store's
+        // inventory. Fixed where the value enters, not where it is displayed.
+        const lines = normalizeMedicines(medicines);
         token.prescription = {
-          medicines: medicines || [],
-          advice: advice || '',
-          dispensed: false
+          medicines: lines,
+          advice: (advice || '').trim(),
+          dispensed: false,
+          // Everything is owed until the counter says otherwise.
+          pendingMedicines: lines.map((m) => m.name)
         };
         token.markModified && token.markModified('prescription');
       }

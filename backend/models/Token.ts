@@ -119,8 +119,15 @@ const TokenSchema = new mongoose.Schema(
         }
       ],
       advice: { type: String },
-      // Set by the facility's pharmacy/medical store when the medicines are handed over
+      // TRUE only when every prescribed medicine has actually been handed over.
+      // It used to be set the moment the counter pressed the button, whatever
+      // the store could supply, so a patient given nothing was recorded as
+      // dispensed and told "Get well soon" — see utils/prescriptionHelper.ts.
       dispensed: { type: Boolean, default: false },
+      // The medicines still owed to this patient. Empty once the course is
+      // complete; every dashboard derives "is the pharmacy done" from this
+      // rather than from a boolean somebody set optimistically.
+      pendingMedicines: [{ type: String }],
       dispensedAt: { type: Date },
       dispensedBy: { type: String },
       // Anything the pharmacy could not give (out of stock) — recorded so the

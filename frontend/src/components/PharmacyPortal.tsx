@@ -92,10 +92,13 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
       {
         // Say plainly what was handed over and what could not be — the counter
         // has to tell the patient before they walk away.
+        // The server states the outcome — full, partial, or nothing handed over.
+        // Repeating that decision here is how the counter's screen and the
+        // patient's WhatsApp ended up saying different things.
         setFlash(
-          data.shortages && data.shortages.length > 0
-            ? `Dispensed, but NOT available: ${data.shortages.map((s) => s.requested).join(', ')}. The patient and doctor have been notified.`
-            : `Dispensed. Stock updated: ${(data.deducted || []).map((d) => `${d.name} → ${d.remaining} left`).join(', ') || 'no tracked items'}.`
+          (data.pending || []).length > 0
+            ? `${data.message} The patient and doctor have been told.`
+            : `${data.message} Stock updated: ${(data.deducted || []).map((d) => `${d.name} → ${d.remaining} left`).join(', ') || 'no tracked items'}.`
         );
         await refreshPrescriptions();
         await refreshInventory();
@@ -132,7 +135,11 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
     }
   };
 
+  // Fully handed over. A prescription with anything still owed is NOT this —
+  // it stays on the counter's list until the patient has the whole course.
   const isDispensed = (tok) => tok?.prescription?.dispensed;
+  const pendingOf = (tok) => tok?.pendingMedicines || [];
+  const isPartlyGiven = (tok) => tok?.dispenseState === 'partial';
   const visibleTokens = filter === 'pending' ? tokens.filter((t) => !isDispensed(t)) : tokens;
 
   const LEVEL_BADGE = {
@@ -275,6 +282,10 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
                   {isDispensed(tok) ? (
                     <span className="bg-emerald-500/15 text-emerald-500 text-[11px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0">
                       Dispensed
+                    </span>
+                  ) : isPartlyGiven(tok) ? (
+                    <span className="bg-orange-500/15 text-orange-500 text-[11px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0">
+                      {pendingOf(tok).length} owed
                     </span>
                   ) : (
                     <span className="bg-amber-500/15 text-amber-500 text-[11px] font-extrabold px-1.5 py-0.5 rounded-full shrink-0">
@@ -535,13 +546,24 @@ export function PharmacyDashboard({ pharmacyToken, pharmacyUser, onLogout }) {
                   </span>
                 </div>
               ) : (
-                <button
-                  onClick={() => handleDispense(selectedToken._id)}
-                  className="w-full py-3 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white text-[15px] font-bold rounded-xl shadow-sm transition-all active:scale-[0.98] flex items-center justify-center space-x-2"
-                >
-                  <span className="material-symbols-outlined text-[18px]">shopping_bag</span>
-                  <span>Dispense</span>
-                </button>
+                <>
+                  {pendingOf(selectedToken).length > 0 && isPartlyGiven(selectedToken) && (
+                    <div className="mb-2 flex items-start space-x-2 bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 rounded-xl px-4 py-3 text-[13px] font-bold">
+                      <span className="material-symbols-outlined text-[18px] shrink-0">pending</span>
+                      <span>
+                        Still owed to this patient: {pendingOf(selectedToken).join(', ')}. They stay on the
+                        pending list until it is handed over.
+                      </span>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => handleDispense(selectedToken._id)}
+                    className="w-full py-3 bg-[var(--tertiary-color)] hover:bg-[var(--tertiary-color)]/90 text-white text-[15px] font-bold rounded-xl shadow-sm transition-all active:scale-[0.98] flex items-center justify-center space-x-2"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">shopping_bag</span>
+                    <span>{isPartlyGiven(selectedToken) ? 'Hand over the rest' : 'Dispense'}</span>
+                  </button>
+                </>
               )}
             </div>
           </div>
