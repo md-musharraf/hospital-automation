@@ -29,9 +29,14 @@ const {
   shiftRunsOn,
   delayNotice,
   todayOpdHours,
-  scheduledShifts
+  scheduledShifts,
+  upcomingLeaves,
+  normalizeLeave,
+  formatDateKey
 } = require('../utils/shiftHelper');
+const { fileLeave, cancelLeave, affectedTokens } = require('../utils/leaveHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+const { facilityFrom } = require('../utils/messageMeter');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { toRole, toFacility, logActivity, announceJourney } = require('../utils/realtime');
 const { setStage, deriveStage, hasUndispensedRx } = require('../utils/journeyHelper');
@@ -242,7 +247,10 @@ router.post('/queue/call-next', authenticateToken, ensureDoctor, async (req, res
     if (token.patient && token.patient.phone) {
       const room = req.user.currentRoom || 'Cabin A';
       const callMsg = `ALERT: Hello ${token.patient.name || 'Patient'}, your token ${token.tokenNumber} is now ACTIVE! Please proceed immediately to ${room} for your checkup.`;
-      await sendWhatsAppNotification(token.patient.phone, callMsg);
+      await sendWhatsAppNotification(token.patient.phone, callMsg, [], null, null, {
+        hospital: facilityFrom(token, req.user),
+        kind: 'arrival'
+      });
     }
 
     // Trigger Web Push Notification to Patient
@@ -387,7 +395,10 @@ router.post('/queue/complete', authenticateToken, ensureDoctor, async (req, res)
           completeMsg += ` A re-visit reminder has been scheduled for ${scheduledDate.toLocaleDateString()} (${revisitDays} days from now). Get well soon!`;
         }
 
-        await sendWhatsAppNotification(token.patient.phone, completeMsg);
+        await sendWhatsAppNotification(token.patient.phone, completeMsg, [], null, null, {
+          hospital: facilityFrom(token, req.user),
+          kind: 'info'
+        });
       }
     }
 
@@ -575,7 +586,10 @@ router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, r
           `🔁 अपनी बारी चूक गए? कोई बात नहीं — टोकन ${token.tokenNumber} को एक और मौका दिया गया है। ` +
           `अब आप क़तार में #${recallPosition} पर हैं। कृपया तुरंत ${room} पहुँचें।`;
         try {
-          await sendWhatsAppNotification(token.patient.phone, msg);
+          await sendWhatsAppNotification(token.patient.phone, msg, [], null, null, {
+            hospital: facilityFrom(token, req.user),
+            kind: 'recall'
+          });
         } catch (e) {
           logger.error('Recall WA error', { err: e });
         }
@@ -592,7 +606,10 @@ router.post('/queue/mark-absent', authenticateToken, ensureDoctor, async (req, r
           `❌ You missed your turn again (token ${token.tokenNumber}). Please get a new token from reception when you arrive.\n` +
           `❌ आप दोबारा अपनी बारी चूक गए (टोकन ${token.tokenNumber})। कृपया आने पर रिसेप्शन से नया टोकन लें।`;
         try {
-          await sendWhatsAppNotification(token.patient.phone, msg);
+          await sendWhatsAppNotification(token.patient.phone, msg, [], null, null, {
+            hospital: facilityFrom(token, req.user),
+            kind: 'recall'
+          });
         } catch (e) {
           logger.error('Absent WA error', { err: e });
         }
@@ -1032,6 +1049,164 @@ router.delete('/queue/shift-time', authenticateToken, ensureDoctor, async (req, 
 });
 
 /**
+ * Leave — "I am not coming in on these days."
+ *
+ * The gap this closes: `availabilityStatus` is about this moment and nothing
+ * ever turns it back on, `opdDays` is the permanent roster, and a shift override
+ * can only move today's start time. None of them can say "the 24th to the 28th",
+ * which is the only thing a doctor going away actually needs to say.
+ *
+ * GET lists what is filed and, with `from`/`to`, previews who a leave WOULD
+ * disrupt — a doctor should be able to see "this affects 6 booked patients"
+ * before committing to the dates, not after.
+ */
+router.get('/leave', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctor = await Doctor.findById(req.user.id);
+    if (!doctor) return res.status(404).json({ message: 'Doctor details not found' });
+
+    const { from, to } = req.query || {};
+    let preview = null;
+
+    if (from) {
+      let range;
+      try {
+        range = normalizeLeave({ from, to: to || from });
+      } catch (err) {
+        return res.status(400).json({ message: err.message });
+      }
+      const tokens = await affectedTokens(doctor, range);
+      preview = {
+        ...range,
+        days: tokens.length,
+        affected: tokens.map((token) => ({
+          tokenNumber: token.tokenNumber,
+          appointmentDate: token.appointmentDate || '',
+          patientName: (token.patient && token.patient.name) || '',
+          patientPhone: (token.patient && token.patient.phone) || ''
+        }))
+      };
+    }
+
+    res.json({
+      leaves: upcomingLeaves(doctor),
+      status: sittingStatus(doctor),
+      preview
+    });
+  } catch (error) {
+    logger.error('Error reading doctor leave', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/v1/doctor/leave — file it, and tell the patients already booked.
+ *
+ * The patients are messaged automatically; the RESCHEDULING is not automatic and
+ * deliberately so. Moving somebody to a different doctor is a conversation, and
+ * a system that silently reassigns a patient who chose their doctor has solved
+ * our problem by creating theirs. Reception gets the list back and works it.
+ */
+router.post('/leave', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctor = await Doctor.findById(req.user.id);
+    if (!doctor) return res.status(404).json({ message: 'Doctor details not found' });
+
+    let result;
+    try {
+      result = await fileLeave(doctor, req.body || {}, {
+        by: doctor.name || 'doctor',
+        io: req.io,
+        notify: req.body && req.body.notify === false ? false : true
+      });
+    } catch (err) {
+      // Bad dates are the caller's mistake, not a server failure — and the
+      // message names what to fix.
+      return res.status(400).json({ message: err.message });
+    }
+
+    await recalculateQueueTimes(String(doctor._id));
+
+    const hospital = req.user.hospital || 'general-hospital';
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId: String(doctor._id) });
+      toFacility(req.io, hospital, 'doctor-leave-updated', {
+        doctorId: String(doctor._id),
+        name: doctor.name,
+        leave: result.leave,
+        backOn: result.backOn,
+        affected: result.affected.length
+      });
+    }
+
+    const span =
+      result.leave.from === result.leave.to
+        ? formatDateKey(result.leave.from)
+        : `${formatDateKey(result.leave.from)} – ${formatDateKey(result.leave.to)}`;
+
+    res.json({
+      message: result.alreadyFiled
+        ? `Leave for ${span} was already filed.`
+        : `Leave filed for ${span}. ${
+            result.affected.length === 0
+              ? 'No patients were booked on those days.'
+              : `${result.affected.length} booked patient(s) have been told.`
+          }`,
+      leave: result.leave,
+      backOn: result.backOn,
+      // The list reception works through. Each row carries the phone, because
+      // the follow-up call is the actual next action.
+      affected: result.affected,
+      leaves: upcomingLeaves(doctor),
+      status: sittingStatus(doctor)
+    });
+  } catch (error) {
+    logger.error('Error filing doctor leave', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/** DELETE /api/v1/doctor/leave/:from — "plans changed, I will be in." */
+router.delete('/leave/:from', authenticateToken, ensureDoctor, async (req, res) => {
+  try {
+    const doctor = await Doctor.findById(req.user.id);
+    if (!doctor) return res.status(404).json({ message: 'Doctor details not found' });
+
+    const removed = await cancelLeave(doctor, String(req.params.from || '').trim());
+    if (!removed) {
+      return res.status(404).json({ message: 'No leave starts on that date.', cleared: false });
+    }
+
+    await recalculateQueueTimes(String(doctor._id));
+
+    const hospital = req.user.hospital || 'general-hospital';
+    if (req.io) {
+      req.io.to('queue:global').emit('queue-updated', { doctorId: String(doctor._id) });
+      toFacility(req.io, hospital, 'doctor-leave-updated', {
+        doctorId: String(doctor._id),
+        name: doctor.name,
+        leave: null,
+        cleared: req.params.from
+      });
+    }
+
+    // Deliberately NOT re-messaging the patients who were told it was cancelled.
+    // "Your appointment is off" followed by "actually it is back on" is how a
+    // patient stops believing either message; reception calls the short list
+    // instead, which is the same list this returned when the leave was filed.
+    res.json({
+      message: `Leave from ${formatDateKey(req.params.from)} cancelled — you are back on the board.`,
+      cleared: true,
+      leaves: upcomingLeaves(doctor),
+      status: sittingStatus(doctor)
+    });
+  } catch (error) {
+    logger.error('Error cancelling doctor leave', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
  * POST /api/v1/doctor/queue/running-late — "I am delayed, tell my patients."
  *
  * The delay itself was already expressible as a buffer. What was missing is the
@@ -1322,7 +1497,11 @@ router.post('/queue/lab-request', authenticateToken, ensureDoctor, async (req, r
           token.patient.phone,
           `Hello ${token.patient.name}, your doctor has ordered: ${added.join(', ')}.\n` +
             `🧪 Please visit the LAB counter now with token ${token.tokenNumber}. We will WhatsApp you the moment your report is ready.\n` +
-            `🧪 कृपया टोकन ${token.tokenNumber} के साथ अभी लैब काउंटर पर जाएँ। रिपोर्ट तैयार होते ही हम WhatsApp कर देंगे।`
+            `🧪 कृपया टोकन ${token.tokenNumber} के साथ अभी लैब काउंटर पर जाएँ। रिपोर्ट तैयार होते ही हम WhatsApp कर देंगे।`,
+          [],
+          null,
+          null,
+          { hospital: facilityFrom(token, req.user), kind: 'queue' }
         );
       } catch (waErr) {
         logger.error('Lab request WhatsApp failed', { err: waErr });
@@ -1744,7 +1923,10 @@ router.post('/refills/:id/decide', authenticateToken, ensureDoctor, async (req, 
           `Please collect your medicines from the pharmacy/medical store (ref ${rxToken.tokenNumber}). No OPD visit needed.\n` +
           `✅ आपकी दवा रिफिल ${doctor ? doctor.name : 'डॉक्टर'} द्वारा मंज़ूर हो गई है। कृपया फार्मेसी से दवा ले लें (रेफ ${rxToken.tokenNumber})। OPD आने की ज़रूरत नहीं।`;
         try {
-          await sendWhatsAppNotification(patient.phone, msg);
+          await sendWhatsAppNotification(patient.phone, msg, [], null, null, {
+            hospital: facilityFrom(request, patient, doctor, req.user),
+            kind: 'refill'
+          });
         } catch (e) {
           logger.error('Refill approve WA error', { err: e });
         }
@@ -1769,7 +1951,10 @@ router.post('/refills/:id/decide', authenticateToken, ensureDoctor, async (req, 
           `Please book a normal OPD appointment so the doctor can review you.\n` +
           `❌ आपकी दवा रिफिल मंज़ूर नहीं हो सकी${note ? ` (${note})` : ''}। कृपया सामान्य OPD अपॉइंटमेंट बुक करें।`;
         try {
-          await sendWhatsAppNotification(patient.phone, msg);
+          await sendWhatsAppNotification(patient.phone, msg, [], null, null, {
+            hospital: facilityFrom(request, patient, req.user),
+            kind: 'refill'
+          });
         } catch (e) {
           logger.error('Refill reject WA error', { err: e });
         }
@@ -1892,7 +2077,10 @@ router.post('/queue/reschedule', authenticateToken, ensureDoctor, async (req, re
         `${scheduledDate ? ` for ${scheduledDate.toLocaleDateString()}` : ''}.${reason ? ` Reason: ${reason}` : ''}\n` +
         `✅ Details updated on your live tracker.`;
       try {
-        await sendWhatsAppNotification(token.patient.phone, msg);
+        await sendWhatsAppNotification(token.patient.phone, msg, [], null, null, {
+          hospital: facilityFrom(token, req.user),
+          kind: 'info'
+        });
       } catch (waErr) {
         logger.error('Reschedule WhatsApp notification error', { err: waErr });
       }

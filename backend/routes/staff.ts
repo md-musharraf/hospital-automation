@@ -24,6 +24,8 @@ const {
   MAX_DEFERS
 } = require('../utils/queueHelper');
 const { sendWhatsAppNotification } = require('../utils/whatsappHelper');
+const { facilityFrom } = require('../utils/messageMeter');
+const { fileLeave, cancelLeave, affectedTokens } = require('../utils/leaveHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { classifySymptoms, pickLeastBusyDoctor, detectPriorityCategory } = require('../utils/triageHelper');
 const { logActivity, announceJourney } = require('../utils/realtime');
@@ -33,7 +35,13 @@ const { normalizePhone, parseBody, field } = require('@careeai/shared');
 const { findPatientByPhone, findPhoneConflict } = require('../utils/patientLookup');
 const { getBillingConfig } = require('../utils/billingConfig');
 const { findInvoiceForToken } = require('../utils/invoiceLookup');
-const { delayNotice, todayOpdHours } = require('../utils/shiftHelper');
+const {
+  delayNotice,
+  todayOpdHours,
+  upcomingLeaves,
+  leaveOn,
+  formatDateKey
+} = require('../utils/shiftHelper');
 const { trackerUrl, prescriptionUrl } = require('../utils/env');
 
 // GET all live queues for doctors in the staff member's hospital (Staff Overview)
@@ -171,7 +179,16 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
       const picked = await pickLeastBusyDoctor(facilityDoctors, triage.department);
       doctor = picked.doctor;
       if (!doctor) {
-        return res.status(404).json({ message: 'Could not auto-assign a doctor for these symptoms' });
+        // "Everyone is on leave" and "no doctor matched" send reception down
+        // completely different paths — one is a rota problem they can see and
+        // fix, the other is a triage miss they should override by picking a
+        // doctor by hand. A single message for both leaves them guessing.
+        return res.status(404).json({
+          message: picked.allOnLeave
+            ? 'Every doctor at this facility is on leave right now. Check the leave list before registering a walk-in.'
+            : 'Could not auto-assign a doctor for these symptoms',
+          allOnLeave: Boolean(picked.allOnLeave)
+        });
       }
       autoTriaged = true;
       triagedDepartment = picked.matchedDepartment
@@ -272,7 +289,10 @@ router.post('/tokens/walk-in', authenticateToken, ensureStaff, async (req, res) 
         : '';
       const walkInMsg = `Hello ${createdToken.patient.name}, your token ${createdToken.tokenNumber} is generated for ${docName} in ${roomName}. Your approx. turn: ${apptTime} (~${createdToken.estimatedWaitTime || 0} min).\n${leaveLine}\n✅ No need to wait in line — we will WhatsApp you when your turn is near.\n🔔 लाइन में खड़े होने की ज़रूरत नहीं — आपकी बारी पास आते ही हम WhatsApp कर देंगे।`;
       try {
-        whatsapp = await sendWhatsAppNotification(createdToken.patient.phone, walkInMsg);
+        whatsapp = await sendWhatsAppNotification(createdToken.patient.phone, walkInMsg, [], null, null, {
+          hospital: facilityFrom(createdToken, createdToken.doctor, req.user),
+          kind: 'booking'
+        });
       } catch (waErr: any) {
         logger.error('Walk-in WhatsApp dispatch error', { err: waErr });
         whatsapp = { status: 'failed', reason: waErr.message };
@@ -1199,6 +1219,151 @@ router.put('/tokens/:tokenId/priority', authenticateToken, ensureStaff, async (r
     });
   } catch (error: any) {
     logger.error('Error updating token priority', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * Doctor leave, from the reception counter.
+ *
+ * The doctor's own console can file this too, but reception is where it usually
+ * happens: a doctor who is actually ill is not logging in to update a roster,
+ * they are phoning the desk. If the only way to record an absence needed the
+ * absent person, the feature would be unused on exactly the days it matters.
+ *
+ * GET is the working list — every upcoming leave at this facility, each with the
+ * booked patients it disrupts, because that list IS the follow-up work.
+ */
+router.get('/leaves', authenticateToken, async (req, res) => {
+  try {
+    const staffHosp = req.user.hospital || 'general-hospital';
+    const doctors = (await Doctor.find({ hospital: staffHosp }).select('-passwordHash')) || [];
+
+    const rows = [];
+    for (const doctor of doctors) {
+      const leaves = upcomingLeaves(doctor);
+      if (leaves.length === 0) continue;
+
+      for (const leave of leaves) {
+        const tokens = await affectedTokens(doctor, leave);
+        rows.push({
+          doctorId: String(doctor._id),
+          doctorName: doctor.name,
+          department: doctor.department || '',
+          room: doctor.currentRoom || '',
+          ...leave,
+          span:
+            leave.from === leave.to
+              ? formatDateKey(leave.from)
+              : `${formatDateKey(leave.from)} – ${formatDateKey(leave.to)}`,
+          // The rows reception actually acts on: who is holding a token for a
+          // day their doctor will not be in, and the number to call.
+          affected: tokens.map((token) => ({
+            tokenId: String(token._id),
+            tokenNumber: token.tokenNumber,
+            appointmentDate: token.appointmentDate || '',
+            status: token.status,
+            patientName: (token.patient && token.patient.name) || '',
+            patientPhone: (token.patient && token.patient.phone) || ''
+          }))
+        });
+      }
+    }
+
+    // Soonest first — a leave starting tomorrow needs working today.
+    rows.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+
+    res.json({
+      hospital: staffHosp,
+      leaves: rows,
+      // How many people are still holding a token into a leave. The one number
+      // worth putting on a counter badge.
+      pendingPatients: rows.reduce((sum, row) => sum + row.affected.length, 0),
+      awayToday: doctors
+        .filter((doctor) => leaveOn(doctor))
+        .map((doctor) => ({ doctorId: String(doctor._id), name: doctor.name }))
+    });
+  } catch (error) {
+    logger.error('Error listing doctor leaves', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/** POST reception files a leave for one of this facility's doctors. */
+router.post('/doctors/:doctorId/leave', authenticateToken, async (req, res) => {
+  try {
+    const staffHosp = req.user.hospital || 'general-hospital';
+    const doctor = await Doctor.findById(req.params.doctorId);
+    if (!doctor || doctor.hospital !== staffHosp) {
+      return res.status(404).json({ message: 'Doctor not found in this hospital tenant' });
+    }
+
+    let result;
+    try {
+      result = await fileLeave(doctor, req.body || {}, {
+        by: `reception (${req.user.username || 'staff'})`,
+        io: req.io,
+        notify: req.body && req.body.notify === false ? false : true
+      });
+    } catch (err) {
+      return res.status(400).json({ message: err.message });
+    }
+
+    await recalculateQueueTimes(String(doctor._id));
+
+    await logActivity(req.io, {
+      hospital: staffHosp,
+      role: 'staff',
+      actor: req.user.username || 'Reception',
+      type: 'doctor-leave',
+      message: `${doctor.name} marked on leave ${result.leave.from} to ${result.leave.to}${
+        result.affected.length ? ` — ${result.affected.length} booked patient(s) told` : ''
+      }.`,
+      severity: result.affected.length ? 'warning' : 'info'
+    });
+
+    res.json({
+      message: result.alreadyFiled
+        ? `${doctor.name} was already marked on leave for those dates.`
+        : `${doctor.name} is on leave. ${
+            result.affected.length === 0
+              ? 'Nobody was booked on those days.'
+              : `${result.affected.length} patient(s) told — call them to move the appointment.`
+          }`,
+      leave: result.leave,
+      backOn: result.backOn,
+      affected: result.affected,
+      leaves: upcomingLeaves(doctor)
+    });
+  } catch (error) {
+    logger.error('Error filing doctor leave from reception', { err: error });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/** DELETE reception cancels a filed leave. */
+router.delete('/doctors/:doctorId/leave/:from', authenticateToken, async (req, res) => {
+  try {
+    const staffHosp = req.user.hospital || 'general-hospital';
+    const doctor = await Doctor.findById(req.params.doctorId);
+    if (!doctor || doctor.hospital !== staffHosp) {
+      return res.status(404).json({ message: 'Doctor not found in this hospital tenant' });
+    }
+
+    const removed = await cancelLeave(doctor, String(req.params.from || '').trim());
+    if (!removed) {
+      return res.status(404).json({ message: 'No leave starts on that date.', cleared: false });
+    }
+
+    await recalculateQueueTimes(String(doctor._id));
+
+    res.json({
+      message: `${doctor.name} is back on the board from ${formatDateKey(req.params.from)}.`,
+      cleared: true,
+      leaves: upcomingLeaves(doctor)
+    });
+  } catch (error) {
+    logger.error('Error cancelling doctor leave from reception', { err: error });
     res.status(500).json({ message: 'Server error' });
   }
 });

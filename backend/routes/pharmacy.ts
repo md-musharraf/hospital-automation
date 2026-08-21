@@ -403,9 +403,14 @@ router.post('/prescriptions/:tokenId/dispense', authenticateToken, ensurePharmac
         // Three different things can have happened at that counter, and they
         // now read as three different messages. The old text asserted the
         // handover in its first sentence and contradicted it in the second.
+        const { facilityFrom } = require('../utils/messageMeter');
         await sendWhatsAppNotification(
           patient.phone,
-          dispenseMessage(patient.name, token.tokenNumber, handedOverNow, stillOwed)
+          dispenseMessage(patient.name, token.tokenNumber, handedOverNow, stillOwed),
+          [],
+          null,
+          null,
+          { hospital: facilityFrom(token, patient, req.user), kind: 'prescription' }
         );
       } catch (waErr) {
         logger.error('Pharmacy WhatsApp notify failed', { err: waErr });

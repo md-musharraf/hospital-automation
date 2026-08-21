@@ -43,6 +43,7 @@ export const TENANT_MODELS: string[] = [
   'Invoice',
   'LabAssistant',
   'Medicine',
+  'MessageMeter',
   'Patient',
   'Pharmacist',
   'RefillRequest',

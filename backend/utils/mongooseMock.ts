@@ -422,6 +422,61 @@ function matchesQuery(item: any, query: any): boolean {
   return true;
 }
 
+/**
+ * Write one value at a dotted path, creating the objects on the way.
+ *
+ * `$inc: { 'byKind.arrival': 1 }` is the shape the message meter uses, and a
+ * mock that only understands flat keys stores a literal `"byKind.arrival"`
+ * property — which reads back as zero forever, in a counter that is somebody's
+ * invoice.
+ */
+function setPath(doc: any, path: string, value: any): void {
+  const parts = String(path).split('.');
+  let cursor = doc;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (!cursor[key] || typeof cursor[key] !== 'object') cursor[key] = {};
+    cursor = cursor[key];
+  }
+  cursor[parts[parts.length - 1]] = value;
+}
+
+/** Read a dotted path back, undefined if any step is missing. */
+function getPath(doc: any, path: string): any {
+  return String(path)
+    .split('.')
+    .reduce((cursor, key) => (cursor === null || cursor === undefined ? cursor : cursor[key]), doc);
+}
+
+/**
+ * Apply the update operators this mock supports to a plain object.
+ *
+ * Deliberately only `$inc`, `$set` and `$setOnInsert` — the ones the app
+ * actually issues. An operator that silently did nothing would be worse than one
+ * that is missing, so anything else falls through to a shallow merge exactly as
+ * `updateMany` above has always done.
+ */
+function applyUpdateOperators(doc: any, update: any = {}, inserting: boolean = false): any {
+  const next = { ...doc };
+  const usedOperator = Boolean(update.$inc || update.$set || update.$setOnInsert);
+
+  if (update.$inc) {
+    for (const [path, delta] of Object.entries(update.$inc)) {
+      setPath(next, path, (Number(getPath(next, path)) || 0) + Number(delta));
+    }
+  }
+  if (update.$set) {
+    for (const [path, value] of Object.entries(update.$set)) setPath(next, path, value);
+  }
+  // Only on the insert, which is the entire point of the operator: `firstAt`
+  // must keep saying when the month started, not when the last message went.
+  if (update.$setOnInsert && inserting) {
+    for (const [path, value] of Object.entries(update.$setOnInsert)) setPath(next, path, value);
+  }
+
+  return usedOperator ? next : { ...next, ...update };
+}
+
 // Mock Model Factory
 export function model(name: string, schema?: any): any {
   if (store[name] === undefined) {
@@ -518,6 +573,39 @@ export function model(name: string, schema?: any): any {
         return wrapDoc(name, updated);
       }
       return null;
+    }
+
+    /**
+     * Upserting counter update — what `utils/messageMeter` runs on every send.
+     *
+     * `{ upsert: true }` matters as much as `$inc` here: the first WhatsApp of a
+     * facility's month has no meter document to increment, and without the
+     * insert every month would start by silently dropping its first messages.
+     */
+    static async findOneAndUpdate(query: any = {}, update: any = {}, options: any = {}): Promise<any> {
+      if (!store[name]) store[name] = [];
+      const collection = store[name];
+      const idx = collection.findIndex((item) => matchesQuery(item, query));
+
+      if (idx >= 0) {
+        const updated = applyCoercion(name, applyUpdateOperators(collection[idx], update, false));
+        collection[idx] = updated;
+        return wrapDoc(name, updated);
+      }
+
+      if (!options.upsert) return null;
+
+      // Seed from the equality terms of the filter, the way MongoDB does — an
+      // upserted meter must come out carrying the hospital and period it was
+      // looked up by, not just the counters.
+      const seed: any = {};
+      for (const [key, value] of Object.entries(query)) {
+        if (value === null || typeof value !== 'object') seed[key] = value;
+      }
+      const created = applyCoercion(name, applyUpdateOperators(seed, update, true));
+      const wrapped = wrapDoc(name, created);
+      collection.push({ ...wrapped });
+      return wrapped;
     }
   }
 

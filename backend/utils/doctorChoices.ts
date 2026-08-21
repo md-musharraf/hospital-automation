@@ -18,7 +18,14 @@
 
 import Queue from '../models/Queue';
 import Token from '../models/Token';
-import { sittingStatus, todayOpdHours, describeNextSitting, delayNotice, localDateKey } from './shiftHelper';
+import {
+  sittingStatus,
+  todayOpdHours,
+  describeNextSitting,
+  delayNotice,
+  localDateKey,
+  formatDateKey
+} from './shiftHelper';
 
 export interface DoctorChoice {
   /** The tappable label. Kept short — WhatsApp truncates a list row at 24 chars. */
@@ -46,6 +53,14 @@ export interface DoctorChoice {
     awayNow: boolean;
     /** True when this doctor keeps no fixed hours at all. */
     unscheduled: boolean;
+    /** Away for a stretch of days — not merely closed for the evening. */
+    onLeave: boolean;
+    /** Last day of that leave, "YYYY-MM-DD". Empty when not on leave. */
+    leaveUntil: string;
+    /** First day they are back, "YYYY-MM-DD". Empty when not on leave. */
+    backOn: string;
+    /** Why, when they said. Shown to the patient — "Family function" reads better than silence. */
+    leaveReason: string;
     /** When they next sit, when they are not sitting now. */
     nextSitting: string;
     /** How many patients are already waiting for the day in question. */
@@ -101,7 +116,20 @@ export async function describeDoctorChoices(
       const awayNow = standing === 'In Surgery' || standing === 'On Break';
 
       let when: string;
-      if (standing === 'Unavailable') {
+      // Leave is checked before everything else, including the by-hand
+      // `availabilityStatus`. It is the only state here with an END DATE, so it
+      // is the only one that can answer the question the patient is actually
+      // asking — not "can I book now" but "when should I come". Rendering an
+      // absent doctor as "Closed now" or "No fixed OPD hours" sends someone to
+      // a cabin that will be dark all week.
+      if (status.onLeave) {
+        const back = formatDateKey(status.backOn);
+        const until = formatDateKey(status.onLeave.to);
+        const why = status.onLeave.reason ? ` (${status.onLeave.reason})` : '';
+        when = hi
+          ? `🏖️ ${until} तक छुट्टी पर${why}${back ? ` · ${back} से उपलब्ध` : ''}`
+          : `🏖️ On leave until ${until}${why}${back ? ` · back on ${back}` : ''}`;
+      } else if (standing === 'Unavailable') {
         const next = describeNextSitting(doctor, now);
         when = hi
           ? `⛔ अभी उपलब्ध नहीं${next ? ` · अगली बैठक: ${next}` : ''}`
@@ -146,7 +174,14 @@ export async function describeDoctorChoices(
           photoUrl: doctor.photoUrl || '',
           hours,
           sitting: Boolean(status.sitting) && standing !== 'Unavailable' && !awayNow,
-          unscheduled: Boolean(status.unscheduled),
+          // Reported as false for a doctor on leave, whatever their shifts say:
+          // the card's "bookable any time" hint reads off this, and an absent
+          // doctor is the one person it must never be shown for.
+          unscheduled: Boolean(status.unscheduled) && !status.onLeave,
+          onLeave: Boolean(status.onLeave),
+          leaveUntil: status.onLeave ? status.onLeave.to : '',
+          backOn: status.backOn || '',
+          leaveReason: (status.onLeave && status.onLeave.reason) || '',
           // What the doctor set by hand, so the card can say "on a break"
           // rather than implying an empty cabin is open.
           availability: standing,

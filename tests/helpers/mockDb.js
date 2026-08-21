@@ -45,6 +45,53 @@ function matches(doc, query) {
 
 const REF_MODEL = { doctor: 'Doctor', patient: 'Patient', activeQueue: 'Token', currentToken: 'Token' };
 
+/** Write a value at a dotted path (`byKind.arrival`), building objects on the way. */
+function setPath(doc, path, value) {
+  const parts = String(path).split('.');
+  let cursor = doc;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (!cursor[key] || typeof cursor[key] !== 'object') cursor[key] = {};
+    cursor = cursor[key];
+  }
+  cursor[parts[parts.length - 1]] = value;
+}
+
+/** Read a dotted path back. */
+function getPath(doc, path) {
+  return String(path)
+    .split('.')
+    .reduce((cursor, key) => (cursor === null || cursor === undefined ? cursor : cursor[key]), doc);
+}
+
+/**
+ * The update operators the app actually issues: `$inc`, `$set`, `$setOnInsert`.
+ *
+ * `$inc` on a dotted path is what the message meter counts with. A mock that
+ * merged it shallowly would store a literal "byKind.arrival" key that reads back
+ * as zero forever — a counter that is somebody's invoice, silently stuck at nothing.
+ */
+function applyUpdateOperators(doc, update = {}, inserting = false) {
+  const next = { ...doc };
+  const usedOperator = Boolean(update.$inc || update.$set || update.$setOnInsert);
+
+  if (update.$inc) {
+    for (const [path, delta] of Object.entries(update.$inc)) {
+      setPath(next, path, (Number(getPath(next, path)) || 0) + Number(delta));
+    }
+  }
+  if (update.$set) {
+    for (const [path, value] of Object.entries(update.$set)) setPath(next, path, value);
+  }
+  // Only on the insert, which is the entire point of the operator: `firstAt`
+  // must keep saying when the month started, not when the last message went.
+  if (update.$setOnInsert && inserting) {
+    for (const [path, value] of Object.entries(update.$setOnInsert)) setPath(next, path, value);
+  }
+
+  return usedOperator ? next : { ...next, ...update };
+}
+
 function createModel(name, prefix, registry) {
   const rows = [];
 
@@ -127,6 +174,30 @@ function createModel(name, prefix, registry) {
     const index = rows.findIndex((r) => String(r._id) === String(id));
     return index >= 0 ? rows.splice(index, 1)[0] : null;
   };
+  /**
+   * Upserting counter update — what utils/messageMeter runs on every send.
+   *
+   * The upsert is not a detail: the first message of a facility's month has no
+   * meter row to increment, so without it every month would quietly lose its
+   * opening messages.
+   */
+  Model.findOneAndUpdate = async (query = {}, update = {}, options = {}) => {
+    const existing = rows.find((row) => matches(row, query));
+    if (existing) {
+      Object.assign(existing, applyUpdateOperators(existing, update, false));
+      return existing;
+    }
+    if (!options.upsert) return null;
+
+    // Seed from the filter's equality terms, the way MongoDB does.
+    const seed = {};
+    for (const [key, value] of Object.entries(query)) {
+      if (value === null || typeof value !== 'object') seed[key] = value;
+    }
+    const created = new Model(applyUpdateOperators(seed, update, true));
+    rows.push(created);
+    return created;
+  };
   Model.countDocuments = async (query = {}) => rows.filter((row) => matches(row, query)).length;
   Model.insertMany = async (docs = []) =>
     docs.map((doc) => new Model(doc)).map((doc) => (rows.push(doc), doc));
@@ -157,7 +228,8 @@ const MODELS = [
   ['Medicine', 'med'],
   ['ActivityLog', 'act'],
   ['Invoice', 'inv'],
-  ['BillingConfig', 'bcfg']
+  ['BillingConfig', 'bcfg'],
+  ['MessageMeter', 'mm']
 ];
 
 /**

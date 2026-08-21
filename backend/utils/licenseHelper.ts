@@ -277,6 +277,13 @@ export function renewLicense(
     // that renewed at three days left would never hear about the next expiry.
     lastRemindedDay: null,
     notifyPhone: current.notifyPhone || '',
+    // Carried across, never re-derived. Callers assign this object over
+    // `facility.license` wholesale, so a field missing from it is a field
+    // ERASED — and erasing the price tier on renewal would drop the facility to
+    // "no tier set", silently zeroing the WhatsApp quota it just paid for and
+    // making the following month's invoice wrong in the customer's favour, on
+    // the one day of the year somebody was definitely looking at their account.
+    tier: current.tier || '',
     history
   };
 }
@@ -376,7 +383,17 @@ export async function runLicenseSweep(now: Date = new Date()): Promise<{ sent: n
       }
 
       try {
-        await sendWhatsAppNotification(phone, reminderMessage(state, facility.name || 'Your facility'));
+        // Counted against the facility but NOT billable — see MESSAGE_KINDS.
+        // This is us asking them to renew; putting it on their own message bill
+        // would be charging a customer for our dunning.
+        await sendWhatsAppNotification(
+          phone,
+          reminderMessage(state, facility.name || 'Your facility'),
+          [],
+          null,
+          null,
+          { hospital: facility.id, kind: 'licence' }
+        );
         sent++;
       } catch (waErr) {
         // One unreachable owner must not stop the rest of the platform being

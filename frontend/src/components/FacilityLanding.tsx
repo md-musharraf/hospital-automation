@@ -801,8 +801,21 @@ const AVAILABILITY_TONE = {
   Unavailable: { bg: 'rgba(244,63,94,0.12)', fg: '#e11d48', label: 'Not available' }
 };
 
+/** "2026-08-28" → "28 Aug". Never numeric — 08/28 and 28/08 read the same. */
+function prettyDate(key) {
+  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return '';
+  const date = new Date(`${key}T00:00:00`);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
 function DoctorCard({ doctor: d, theme }) {
-  const tone = AVAILABILITY_TONE[d.availabilityStatus] || AVAILABILITY_TONE.Available;
+  // Leave beats the by-hand availability status, because it is the only one of
+  // the two that carries an end date. "Not available" tells a patient nothing
+  // they can act on; "back on 29 Aug" tells them when to come.
+  const tone = d.onLeave
+    ? { bg: 'rgba(245,158,11,0.14)', fg: '#d97706', label: `On leave until ${prettyDate(d.onLeave.to)}` }
+    : AVAILABILITY_TONE[d.availabilityStatus] || AVAILABILITY_TONE.Available;
   const initial = (d.name || 'Dr')
     .replace(/^Dr\.?\s*/i, '')
     .charAt(0)
@@ -906,7 +919,17 @@ function DoctorCard({ doctor: d, theme }) {
       )}
 
       <div className="mt-auto px-5 py-3.5 border-t border-[var(--border-color)]/25 flex items-center justify-between gap-3 bg-[var(--card-bg)]/50">
-        {typeof d.waiting === 'number' ? (
+        {d.onLeave ? (
+          // No queue line for a doctor who is away: "no queue right now" is
+          // technically true and reads as "walk in", which is the one thing a
+          // patient must not do this week.
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: '#f59e0b' }} />
+            <span className="text-[11px] font-black text-amber-600 truncate">
+              {d.backOn ? `Back on ${prettyDate(d.backOn)}` : 'Away at the moment'}
+            </span>
+          </span>
+        ) : typeof d.waiting === 'number' ? (
           <span className="flex items-center gap-1.5 min-w-0">
             <span
               className="w-1.5 h-1.5 rounded-full shrink-0"
@@ -921,10 +944,18 @@ function DoctorCard({ doctor: d, theme }) {
         )}
         <a
           href="#book"
-          className="shrink-0 px-3.5 py-2 rounded-xl text-white text-[11px] font-black active:scale-95 transition-all"
-          style={{ background: theme.primary }}
+          className="shrink-0 px-3.5 py-2 rounded-xl text-[11px] font-black active:scale-95 transition-all"
+          style={
+            d.onLeave
+              ? { background: 'rgba(245,158,11,0.15)', color: '#d97706' }
+              : { background: theme.primary, color: '#fff' }
+          }
+          // Booking is still allowed — the slot simply lands on their first day
+          // back, which the server already works out. What changes is that the
+          // button says so instead of implying today.
+          title={d.onLeave && d.backOn ? `Books for ${prettyDate(d.backOn)}` : undefined}
         >
-          Book
+          {d.onLeave ? 'Book for later' : 'Book'}
         </a>
       </div>
     </div>

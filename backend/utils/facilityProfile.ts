@@ -912,7 +912,15 @@ export function buildLandingPage(hospital: any, doctors: any[] = []): any {
     waiting: typeof d.waiting === 'number' ? d.waiting : null,
     // Server-computed and shift-aware. The page renders this rather than doing
     // the arithmetic itself, so the public estimate agrees with the chatbot's.
-    estimatedWait: typeof d.estimatedWait === 'number' ? d.estimatedWait : null
+    estimatedWait: typeof d.estimatedWait === 'number' ? d.estimatedWait : null,
+    // Away for days, attached by the route (this module cannot import
+    // shiftHelper — shiftHelper imports OPD_DAYS from here). Named explicitly
+    // because the allow-list above is a whitelist: a field the route computes
+    // but this list does not mention simply never reaches the page, which is
+    // exactly how a public site keeps offering an absent doctor.
+    onLeave:
+      (d.onLeave && { from: d.onLeave.from, to: d.onLeave.to, reason: d.onLeave.reason || '' }) || null,
+    backOn: d.backOn || null
   }));
 
   const departments = landing.departments.length

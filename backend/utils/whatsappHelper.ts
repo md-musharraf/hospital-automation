@@ -1,6 +1,24 @@
 import logger from './logger';
+import { recordMessage } from './messageMeter';
 
 const log = logger.child({ module: 'whatsapp' });
+
+/**
+ * Who this message belongs to, for billing.
+ *
+ * Every send has an owner — the facility whose patient is being messaged — but
+ * this function only ever sees a phone number, and a phone number belongs to a
+ * patient who may have visited three different hospitals. So the caller has to
+ * say. See `utils/messageMeter`: a send that arrives without one is counted in
+ * the unattributed bucket and logged, rather than quietly vanishing from the
+ * month's totals.
+ */
+export interface MeterContext {
+  /** `Hospital.id` of the facility this message is sent on behalf of. */
+  hospital?: string | null;
+  /** A key of `MESSAGE_KINDS` — what the message is, for the bill breakdown. */
+  kind?: string | null;
+}
 
 // Single source of truth for the hospital's public WhatsApp number.
 export const DEFAULT_WHATSAPP_NUMBER =
@@ -186,13 +204,21 @@ export async function checkMetaToken(): Promise<Record<string, any>> {
 
 /**
  * Sends a WhatsApp notification to a patient using Meta WhatsApp Cloud API v20.0.
+ *
+ * This is also the platform's single metering point. Every outgoing message in
+ * the app funnels through here — thirty-odd call sites across the queue, the
+ * chatbot, the doctor console, billing, the lab and the pharmacy — so counting
+ * usage anywhere else would mean counting it in thirty-odd places and missing
+ * the one added next week. `meter` names the facility the message belongs to;
+ * see `MeterContext` above for why it cannot be inferred from the phone number.
  */
 export async function sendWhatsAppNotification(
   phone?: string | null,
   message?: string | null,
   options: any = [],
   socketIo?: any,
-  fromPhoneNumberId?: string | null
+  fromPhoneNumberId?: string | null,
+  meter?: MeterContext | null
 ): Promise<Record<string, any>> {
   if (options && !Array.isArray(options) && typeof options === 'object') {
     socketIo = options;
@@ -316,6 +342,16 @@ export async function sendWhatsAppNotification(
         dispatchRecord.provider = 'meta';
         recordDispatch(dispatchRecord);
 
+        // Awaited, not fired and forgotten. This is the facility's bill, and the
+        // upsert is a few milliseconds against a Meta round-trip that already
+        // cost hundreds. `recordMessage` cannot throw — see its contract — so
+        // nothing here can turn a delivered message into a failed one.
+        await recordMessage({
+          hospital: meter && meter.hospital,
+          kind: meter && meter.kind,
+          ok: true
+        });
+
         const io = socketIo || (global as any).io;
         if (io) {
           io.emit('whatsapp-message-sent', dispatchRecord);
@@ -345,6 +381,16 @@ export async function sendWhatsAppNotification(
     dispatchRecord.provider = 'meta';
     recordDispatch(dispatchRecord);
 
+    // Counted, never charged. Meta bills us nothing for a rejection, and a
+    // facility invoiced for messages its patients never received would be right
+    // to dispute the entire bill. The count still matters: a column of failures
+    // climbing on one tenant is how an expired token gets noticed.
+    await recordMessage({
+      hospital: meter && meter.hospital,
+      kind: meter && meter.kind,
+      ok: false
+    });
+
     const failIo = socketIo || (global as any).io;
     if (failIo) {
       failIo.emit('whatsapp-message-sent', dispatchRecord);
@@ -360,6 +406,12 @@ export async function sendWhatsAppNotification(
   }
 
   // Auto-Gateway Mode: Development/Simulation Fallback
+  //
+  // Deliberately NOT metered. Nothing leaves the building on this path — it logs
+  // the message and returns success so local development works without Meta
+  // credentials. Counting it would put messages on a facility's bill that were
+  // only ever a line in a log file, and the first time that happened would be
+  // during a credentials outage, when the hospital was already unhappy.
   let autoText = message || '';
   if (options && Array.isArray(options) && options.length > 0) {
     autoText += '\n\n' + options.map((opt: string, idx: number) => `${idx + 1}. ${opt}`).join('\n');

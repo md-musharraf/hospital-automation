@@ -7,6 +7,7 @@
 
 import Queue from '../models/Queue';
 import { isDoctorFull, estimateWaitMinutes, projectedWaitMinutes } from './queueHelper';
+import { isOnLeave } from './shiftHelper';
 
 // Pregnancy cues (English + Hindi + Hinglish) used to auto-flag a Pregnant token.
 export const PREGNANCY_KEYWORDS: string[] = [
@@ -469,6 +470,8 @@ export interface PickDoctorResult {
   doctor: any | null;
   matchedDepartment: boolean;
   allFull: boolean;
+  /** Nobody could be picked because every candidate is away. */
+  allOnLeave: boolean;
 }
 
 /**
@@ -478,11 +481,28 @@ export interface PickDoctorResult {
  */
 export async function pickLeastBusyDoctor(
   doctors: any[] = [],
-  department: string
+  department: string,
+  now: Date = new Date()
 ): Promise<PickDoctorResult> {
   if (!doctors || doctors.length === 0) {
-    return { doctor: null, matchedDepartment: false, allFull: false };
+    return { doctor: null, matchedDepartment: false, allFull: false, allOnLeave: false };
   }
+
+  // Auto-assignment must never land on a doctor who is away.
+  //
+  // A patient who PICKS a doctor sees the leave on the card and is knowingly
+  // booking their first day back — that is a real choice and the booking rolls
+  // to the right date. This path is the opposite: nobody chose, the patient is
+  // standing at the counter expecting to be seen, and handing them a token for
+  // an empty cabin is the single worst outcome the feature can produce.
+  //
+  // If EVERY candidate is away the answer is "we cannot", not "here is one
+  // anyway" — reception can see the leaves and decide what to tell them.
+  const present = doctors.filter((d) => !isOnLeave(d, now));
+  if (present.length === 0) {
+    return { doctor: null, matchedDepartment: false, allFull: false, allOnLeave: true };
+  }
+  doctors = present;
 
   let candidates = doctors.filter((d) => departmentMatches(department, d.department));
   const matchedDepartment = candidates.length > 0;
@@ -543,5 +563,5 @@ export async function pickLeastBusyDoctor(
     }
   });
 
-  return { doctor: best, matchedDepartment, allFull };
+  return { doctor: best, matchedDepartment, allFull, allOnLeave: false };
 }

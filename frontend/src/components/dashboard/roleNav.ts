@@ -26,7 +26,8 @@ export const ROLE_NAV = {
     items: [
       { key: 'today', label: 'Today', icon: 'insights' },
       { key: 'desks', label: 'Departments', icon: 'account_tree' },
-      { key: 'activity', label: 'Activity', icon: 'history' }
+      { key: 'activity', label: 'Activity', icon: 'history' },
+      { key: 'usage', label: 'WhatsApp', icon: 'chat' }
     ]
   },
   doctor: {
@@ -48,6 +49,7 @@ export const ROLE_NAV = {
       { key: 'billing', label: 'Billing', icon: 'payments' },
       { key: 'patients', label: 'Patients', icon: 'group' },
       { key: 'reminders', label: 'Follow-ups', icon: 'event_repeat' },
+      { key: 'leaves', label: 'Leave', icon: 'event_busy' },
       { key: 'dashboard', label: 'Overview', icon: 'dashboard' }
     ]
   },

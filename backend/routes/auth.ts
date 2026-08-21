@@ -1467,6 +1467,152 @@ router.post('/super-admin/licenses/remind', verifyAdminSecret, async (req, res) 
   }
 });
 
+/**
+ * GET every facility's WhatsApp usage for a month, heaviest first.
+ *
+ * The screen the month's invoicing is done from. It answers the question that
+ * had no answer before metering existed: Meta bills the platform one figure for
+ * one shared number, and this is which tenants that figure is made of.
+ *
+ * Facilities with no meter row are still listed, at zero. A hospital that sent
+ * nothing all month is a fact worth seeing — it usually means the integration
+ * has quietly stopped working, not that a busy OPD went silent.
+ */
+router.get('/super-admin/usage', verifyAdminSecret, async (req, res) => {
+  try {
+    const {
+      usageAcrossFacilities,
+      overageOf,
+      tierOf,
+      periodKey,
+      formatPaise,
+      METER_TIERS,
+      UNATTRIBUTED
+    } = require('../utils/messageMeter');
+
+    const requested = String(req.query.period || '').trim();
+    const period = /^\d{4}-\d{2}$/.test(requested) ? requested : periodKey();
+
+    const [hospitals, rows] = await Promise.all([Hospital.find({}), usageAcrossFacilities(period)]);
+    const usageBySlug = new Map<string, any>(rows.map((row) => [row.hospital, row]));
+
+    const facilities = hospitals.map((facility) => {
+      const usage = usageBySlug.get(facility.id) || {
+        hospital: facility.id,
+        period,
+        sent: 0,
+        failed: 0,
+        billable: 0,
+        byKind: {},
+        firstAt: null,
+        lastAt: null
+      };
+      usageBySlug.delete(facility.id);
+      return {
+        id: facility.id,
+        name: facility.name,
+        city: facility.city,
+        type: facility.type,
+        sent: usage.sent,
+        failed: usage.failed,
+        byKind: usage.byKind,
+        lastAt: usage.lastAt,
+        ...overageOf(usage, tierOf(facility))
+      };
+    });
+
+    // Whatever is LEFT in the map belongs to no facility on record — the
+    // unattributed bucket, plus any tenant that has since been deleted. Shown
+    // rather than dropped: these are messages we paid Meta for and billed to
+    // nobody, and the only way that ever gets fixed is by being visible.
+    const unbilled = Array.from(usageBySlug.values()).map((usage) => ({
+      id: usage.hospital,
+      name: usage.hospital === UNATTRIBUTED ? 'Unattributed (no facility on the send)' : usage.hospital,
+      sent: usage.sent,
+      failed: usage.failed,
+      byKind: usage.byKind,
+      lastAt: usage.lastAt
+    }));
+
+    const totals = facilities.reduce(
+      (acc, row) => ({
+        sent: acc.sent + row.sent,
+        failed: acc.failed + row.failed,
+        billable: acc.billable + row.billable,
+        overage: acc.overage + row.overage,
+        amountPaise: acc.amountPaise + row.amountPaise
+      }),
+      { sent: 0, failed: 0, billable: 0, overage: 0, amountPaise: 0 }
+    );
+
+    facilities.sort((a, b) => b.sent - a.sent);
+
+    res.json({
+      period,
+      tiers: METER_TIERS,
+      facilities,
+      unbilled,
+      totals: { ...totals, amountLabel: formatPaise(totals.amountPaise) },
+      // Two counts an owner should be able to see without adding up a column:
+      // who is over their included volume, and who has no tier priced at all.
+      overQuota: facilities.filter((f) => f.overQuota).length,
+      untiered: facilities.filter((f) => !f.tier).length
+    });
+  } catch (error) {
+    logger.error('[METER] Could not list usage', { err: error.message });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * PUT set a facility's price tier — what its included WhatsApp volume is.
+ *
+ * Separate from granting a term: a facility changes SIZE (a clinic adds a lab, a
+ * nursing home doubles its OPD) at a different moment from when it pays, and
+ * making the tier a side effect of renewal would mean the only way to reprice a
+ * customer was to sell them another year.
+ */
+router.put('/super-admin/hospital/:id/tier', verifyAdminSecret, async (req, res) => {
+  try {
+    const { METER_TIERS, TIER_KEYS, tierOf } = require('../utils/messageMeter');
+    const { tier } = req.body || {};
+    const next = String(tier || '')
+      .trim()
+      .toLowerCase();
+
+    // '' is a legitimate value: it clears the tier back to unpriced, which is
+    // what an owner needs when a facility is moved onto a bespoke agreement.
+    if (next && !TIER_KEYS.includes(next)) {
+      return res.status(400).json({
+        message: `Choose a tier: ${TIER_KEYS.join(', ')} (or "" to clear it).`,
+        tiers: METER_TIERS
+      });
+    }
+
+    const facility = await Hospital.findOne({ id: req.params.id });
+    if (!facility) return res.status(404).json({ message: 'Facility not found' });
+
+    // Spread rather than replace — `renewLicense` builds a whole licence object,
+    // but this changes one field of an existing one and must not drop the term.
+    facility.license = { ...(facility.license || {}), tier: next };
+    facility.markModified && facility.markModified('license');
+    await facility.save();
+
+    logger.info('[METER] Tier set', { hospital: facility.id, tier: next || '(none)' });
+
+    const label = next ? METER_TIERS[next].label : 'no tier';
+    res.json({
+      message: `${facility.name} is now on ${label}${
+        next ? ` — ${METER_TIERS[next].included.toLocaleString('en-IN')} messages included.` : '.'
+      }`,
+      tier: tierOf(facility)
+    });
+  } catch (error) {
+    logger.error('[METER] Could not set a tier', { err: error.message });
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 router.get('/super-admin/facility-data/:hospitalId', verifyAdminSecret, async (req, res) => {
   try {
     const { hospitalId } = req.params;

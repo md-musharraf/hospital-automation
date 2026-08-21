@@ -32,6 +32,7 @@
 import Token from '../models/Token';
 import Patient from '../models/Patient';
 import { sendWhatsAppNotification } from './whatsappHelper';
+import { facilityFrom } from './messageMeter';
 import { toPatient, logActivity } from './realtime';
 import { toId } from './ids';
 import logger from './logger';
@@ -269,7 +270,10 @@ export async function notifyPatient(options: NotifyPatientOptions): Promise<Noti
     alert.attempts = (alert.attempts || 0) + 1;
     let result: any = null;
     try {
-      result = await sendWhatsAppNotification(phone, message, io);
+      result = await sendWhatsAppNotification(phone, message, io, null, null, {
+        hospital: facilityFrom(token, patient),
+        kind
+      });
     } catch (err: any) {
       log.error('WhatsApp threw while sending a patient alert', { err: err.message, tokenId, kind });
       result = { status: 'failed', error: err.message };
@@ -435,7 +439,10 @@ export async function retryPatientAlerts(
 
       let result: any = null;
       try {
-        result = await sendWhatsAppNotification(phone, alert.message, io);
+        result = await sendWhatsAppNotification(phone, alert.message, io, null, null, {
+          hospital: facilityFrom(token, patient),
+          kind: alert.kind
+        });
       } catch (err: any) {
         result = { status: 'failed', error: err.message };
       }

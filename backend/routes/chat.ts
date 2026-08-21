@@ -32,6 +32,8 @@ const {
   getPrimaryWhatsAppNumber,
   checkMetaToken
 } = require('../utils/whatsappHelper');
+const { facilityFrom } = require('../utils/messageMeter');
+const { leaveOn, backOnKey } = require('../utils/shiftHelper');
 const { generateUniqueTokenNumber, saveTokenWithRetry } = require('../utils/tokenHelper');
 const { resolveLocation } = require('../utils/locationHelper');
 const { buildLandingPage } = require('../utils/facilityProfile');
@@ -790,7 +792,10 @@ async function finalizeBooking({ session, selectedDoc, currentHospId, text, sock
   }
 
   try {
-    await sendWhatsAppNotification(patient.phone, bookingMessage);
+    await sendWhatsAppNotification(patient.phone, bookingMessage, [], null, null, {
+      hospital: facilityFrom(currentHospId, refreshedToken, patient),
+      kind: 'booking'
+    });
   } catch (waErr) {
     logger.error('WhatsApp notification error', { err: waErr });
   }
@@ -3543,6 +3548,12 @@ router.get('/hospital/:hospitalId/landing', publicLimiter, async (req, res) => {
           paceMinutes: pace,
           inCabinRemaining: cabinRemainingFrom(inCabin, pace)
         });
+        // Attached here for the same reason the wait is: only the server knows
+        // the schedule. Without it the generated site — the most public surface
+        // this facility has, and often the first thing a patient sees — would
+        // keep advertising a doctor who is away all week as bookable today.
+        obj.onLeave = leaveOn(d);
+        obj.backOn = backOnKey(d);
         return obj;
       });
     } catch (queueErr) {
@@ -3702,7 +3713,12 @@ router.post('/whatsapp/send-test', authenticateStaffOrAdmin, async (req, res) =>
       }
     }
 
-    const result = await sendWhatsAppNotification(recipientPhone, bodyText, req.io);
+    // A real Meta dispatch that costs real money, so it is metered like any
+    // other — against whoever pressed the button, not the unattributed bucket.
+    const result = await sendWhatsAppNotification(recipientPhone, bodyText, req.io, null, null, {
+      hospital: facilityFrom(req.user),
+      kind: 'other'
+    });
     res.json({
       message: 'WhatsApp notification dispatched successfully',
       result
@@ -3911,6 +3927,12 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                 // the "WhatsApp loop" where a booking never completes and the
                 // only trace is a stack in the server log. Contain it to this
                 // one message and always answer with a way out.
+                //
+                // Declared out here rather than inside, because the catch below
+                // also sends — and a message we only send when something has
+                // already gone wrong is exactly the one that must not also go
+                // missing from the meter.
+                let chatFacility: string | null = null;
                 try {
                   // Decide which facility this WhatsApp chat belongs to.
                   // Priority: a hospital the session ALREADY locked onto (e.g. the
@@ -3949,6 +3971,23 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                     socketIo: req.io || global.io
                   });
 
+                  // Which facility this reply is billed to.
+                  //
+                  // Re-read the session rather than reuse `existingSession`: the
+                  // turn that just ran is very often the one where the patient
+                  // PICKED a hospital from the list, and the copy fetched before
+                  // `processChatMessage` predates that choice. Billing the reply
+                  // that confirms a facility to nobody would leave a hole in the
+                  // meter at exactly the busiest moment of the conversation.
+                  chatFacility = seedHospitalId || null;
+                  try {
+                    const settled = await ChatSession.findOne({ sessionId });
+                    chatFacility =
+                      (settled && settled.tempData && settled.tempData.hospitalId) || chatFacility;
+                  } catch (_) {
+                    // Leave it as the seed; a lookup failure must not cost a reply.
+                  }
+
                   // Dispatch the state-machine response back via Meta Cloud API.
                   // ONE reply per patient message: a 3-line bot answer used to
                   // arrive as 3 separate WhatsApp notifications, which reads as
@@ -3972,14 +4011,16 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                         head,
                         [],
                         req.io || global.io,
-                        receivingPhoneNumberId
+                        receivingPhoneNumberId,
+                        { hospital: chatFacility, kind: 'chat' }
                       );
                       await sendWhatsAppNotification(
                         formattedPhone,
                         tail,
                         opts,
                         req.io || global.io,
-                        receivingPhoneNumberId
+                        receivingPhoneNumberId,
+                        { hospital: chatFacility, kind: 'chat' }
                       );
                     } else {
                       await sendWhatsAppNotification(
@@ -3987,7 +4028,8 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                         combined,
                         opts,
                         req.io || global.io,
-                        receivingPhoneNumberId
+                        receivingPhoneNumberId,
+                        { hospital: chatFacility, kind: 'chat' }
                       );
                     }
                   }
@@ -4004,7 +4046,8 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
                       '⚠️ Sorry — something went wrong at our end and that step did not go through.\n\nPlease reply *HI* to start again from the menu.',
                       [],
                       req.io || global.io,
-                      receivingPhoneNumberId
+                      receivingPhoneNumberId,
+                      { hospital: chatFacility, kind: 'chat' }
                     );
                   } catch (replyErr: any) {
                     logger.error('Could not even send the WhatsApp failure notice', { err: replyErr });

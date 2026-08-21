@@ -23,7 +23,7 @@ const { onlyToday, minutesSince } = require('../utils/dates');
 const { toId, sameId } = require('../utils/ids');
 const { facilityOf, facilityDoctors } = require('../utils/tenancy');
 const { estimateWaitMinutes, paceFromTokens, cabinRemainingFrom } = require('../utils/queueHelper');
-const { sittingStatus, delayNotice, todayOpdHours } = require('../utils/shiftHelper');
+const { sittingStatus, delayNotice, todayOpdHours, leaveOn, backOnKey } = require('../utils/shiftHelper');
 
 /** This facility's tokens, created today. */
 async function todaysTokens(hospital) {
@@ -111,6 +111,11 @@ router.get(
           // screen carry the same revised start the patient was WhatsApped.
           delay: delayNotice(doctor),
           opdHoursToday: todayOpdHours(doctor),
+          // Away for days, not merely closed for the evening. The floor board is
+          // where a manager notices a cabin has nobody in it, and "on leave until
+          // Friday" is the only version of that they can act on.
+          onLeave: leaveOn(doctor),
+          backOn: backOnKey(doctor),
           seenToday: countWhere(tokens, (t) => sameId(t.doctor, doctor) && t.status === 'Completed'),
           dailyTokenLimit: doctor.dailyTokenLimit || 0
         };
@@ -227,6 +232,49 @@ router.get(
     if (!facility) throw new HttpError(404, 'Facility not found');
 
     res.json(licenseState(facility));
+  })
+);
+
+/**
+ * GET this facility's own WhatsApp usage for a month.
+ *
+ * A meter the customer cannot read is not a meter, it is a surprise at the end
+ * of the month. The facility sees the same numbers the owner console bills from
+ * — total sent, the per-kind breakdown, how much of the plan's included volume
+ * is gone, and what any overage costs — so a disputed invoice is settled by
+ * looking at the same screen rather than by arguing about our word for it.
+ *
+ * Read-only. A tenant can see its usage; only the platform owner sets the tier
+ * that prices it.
+ */
+router.get(
+  '/usage',
+  authenticateToken,
+  asyncHandler(async (req, res) => {
+    const Hospital = require('../models/Hospital');
+    const { meterSummary, periodKey, previousPeriod, MESSAGE_KINDS } = require('../utils/messageMeter');
+
+    const facility = await Hospital.findOne({ id: facilityOf(req) });
+    if (!facility) throw new HttpError(404, 'Facility not found');
+
+    // "YYYY-MM", defaulting to the month in progress. Validated rather than
+    // trusted: an unparseable period would otherwise read as a month with no
+    // traffic, which looks identical to a quiet one.
+    const requested = String(req.query.period || '').trim();
+    const period = /^\d{4}-\d{2}$/.test(requested) ? requested : periodKey();
+
+    const [current, previous] = await Promise.all([
+      meterSummary(facility, period),
+      meterSummary(facility, previousPeriod(period))
+    ]);
+
+    res.json({
+      ...current,
+      // Last month beside this one, because a number alone does not tell a
+      // hospital whether it is about to go over — the trend does.
+      previous: { period: previous.period, billable: previous.billable, sent: previous.usage.sent },
+      kinds: MESSAGE_KINDS
+    });
   })
 );
 

@@ -20,7 +20,7 @@
  * bookings can still roll forward on capacity.
  */
 
-import { firstSittingOn, localDateKey, sittingStatus } from './shiftHelper';
+import { firstSittingOn, localDateKey, sittingStatus, isOnLeave } from './shiftHelper';
 import { isDoctorFull } from './queueHelper';
 
 /** How many days ahead a booking may roll before we admit there is no room. */
@@ -64,6 +64,21 @@ export async function resolveBookingSlot(doctor: any, now: Date = new Date()): P
 
   for (let rolled = 0; rolled <= MAX_ROLL_DAYS; rolled++) {
     const dateKey = localDateKey(candidate);
+
+    // A day the doctor is away is not a day a patient can be given.
+    //
+    // `sittingStatus` above already lands the FIRST candidate past any leave,
+    // but the roll below does not go through it: when a day is full it falls
+    // back to `nextDay` for any doctor whose `firstSittingOn` is null — which is
+    // every doctor with no shifts configured, i.e. most small clinics. Without
+    // this check, a full Monday would roll a patient straight onto the Tuesday
+    // their doctor is on leave, and the booking would look perfectly normal
+    // right up until they arrived.
+    if (isOnLeave(doctor, candidate)) {
+      const afterLeave = addDays(candidate, 1);
+      candidate = firstSittingOn(doctor, afterLeave) || afterLeave;
+      continue;
+    }
 
     if (!(await isDoctorFull(doctor, dateKey))) {
       return {

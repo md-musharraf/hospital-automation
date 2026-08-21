@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { BACKEND_URL } from '../App';
 import { Activity, ShieldAlert, ArrowLeft } from 'lucide-react';
 import WhatsAppTester from './WhatsAppTester';
+import PlatformUsagePanel from './PlatformUsagePanel';
 import {
   ModuleGrid,
   DoctorProfileFields,
@@ -1611,6 +1612,20 @@ export default function SuperAdminPortal() {
               }`}
             >
               Licences
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('usage');
+                setError('');
+                setSuccessMsg('');
+              }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all ${
+                activeTab === 'usage'
+                  ? 'bg-[var(--primary-color)] text-[var(--primary-text)] shadow-md'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-color)] hover:bg-[var(--border-color)]/20'
+              }`}
+            >
+              Usage
             </button>
             <button
               onClick={() => {
@@ -3924,6 +3939,8 @@ export default function SuperAdminPortal() {
               </form>
             ) : activeTab === 'licenses' ? (
               <LicensePanel adminSecret={adminSecret} />
+            ) : activeTab === 'usage' ? (
+              <PlatformUsagePanel adminSecret={adminSecret} />
             ) : activeTab === 'whatsapp' ? (
               <WhatsAppTester
                 initialPhone={editWhatsapp || '+14155238886'}

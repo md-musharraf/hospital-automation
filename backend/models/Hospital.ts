@@ -111,6 +111,13 @@ const HospitalSchema = new mongoose.Schema(
       plan: { type: String, default: '' }, // '', 'trial', '1m', '6m', '12m', '24m'
       startedAt: { type: Date, default: null },
       expiresAt: { type: Date, default: null },
+      // Which price tier this facility is on — 'standalone' | 'starter' |
+      // 'growth' | 'hospital' (utils/messageMeter.METER_TIERS). Separate from
+      // `plan` because that sells a DURATION and this sells a SIZE: a clinic and
+      // a 200-bed hospital both buy twelve months, and they are not the same
+      // customer. Empty means nobody has set one, which is reported as an unset
+      // tier rather than silently treated as the cheapest — see `tierOf`.
+      tier: { type: String, default: '' },
       // Only ever 'Active' or 'Suspended' — a hand switch the owner controls,
       // which beats the dates in both directions.
       status: { type: String, enum: ['Active', 'Suspended'], default: 'Active' },

@@ -10,7 +10,7 @@ import Hospital from '../models/Hospital';
 import ArchivedToken from '../models/ArchivedToken';
 import logger from '../utils/logger';
 import { toFacility } from '../utils/realtime';
-import { pruneOverrides, localDateKey } from '../utils/shiftHelper';
+import { pruneOverrides, pruneLeaves, localDateKey } from '../utils/shiftHelper';
 import { insertTokenByPriority } from '../utils/queueHelper';
 
 /**
@@ -177,14 +177,25 @@ export async function resetFacility(io: any, hospital: string, tokens: any[]): P
     // lookup is keyed by date so a stale row never applies, but clearing it
     // keeps the record from growing one sub-document per late day forever, and
     // keeps the doctor's own screen from showing a delay banner at 8am.
+    //
+    // Finished leaves go the same way, for the same reason and with one
+    // difference: a leave is kept for the whole of its LAST day, because a
+    // doctor whose leave ends today is still absent this afternoon. Only rows
+    // that ended before today are dropped.
     for (const doctor of doctors) {
-      if (pruneOverrides(doctor)) {
-        try {
-          doctor.markModified && doctor.markModified('shiftOverrides');
-          await doctor.save();
-        } catch (err) {
-          logger.error('Could not prune stale shift overrides', { err, doctor: String(doctor._id) });
-        }
+      const droppedOverrides = pruneOverrides(doctor);
+      const droppedLeaves = pruneLeaves(doctor);
+      if (!droppedOverrides && !droppedLeaves) continue;
+
+      try {
+        if (droppedOverrides) doctor.markModified && doctor.markModified('shiftOverrides');
+        if (droppedLeaves) doctor.markModified && doctor.markModified('leaves');
+        await doctor.save();
+      } catch (err) {
+        logger.error('Could not prune stale shift overrides or leaves', {
+          err,
+          doctor: String(doctor._id)
+        });
       }
     }
   }

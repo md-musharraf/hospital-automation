@@ -5,6 +5,7 @@ import LiveActivityFeed from './LiveActivityFeed';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
 import HelpPanel from './HelpPanel';
+import FacilityLeaveBoard from './FacilityLeaveBoard';
 import useFacilityFromUrl from '../hooks/useFacilityFromUrl';
 import DashboardShell from './dashboard/DashboardShell';
 import { PhoneInput, NumberInput } from './fields/NormalizedInput';
@@ -2444,6 +2445,18 @@ export function StaffDashboard({ staffToken, staffUser, onLogout }) {
         )}
 
         {/* TAB 5: RECEPTION PATIENT BILLING & DISCHARGE COUNTER */}
+        {activeSidebarTab === 'leaves' && (
+          <FacilityLeaveBoard
+            staffToken={staffToken}
+            doctors={doctors}
+            onChanged={() => {
+              // A leave changes who can be booked, so the queue board and the
+              // walk-in doctor list behind it are stale the moment it is filed.
+              loadData();
+            }}
+          />
+        )}
+
         {activeSidebarTab === 'billing' && (
           <div className="space-y-6 animate-fade-in text-left">
             {/* Top Header & Search bar */}

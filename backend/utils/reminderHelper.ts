@@ -1,5 +1,6 @@
 import Reminder from '../models/Reminder';
 import { sendWhatsAppNotification } from './whatsappHelper';
+import { facilityFrom } from './messageMeter';
 import logger from './logger';
 
 const log = logger.child({ module: 'reminders' });
@@ -43,7 +44,10 @@ export async function processPendingReminders(): Promise<any[]> {
 
       // Send automated SMS & WhatsApp notification
       log.info(`To: ${phone} | Msg: "${reminder.message}"`);
-      await sendWhatsAppNotification(phone, reminder.message);
+      await sendWhatsAppNotification(phone, reminder.message, [], null, null, {
+        hospital: facilityFrom(reminder, reminder.patient, reminder.doctor),
+        kind: 'reminder'
+      });
 
       processed.push({
         id: reminder._id,

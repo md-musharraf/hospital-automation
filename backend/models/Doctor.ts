@@ -123,6 +123,37 @@ const DoctorSchema = new mongoose.Schema(
         createdAt: { type: Date, default: Date.now }
       }
     ],
+    // Days this doctor is not coming in at all.
+    //
+    // Distinct from all three things that already exist, because each of them
+    // answers a different question and none of them answers this one:
+    //
+    //   - `availabilityStatus: 'Unavailable'` is about THIS MOMENT. It carries
+    //     no date, so nothing ever turns it back on — a doctor who flips it
+    //     before a week's leave has to remember to flip it back, and until they
+    //     do the cabin reads as closed forever.
+    //   - `opdDays` is the STANDING roster. Editing it for one week's absence
+    //     rewrites the doctor's permanent schedule, and the printed hours on the
+    //     public landing page along with it.
+    //   - `shiftOverrides` is TODAY's revised timing. It can move a sitting; it
+    //     cannot cancel one, and it is scoped to a single date by design.
+    //
+    // A range rather than one row per day: "24th to 28th" is one decision a
+    // human made, and storing it as five rows means five chances for a partial
+    // delete to leave a doctor half on leave. `from`/`to` are inclusive local
+    // "YYYY-MM-DD" strings for the same reason `shiftOverrides.date` is — the
+    // question asked of them is always "is this date inside?", which is a string
+    // comparison that cannot drift by a timezone the way a Date would.
+    leaves: [
+      {
+        from: { type: String, default: '' }, // "YYYY-MM-DD", facility local
+        to: { type: String, default: '' }, // inclusive; same as `from` for one day
+        reason: { type: String, default: '' },
+        by: { type: String, default: '' }, // who filed it — doctor or reception
+        createdAt: { type: Date, default: Date.now }
+      }
+    ],
+
     consultationFee: { type: Number, default: 0 }, // 0 = "ask at reception"
     about: { type: String, default: '' }
   },

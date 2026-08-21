@@ -99,6 +99,192 @@ export function overrideFor(doctor: any, date: Date = new Date()): ShiftOverride
   return found;
 }
 
+// ── Leave ───────────────────────────────────────────────────────────────────
+//
+// A doctor being away for a stretch of days. Everything below compares
+// "YYYY-MM-DD" strings with `<=` and `>=`, which is exact for this format
+// because it is fixed-width and most-significant-first — the same property that
+// makes it sort correctly. Doing it with Date objects would drag a timezone into
+// a question ("is the 26th inside the 24th–28th?") that has nothing to do with
+// clocks, and that is how an evening in IST becomes yesterday.
+
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+export interface DoctorLeave {
+  from: string;
+  to: string;
+  reason?: string;
+  by?: string;
+}
+
+/**
+ * The longest single leave anyone can file.
+ *
+ * Not a policy about holidays — a guard against a slip in the year field. `to:
+ * '2027-08-28'` instead of `'2026-08-28'` would take a doctor off every booking
+ * screen for a year, and the symptom (patients quietly routed elsewhere) is one
+ * nobody reports as a bug.
+ */
+export const MAX_LEAVE_DAYS = 180;
+
+/** A day count between two date keys, inclusive of both ends. */
+export function daysBetweenKeys(from: string, to: string): number {
+  const start = new Date(`${from}T00:00:00`);
+  const end = new Date(`${to}T00:00:00`);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+  return Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+}
+
+/** Shift a "YYYY-MM-DD" key by whole days, staying in local time. */
+export function addDaysToKey(key: string, days: number): string {
+  const date = new Date(`${key}T00:00:00`);
+  if (isNaN(date.getTime())) return key;
+  date.setDate(date.getDate() + days);
+  return localDateKey(date);
+}
+
+/**
+ * "2026-08-28" → "28 Aug". How a date is said to a patient.
+ *
+ * Never the numeric form: "08/28" and "28/08" are the same six characters to a
+ * clinic in Patna and to whoever wrote the code, and they mean months apart.
+ */
+export function formatDateKey(key?: string | null): string {
+  const raw = String(key || '').trim();
+  if (!DATE_KEY.test(raw)) return '';
+  const date = new Date(`${raw}T00:00:00`);
+  if (isNaN(date.getTime())) return '';
+  return `${date.getDate()} ${MONTH_NAMES[date.getMonth()]}`;
+}
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A stored leave as a usable range, or null if it is malformed. */
+function leaveRange(entry: any): { from: string; to: string } | null {
+  if (!entry) return null;
+  const from = String(entry.from || '').trim();
+  let to = String(entry.to || '').trim() || from;
+  if (!DATE_KEY.test(from) || !DATE_KEY.test(to)) return null;
+  // A reversed range is a typo. Reading it as "covers nothing" is the dangerous
+  // repair: the doctor looks available, patients keep being booked, and the
+  // absence is discovered by whoever travelled in. Straighten it instead.
+  if (to < from) to = from;
+  return { from, to };
+}
+
+/** The leave covering `date`, or null. */
+export function leaveOn(doctor: any, date: Date = new Date()): DoctorLeave | null {
+  const leaves = (doctor && Array.isArray(doctor.leaves) && doctor.leaves) || [];
+  const key = localDateKey(date);
+
+  for (const entry of leaves) {
+    const range = leaveRange(entry);
+    if (!range) continue;
+    if (key >= range.from && key <= range.to) {
+      return { ...range, reason: (entry && entry.reason) || '', by: (entry && entry.by) || '' };
+    }
+  }
+  return null;
+}
+
+/** Is this doctor away on `date`? */
+export function isOnLeave(doctor: any, date: Date = new Date()): boolean {
+  return leaveOn(doctor, date) !== null;
+}
+
+/**
+ * The first date this doctor is back, as a key — the day after the leave they
+ * are currently inside. Null when they are not on leave.
+ *
+ * Chained: back-to-back leaves ("24th–26th" then "27th–28th") are one absence to
+ * the patient standing at the counter, and telling them to come on the 27th
+ * because that is where one row happens to end is worse than not telling them.
+ */
+export function backOnKey(doctor: any, date: Date = new Date()): string | null {
+  const leave = leaveOn(doctor, date);
+  if (!leave) return null;
+
+  let next = addDaysToKey(leave.to, 1);
+  // Bounded by MAX_LEAVE_DAYS so a cycle in bad data cannot spin here.
+  for (let guard = 0; guard < MAX_LEAVE_DAYS; guard++) {
+    const following = leaveOn(doctor, new Date(`${next}T00:00:00`));
+    if (!following) break;
+    next = addDaysToKey(following.to, 1);
+  }
+  return next;
+}
+
+/** Leaves that have not finished yet, soonest first — what a console lists. */
+export function upcomingLeaves(doctor: any, from: Date = new Date()): DoctorLeave[] {
+  const leaves = (doctor && Array.isArray(doctor.leaves) && doctor.leaves) || [];
+  const today = localDateKey(from);
+
+  return leaves
+    .map((entry: any) => {
+      const range = leaveRange(entry);
+      if (!range) return null;
+      return { ...range, reason: (entry && entry.reason) || '', by: (entry && entry.by) || '' };
+    })
+    .filter((leave: DoctorLeave | null): leave is DoctorLeave => Boolean(leave) && leave!.to >= today)
+    .sort((a: DoctorLeave, b: DoctorLeave) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+}
+
+/**
+ * Coerce a posted leave into something storable, or throw with the reason.
+ *
+ * Throws rather than returning null because every failure here has a specific
+ * cause the person filing it can fix, and "leave not saved" with no reason is
+ * how a doctor ends up believing they are marked away when they are not.
+ */
+export function normalizeLeave(input: any): DoctorLeave {
+  const from = String((input && input.from) || '').trim();
+  const to = String((input && input.to) || '').trim() || from;
+
+  if (!DATE_KEY.test(from)) throw new Error('Give a start date as YYYY-MM-DD.');
+  if (!DATE_KEY.test(to)) throw new Error('Give an end date as YYYY-MM-DD, or leave it blank for one day.');
+
+  const range = { from, to: to < from ? from : to };
+  const days = daysBetweenKeys(range.from, range.to);
+  if (days < 1) throw new Error('That is not a real date range.');
+  if (days > MAX_LEAVE_DAYS) {
+    throw new Error(`A single leave cannot be longer than ${MAX_LEAVE_DAYS} days — check the year.`);
+  }
+
+  return {
+    ...range,
+    reason: String((input && input.reason) || '')
+      .trim()
+      .slice(0, 200),
+    by: String((input && input.by) || '')
+      .trim()
+      .slice(0, 80)
+  };
+}
+
+/**
+ * Drop leaves that finished before `keepDate`. Returns whether anything changed.
+ *
+ * Mirrors `pruneOverrides`, and is called from the same nightly job. Unlike an
+ * override, a leave is kept for the whole of its last day — a leave ending today
+ * still explains why the cabin is dark this afternoon.
+ */
+export function pruneLeaves(doctor: any, keepDate: Date = new Date()): boolean {
+  const leaves = (doctor && Array.isArray(doctor.leaves) && doctor.leaves) || [];
+  if (leaves.length === 0) return false;
+
+  const today = localDateKey(keepDate);
+  const kept = leaves.filter((entry: any) => {
+    const range = leaveRange(entry);
+    // Malformed rows are dropped here too: they can never match a date, so all
+    // they do is grow the document forever.
+    return Boolean(range) && range!.to >= today;
+  });
+
+  if (kept.length === leaves.length) return false;
+  doctor.leaves = kept;
+  return true;
+}
+
 /**
  * The doctor's sittings for `date`, with today's delay applied.
  *
@@ -321,6 +507,15 @@ export function scheduledShifts(doctor: any): Shift[] {
 
 /** Does this shift run on `date`? An empty `days` falls back to the doctor's OPD days. */
 export function shiftRunsOn(shift: Shift, doctor: any, date: Date): boolean {
+  // Leave beats the roster, and it is checked here rather than at each screen on
+  // purpose. `sittingStatus` and `firstSittingOn` both funnel through this
+  // function, and everything a patient or a receptionist sees about when a
+  // doctor sits funnels through those two — the chatbot's doctor list, the
+  // printed OPD hours, the landing page, the wait estimate, the floor board.
+  // One line here is what stops those disagreeing about an absent doctor the
+  // way they once disagreed about a late one.
+  if (isOnLeave(doctor, date)) return false;
+
   const today = dayName(date);
   if (shift.days && shift.days.length > 0) return shift.days.includes(today);
 
@@ -360,6 +555,17 @@ export interface SittingStatus {
   shift: Shift | null;
   /** True when the doctor keeps no shifts at all — treat as always available. */
   unscheduled: boolean;
+  /**
+   * The leave covering `now`, when there is one.
+   *
+   * Reported separately rather than folded into `sitting: false`, because "the
+   * cabin is shut until 5pm" and "the doctor is away until Friday" lead to
+   * completely different sentences — and the second one is the only reason a
+   * patient should be sent to a different doctor rather than told to come back.
+   */
+  onLeave: DoctorLeave | null;
+  /** First date they are back, as "YYYY-MM-DD". Null unless on leave. */
+  backOn: string | null;
 }
 
 /**
@@ -379,9 +585,43 @@ export interface SittingStatus {
  */
 export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatus {
   const standing: Shift[] = scheduledShifts(doctor);
+  const unscheduled =
+    standing.filter((s) => parseHhMm(s.start) !== null && parseHhMm(s.end) !== null).length === 0;
 
-  if (standing.filter((s) => parseHhMm(s.start) !== null && parseHhMm(s.end) !== null).length === 0) {
-    return { sitting: true, minutesUntilStart: 0, nextStart: null, shift: null, unscheduled: true };
+  const leave = leaveOn(doctor, now);
+  const backOn = leave ? backOnKey(doctor, now) : null;
+
+  if (unscheduled) {
+    // "No shifts" normally means "sits whenever", and that reading is what keeps
+    // every facility that never filled this in working. A leave is the one dated
+    // fact we DO have about such a doctor, so it has to win — otherwise the
+    // clinics most likely to be on leave (small ones, no shifts configured) are
+    // exactly the ones where leave does nothing.
+    if (!leave) {
+      return {
+        sitting: true,
+        minutesUntilStart: 0,
+        nextStart: null,
+        shift: null,
+        unscheduled: true,
+        onLeave: null,
+        backOn: null
+      };
+    }
+
+    // They keep no hours, so the honest answer for when they resume is the
+    // start of the first day they are back, not an invented clock time.
+    const resumes = backOn ? new Date(`${backOn}T00:00:00`) : null;
+    return {
+      sitting: false,
+      minutesUntilStart:
+        resumes && resumes > now ? Math.max(0, Math.round((resumes.getTime() - now.getTime()) / 60000)) : 0,
+      nextStart: resumes,
+      shift: null,
+      unscheduled: true,
+      onLeave: leave,
+      backOn
+    };
   }
 
   let best: { start: Date; shift: Shift } | null = null;
@@ -401,7 +641,15 @@ export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatu
 
       // Inside a sitting — nothing to wait for.
       if (now >= window.start && now < window.end) {
-        return { sitting: true, minutesUntilStart: 0, nextStart: null, shift, unscheduled: false };
+        return {
+          sitting: true,
+          minutesUntilStart: 0,
+          nextStart: null,
+          shift,
+          unscheduled: false,
+          onLeave: null,
+          backOn: null
+        };
       }
       if (window.start > now && (!best || window.start < best.start)) {
         best = { start: window.start, shift };
@@ -416,7 +664,19 @@ export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatu
   if (!best) {
     // Scheduled, but nothing within the week ahead. Refusing to estimate is
     // better than inventing a number; callers fall back to queue-length maths.
-    return { sitting: false, minutesUntilStart: 0, nextStart: null, shift: null, unscheduled: false };
+    //
+    // A leave longer than the scan window lands here, which is why `onLeave` is
+    // still reported: "nothing found" and "away until the 14th" look identical
+    // in the other fields, and only one of them can be explained to a patient.
+    return {
+      sitting: false,
+      minutesUntilStart: 0,
+      nextStart: null,
+      shift: null,
+      unscheduled: false,
+      onLeave: leave,
+      backOn
+    };
   }
 
   return {
@@ -424,7 +684,9 @@ export function sittingStatus(doctor: any, now: Date = new Date()): SittingStatu
     minutesUntilStart: Math.max(0, Math.round((best.start.getTime() - now.getTime()) / 60000)),
     nextStart: best.start,
     shift: best.shift,
-    unscheduled: false
+    unscheduled: false,
+    onLeave: leave,
+    backOn
   };
 }
 

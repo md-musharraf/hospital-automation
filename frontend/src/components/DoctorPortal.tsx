@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BACKEND_URL, socket } from '../App';
 import InternalChatBox from './InternalChatBox';
 import DoctorSchedulePanel from './DoctorSchedulePanel';
+import DoctorLeavePanel from './DoctorLeavePanel';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 import useLiveRefresh from '../hooks/useLiveRefresh';
 import HelpPanel from './HelpPanel';
@@ -1245,6 +1246,9 @@ export function DoctorDashboard({ doctorToken, doctorUser, onLogout }) {
                 waitingCount={queue?.activeQueue?.length || 0}
                 onSaved={loadQueue}
               />
+
+              {/* Whole days away — the third answer to "when is this cabin open" */}
+              <DoctorLeavePanel doctorToken={doctorToken} onSaved={loadQueue} />
 
               {/* Internal Intercom Chatbox */}
               <InternalChatBox token={doctorToken} user={doctorUser} role="Doctor" />

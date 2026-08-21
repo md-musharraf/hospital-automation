@@ -3,6 +3,7 @@ import { BACKEND_URL, socket } from '../App';
 import DashboardShell from './dashboard/DashboardShell';
 import { Icon, StatStrip, Panel, Empty } from './dashboard/DashboardKit';
 import LiveActivityFeed from './LiveActivityFeed';
+import WhatsAppUsagePanel from './WhatsAppUsagePanel';
 import useFacilitySocket from '../hooks/useFacilitySocket';
 
 /**
@@ -414,6 +415,8 @@ export function OwnerDashboard({ token, facility, onLogout }) {
           {tab === 'today' && todayTab}
           {tab === 'desks' && desksTab}
           {tab === 'activity' && activityTab}
+          {/* The bill the owner actually pays, on the screen they already open. */}
+          {tab === 'usage' && <WhatsAppUsagePanel token={token} />}
         </>
       )}
     </DashboardShell>

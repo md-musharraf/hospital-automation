@@ -98,8 +98,12 @@ function threw(fn) {
 
   section('Tenant guard — coverage');
 
-  check('Every tenant-owned collection is listed', TENANT_MODELS.length === 15, TENANT_MODELS.length);
+  check('Every tenant-owned collection is listed', TENANT_MODELS.length === 16, TENANT_MODELS.length);
   check('Token is guarded', TENANT_MODELS.includes('Token'));
+  // Not patient data, but a per-facility billing counter: an unscoped read here
+  // would total one hospital's WhatsApp usage across every tenant on the
+  // platform, and the mistake would arrive as an invoice rather than an error.
+  check('MessageMeter is guarded', TENANT_MODELS.includes('MessageMeter'));
   check('Patient is guarded', TENANT_MODELS.includes('Patient'));
   check('Invoice is guarded', TENANT_MODELS.includes('Invoice'));
   check('ArchivedToken is guarded', TENANT_MODELS.includes('ArchivedToken'));

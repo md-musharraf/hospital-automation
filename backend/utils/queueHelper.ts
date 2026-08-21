@@ -10,6 +10,7 @@ import {
   todayOpdHours,
   localDateKey
 } from './shiftHelper';
+import { facilityFrom } from './messageMeter';
 
 // How many front positions get a "your turn is near — please come now" ping.
 // Positions 1 and 2 in the waiting line, so a patient can wait at home / outside
@@ -447,7 +448,11 @@ export async function sendDepartureAlerts(doctor: any, waiting: any[], io?: any)
           waitMinutes: wait,
           travelMinutes: travel,
           sitting
-        })
+        }),
+        [],
+        null,
+        null,
+        { hospital: facilityFrom(token, doctor, patient), kind: 'departure' }
       );
       sent++;
     } catch (waErr) {
@@ -621,7 +626,10 @@ export async function applyDeferral(
       `🔄 टोकन ${token.tokenNumber}: आपकी बारी पर आप ${room} पर नहीं थे, इसलिए टोकन रद्द करने के बजाय आपको कुछ नंबर पीछे कर दिया गया है। ` +
       `आपका नया अनुमानित समय: ${newTime}। कृपया सीधे ${room} पहुँचें।`;
     try {
-      await sendWhatsAppNotification(token.patient.phone, msg);
+      await sendWhatsAppNotification(token.patient.phone, msg, [], null, null, {
+        hospital: facilityFrom(token, doctor, token.patient),
+        kind: 'defer'
+      });
       notified = 1;
       await (Token as any).findByIdAndUpdate(token._id, {
         lastNotifiedWait: fresh.estimatedWaitTime || 0,
@@ -831,7 +839,10 @@ export async function notifyUpcomingPatients(doctorId: string, io?: any): Promis
         `🔔 अब आपकी बारी पास है — कृपया अभी ${room} पहुँच जाएँ (टोकन ${token.tokenNumber})।`;
 
       try {
-        await sendWhatsAppNotification(patient.phone, msg);
+        await sendWhatsAppNotification(patient.phone, msg, [], null, null, {
+          hospital: facilityFrom(token, doctor, patient),
+          kind: 'arrival'
+        });
       } catch (waErr) {
         logger.error('Arrival alert WhatsApp error', { err: waErr });
       }
@@ -941,7 +952,11 @@ export async function broadcastDelay(
       try {
         await sendWhatsAppNotification(
           token.patient.phone,
-          delayMessage(doctorName, minutes, reason, newTime, newStart)
+          delayMessage(doctorName, minutes, reason, newTime, newStart),
+          [],
+          null,
+          null,
+          { hospital: facilityFrom(token, doctor, token.patient), kind: 'delay' }
         );
         sent++;
       } catch (waErr) {
@@ -1073,7 +1088,10 @@ export async function trackWaitingPatients(io?: any): Promise<number> {
             `⚡ टोकन ${token.tokenNumber}: कतार तेज़ चल रही है। नया अनुमानित समय: ${formatApptTime(current)}।`;
 
         try {
-          await sendWhatsAppNotification(token.patient.phone, msg);
+          await sendWhatsAppNotification(token.patient.phone, msg, [], null, null, {
+            hospital: facilityFrom(token, doctor, token.patient),
+            kind: 'arrival'
+          });
           notified++;
         } catch (waErr) {
           logger.error('Queue tracker WhatsApp error', { token: token.tokenNumber, err: waErr });
