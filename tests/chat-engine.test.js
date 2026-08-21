@@ -39,7 +39,7 @@ seedDoctor('docA', 'Dr. Sarah Jenkins', 'General Medicine', 'Cabin 101');
 seedDoctor('docB', 'Dr. James Chen', 'Cardiology', 'Cabin 202');
 seedDoctor('docC', 'Dr. Ana Silva', 'Orthopedics', 'Cabin 303');
 
-const { processChatMessage } = require(path.join(BACKEND, 'routes', 'chat.js'))._internals;
+const { processChatMessage, alreadyHandled } = require(path.join(BACKEND, 'routes', 'chat.js'))._internals;
 
 /** Send one message and return the flattened bot reply. */
 async function say(sessionId, message) {
@@ -367,6 +367,125 @@ async function say(sessionId, message) {
   await say(session, 'check status');
   reply = await say(session, 'T-999');
   check('unknown token reports not found', /not found/i.test(reply.flat), reply.flat);
+
+  // ---------------------------------------------------------------------------
+  section('The facility a conversation is about is the facility it queries');
+  // ---------------------------------------------------------------------------
+  //
+  // These were two different values. The id came from the session (or the
+  // literal default 'general-hospital'); the facility DOCUMENT behind it fell
+  // back to "the first hospital in the collection" whenever that id matched
+  // nothing. So a session pinned to a renamed or mistyped facility was greeted
+  // by a real hospital's name, walked all the way through registration, and
+  // then asked `Doctor.find({ hospital: <the dead id> })` — which returns
+  // nothing. Every attempt ended at "No doctors are currently available", at a
+  // facility with a full roster, forever.
+
+  const strandedId = 'stranded-1';
+  await new models.ChatSession({
+    sessionId: strandedId,
+    currentState: 'AWAITING_SYMPTOMS',
+    tempData: {
+      language: 'en',
+      hospitalId: 'a-facility-that-no-longer-exists',
+      facilityChosen: true,
+      facilityLocked: true,
+      phone: '+919000000123',
+      name: 'Salam',
+      age: 23,
+      gender: 'Male'
+    }
+  }).save();
+
+  // Deliberately WITHOUT hospitalId: this is the WhatsApp shape, where the
+  // webhook passes nothing once a session already has a facility of its own.
+  const stranded = await processChatMessage({ sessionId: strandedId, message: 'bone related' });
+  const strandedFlat = stranded.messages.map((m) => m.text).join(' | ');
+
+  check(
+    'A session pinned to a dead facility still reaches the doctor list',
+    /Dr\. Sarah Jenkins/.test(strandedFlat),
+    strandedFlat
+  );
+  check('…and is never told there are no doctors', !/no doctor/i.test(strandedFlat), strandedFlat);
+  check('…with something to tap', (stranded.options || []).length > 0, stranded.options);
+
+  const repaired = await models.ChatSession.findOne({ sessionId: strandedId });
+  check(
+    'The dead id is repaired on the session, not re-derived every turn',
+    repaired.tempData.hospitalId === 'general-hospital',
+    repaired.tempData.hospitalId
+  );
+
+  // ---------------------------------------------------------------------------
+  section('A facility with no doctors is a detour, not a dead end');
+  // ---------------------------------------------------------------------------
+  //
+  // The old reply was one line of text and `options: []`, leaving the session
+  // parked in a state only a typed magic word could escape. On WhatsApp, where
+  // the patient sees buttons rather than a command line, that is a loop: they
+  // reply, nothing understands them, the same sentence comes back.
+
+  await new models.Hospital({
+    id: 'empty-clinic',
+    name: 'Empty Clinic',
+    address: 'Side Lane',
+    city: 'Patna',
+    phone: '+910001',
+    whatsappNumber: '+917484043690'
+  }).save();
+
+  const emptyId = 'empty-1';
+  await new models.ChatSession({
+    sessionId: emptyId,
+    currentState: 'AWAITING_SYMPTOMS',
+    tempData: {
+      language: 'en',
+      hospitalId: 'empty-clinic',
+      facilityChosen: true,
+      facilityLocked: true,
+      phone: '+919000000124',
+      name: 'Salam',
+      age: 23,
+      gender: 'Male'
+    }
+  }).save();
+
+  const empty = await processChatMessage({ sessionId: emptyId, message: 'bone related' });
+  const emptyFlat = empty.messages.map((m) => m.text).join(' | ');
+
+  check('The patient is told which facility has no doctor', /Empty Clinic/.test(emptyFlat), emptyFlat);
+  check('…and is handed the facilities that do', (empty.options || []).length > 0, empty.options);
+  check('…including the one with a roster', /City General/.test(emptyFlat), emptyFlat);
+  check(
+    'The lock is released so the picker is not answered back into the empty one',
+    !(await models.ChatSession.findOne({ sessionId: emptyId })).tempData.facilityLocked,
+    (await models.ChatSession.findOne({ sessionId: emptyId })).tempData
+  );
+
+  // ---------------------------------------------------------------------------
+  section('A message Meta sends twice is answered once');
+  // ---------------------------------------------------------------------------
+  //
+  // Meta redelivers anything it did not get a 200 for in time, and on a free
+  // instance a cold boot is exactly that. Answered twice, one reply from the
+  // patient advances the state machine two steps — their name is read as their
+  // age as well — and the conversation restarts looking like a bot that lost
+  // the thread.
+
+  check('A message never seen before is handled', alreadyHandled('wamid.AAA') === false);
+  check('…and its redelivery is not', alreadyHandled('wamid.AAA') === true);
+  check('A different message is unaffected', alreadyHandled('wamid.BBB') === false);
+  check(
+    'A payload with no id is answered rather than dropped',
+    alreadyHandled(undefined) === false && alreadyHandled(undefined) === false
+  );
+
+  // The set is bounded — a chat server that remembers every id it has ever seen
+  // is a memory leak with a long fuse, and 512 MB is a short one.
+  for (let i = 0; i < 600; i++) alreadyHandled(`wamid.bulk${i}`);
+  check('The oldest ids are forgotten once the window fills', alreadyHandled('wamid.AAA') === false);
+  check('…while the most recent are still remembered', alreadyHandled('wamid.bulk599') === true);
 
   report();
 })().catch((err) => {

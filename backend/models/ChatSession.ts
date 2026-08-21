@@ -19,6 +19,7 @@ export const CHAT_STATES: string[] = [
   'AWAITING_SYMPTOMS',
   'AWAITING_TRIAGE_CONFIRM', // patient is confirming the smart-triage recommendation
   'AWAITING_DOCTOR_CHOICE', // patient is picking a doctor from the manual list
+  'AWAITING_NEXTDAY_CONFIRM', // the doctor's day is over/full — patient is agreeing to the next one
   'AWAITING_TRAVEL_TIME', // patient is saying how long they need to reach the hospital
   'AWAITING_TOKEN', // patient is typing a token number for a status check
   'COMPLETED'

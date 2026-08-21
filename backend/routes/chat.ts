@@ -96,7 +96,20 @@ const dictionary = {
     genderOptions: ['Male', 'Female', 'Other'],
     invalidGender: 'Please choose one of the options below:',
     describeSymptomsLong: 'Please describe the symptoms (e.g., high fever, chest tightness, coughing):',
-    noDoctors: 'No doctors are currently available. Type "Hi" to try again later.',
+    // Not "come back later" — nobody is coming later. A facility reaches this
+    // line only when it has no doctor on its roster at all, which is a setup
+    // problem that will still be there in an hour, so the patient is given the
+    // two things that can actually help them: another facility, or the desk.
+    noDoctors: (facility) =>
+      `🏥 ${facility ? `*${facility}* has` : 'This facility has'} not listed any doctor yet, so I cannot issue a token here.\n\n` +
+      `👉 Reply *HOSPITAL* to pick a different facility, or *HI* for the main menu.\n\n` +
+      `🏥 ${facility ? `*${facility}* ने` : 'इस सुविधा ने'} अभी तक कोई डॉक्टर नहीं जोड़ा है, इसलिए यहाँ टोकन नहीं बन सकता।\n` +
+      `👉 दूसरी सुविधा चुनने के लिए *HOSPITAL* लिखें, या मेन्यू के लिए *HI*।`,
+    noDoctorsPickAnother: '👇 Here are the other facilities you can book at:',
+    noDoctorsCallDesk: (phone) =>
+      phone
+        ? `📞 Please call the facility directly on ${phone} — they can register you at the desk.`
+        : '📞 Please contact the facility directly — they can register you at the desk.',
     selectDoctorPrompt: 'Select an available doctor to book your token:',
     invalidDoctor: 'Invalid doctor selection. Please choose from the list:',
     emergencyDetected:
@@ -105,6 +118,25 @@ const dictionary = {
       `✅ Based on your symptoms, the right department is *${dept}*.\n\n👨‍⚕️ Recommended: ${doctor}\n🚪 ${room}\n⏱️ Approx. wait: ${wait} min (least-busy doctor for you)`,
     triageConfirmPrompt: 'Shall I book this token for you now?',
     triageConfirmOptions: ['✅ Yes, Book My Token', '🔄 Choose Another Doctor'],
+    // --- A booking for a later day is AGREED, not announced.
+    //
+    // The token has always been placed on the right day (see `resolveBookingSlot`),
+    // but the patient found out only after it was written — "your token is
+    // confirmed for TOMORROW" arriving in reply to "book me an appointment".
+    // Somebody who needed to be seen today was left holding a token for a day
+    // they never asked for, and their only way out was to start over. Ask first.
+    nextDayReasonClosed: (doctor) => `🌙 ${doctor}'s OPD is over for today.`,
+    nextDayReasonFull: (doctor) => `📋 Today's tokens for ${doctor} are finished.`,
+    nextDayAsk: (reason, doctor, dayWord, dateStr, timeStr) =>
+      `${reason}\n\n👨‍⚕️ *${doctor}* sits next on *${dayWord}* (${dateStr}) at *${timeStr}*.\n\n` +
+      `Shall I book your token for that day? We will WhatsApp you before the OPD opens — no need to come today.\n\n` +
+      `🌙 आज इनकी OPD खत्म हो चुकी है। ${doctor} अगली बार ${dayWord} (${dateStr}) को ${timeStr} बजे बैठेंगे।\n` +
+      `क्या मैं उसी दिन के लिए आपका टोकन बुक कर दूँ? OPD शुरू होने से पहले हम WhatsApp कर देंगे।`,
+    // Kept inside 20 characters each: Meta truncates a reply-button title at
+    // exactly that, and a label cut mid-word is what a patient is asked to tap.
+    nextDayOptions: ['✅ Yes, book it', '🔄 Another doctor', '❌ Not now'],
+    nextDayDeclined:
+      '👍 Nothing has been booked. Reply *HI* whenever you want a token, or *HOSPITAL* to try another facility.\n\n👍 कोई टोकन बुक नहीं किया गया। जब चाहें *HI* लिखें।',
     // --- Travel time: asked ONCE, so every later alert is timed for THIS patient
     askTravelTime:
       '🚗 Last question — about how long do you need to REACH the hospital?\n\nTap one below (or type it, e.g. "45 min"). We use this to WhatsApp you exactly when to set off, so you never wait here.',
@@ -253,7 +285,14 @@ const dictionary = {
     invalidGender: 'कृपया नीचे दिए गए विकल्पों में से एक चुनें:',
     describeSymptomsLong:
       'कृपया अपने लक्षणों का संक्षेप में वर्णन करें (जैसे: तेज़ बुखार, सांस लेने में तकलीफ, खांसी):',
-    noDoctors: 'वर्तमान में कोई डॉक्टर उपलब्ध नहीं हैं। बाद में पुनः प्रयास करने के लिए "Hi" टाइप करें।',
+    noDoctors: (facility) =>
+      `🏥 ${facility ? `*${facility}* ने` : 'इस सुविधा ने'} अभी तक कोई डॉक्टर नहीं जोड़ा है, इसलिए यहाँ टोकन नहीं बन सकता।\n\n` +
+      `👉 दूसरी सुविधा चुनने के लिए *HOSPITAL* लिखें, या मेन्यू के लिए *HI* लिखें।`,
+    noDoctorsPickAnother: '👇 आप इन सुविधाओं में टोकन बुक कर सकते हैं:',
+    noDoctorsCallDesk: (phone) =>
+      phone
+        ? `📞 कृपया सीधे ${phone} पर कॉल करें — वे आपको काउंटर पर दर्ज कर लेंगे।`
+        : '📞 कृपया सीधे सुविधा से संपर्क करें — वे आपको काउंटर पर दर्ज कर लेंगे।',
     selectDoctorPrompt: 'टोकन बुक करने के लिए उपलब्ध डॉक्टर का चयन करें:',
     invalidDoctor: 'गलत डॉक्टर का चयन। कृपया सूची में से चुनें:',
     emergencyDetected:
@@ -262,6 +301,13 @@ const dictionary = {
       `✅ आपके लक्षणों के आधार पर सही विभाग है *${dept}*।\n\n👨‍⚕️ सुझाव: ${doctor}\n🚪 ${room}\n⏱️ अनुमानित प्रतीक्षा: ${wait} मिनट (आपके लिए सबसे कम भीड़ वाले डॉक्टर)`,
     triageConfirmPrompt: 'क्या मैं आपका टोकन अभी बुक कर दूँ?',
     triageConfirmOptions: ['✅ हाँ, मेरा टोकन बुक करें', '🔄 दूसरा डॉक्टर चुनें'],
+    nextDayReasonClosed: (doctor) => `🌙 ${doctor} की आज की OPD खत्म हो चुकी है।`,
+    nextDayReasonFull: (doctor) => `📋 ${doctor} के आज के टोकन पूरे हो चुके हैं।`,
+    nextDayAsk: (reason, doctor, dayWord, dateStr, timeStr) =>
+      `${reason}\n\n👨‍⚕️ *${doctor}* अगली बार *${dayWord}* (${dateStr}) को *${timeStr}* बजे बैठेंगे।\n\n` +
+      `क्या मैं उसी दिन के लिए आपका टोकन बुक कर दूँ? OPD शुरू होने से पहले हम आपको WhatsApp कर देंगे — आज आने की ज़रूरत नहीं।`,
+    nextDayOptions: ['✅ हाँ, बुक करें', '🔄 दूसरा डॉक्टर', '❌ अभी नहीं'],
+    nextDayDeclined: '👍 कोई टोकन बुक नहीं किया गया। जब चाहें *HI* लिखें, या दूसरी सुविधा के लिए *HOSPITAL*।',
     // --- यात्रा समय: एक बार पूछा जाता है, फिर हर अलर्ट इसी हिसाब से जाता है
     askTravelTime:
       '🚗 आख़िरी सवाल — अस्पताल पहुँचने में आपको लगभग कितना समय लगेगा?\n\nनीचे से चुनें (या टाइप करें, जैसे "45 मिनट")। इसी से हम आपको ठीक समय पर WhatsApp करेंगे कि अब निकलिए — यहाँ इंतज़ार करने की ज़रूरत नहीं।',
@@ -900,6 +946,100 @@ async function askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, 
   };
 }
 
+/**
+ * The gate in front of a booking that will not be today: ASK before writing it.
+ *
+ * `resolveBookingSlot` has always put the token on the right day — after the
+ * evening shift that is tomorrow, and past a full day it is the day after. What
+ * it could not do is get the patient's agreement, because it runs inside
+ * `finalizeBooking`, by which point a token exists, a queue position exists, and
+ * a WhatsApp has gone out. Somebody who asked for an appointment because they
+ * felt ill today was told, after the fact, to come back tomorrow — and the only
+ * way to say "no, I need today" was to abandon the conversation and start over.
+ *
+ * So the day is resolved here, once, and turned into a question. Two answers
+ * matter and both are one tap: take that day, or pick a doctor who is still
+ * sitting today — which is a real choice, because the list the patient came
+ * from marks exactly who those are.
+ *
+ * Deliberately NOT asked in three cases:
+ *   - An emergency, which is never rolled to another day in the first place.
+ *   - A booking that lands on today, which is what the patient already asked for.
+ *   - A patient who has already agreed to this doctor's day, so answering the
+ *     travel-time question does not re-open a settled question.
+ */
+async function confirmNextDayOrBook({ session, selectedDoc, currentHospId, text, socketIo }) {
+  const temp = session.tempData || {};
+
+  if (temp.tokenType === 'Emergency' || String(temp.nextDayAgreedFor || '') === String(selectedDoc._id)) {
+    return await askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo });
+  }
+
+  const now = new Date();
+  const slot = await resolveBookingSlot(selectedDoc, now);
+
+  // Nothing free in the week ahead. Said here rather than after a token is
+  // written, for the same reason as everything else in this function.
+  if (slot.noRoom) {
+    session.currentState = 'AWAITING_DOCTOR_CHOICE';
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    const doctors = await loadFacilityDoctors(currentHospId);
+    const menu = await doctorChoiceMessage(doctors, text.selectDoctorPrompt, temp.language || 'en', now);
+    return {
+      messages: [
+        { sender: 'bot', text: text.opdFull },
+        { sender: 'bot', text: menu.text }
+      ],
+      options: menu.options,
+      doctorCards: menu.doctorCards
+    };
+  }
+
+  if (!slot.isNextDay) {
+    return await askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo });
+  }
+
+  // Read the start time off the day the token would actually be for, not off
+  // "next sitting from now" — those differ the moment a day is skipped for
+  // being full, and quoting the wrong one puts the patient here on the wrong
+  // morning.
+  const startOnDay = firstSittingOn(selectedDoc, slot.scheduledDate);
+  const timeStr = startOnDay
+    ? formatHhMm(`${startOnDay.getHours()}:${String(startOnDay.getMinutes()).padStart(2, '0')}`)
+    : todayOpdHours(selectedDoc, slot.scheduledDate) || 'OPD time';
+  const isTomorrow =
+    localDateKey(slot.scheduledDate) === localDateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  const dayWord = isTomorrow ? 'TOMORROW' : dayName(slot.scheduledDate);
+  // A closed OPD and a spent token limit are different facts, and a patient
+  // told the wrong one plans around the wrong thing.
+  const reason =
+    slot.rolledDays > 0
+      ? text.nextDayReasonFull(selectedDoc.name)
+      : text.nextDayReasonClosed(selectedDoc.name);
+
+  session.tempData = { ...temp, pendingDoctorId: String(selectedDoc._id) };
+  session.currentState = 'AWAITING_NEXTDAY_CONFIRM';
+  session.markModified && session.markModified('tempData');
+  await session.save();
+
+  return {
+    messages: [
+      {
+        sender: 'bot',
+        text: text.nextDayAsk(
+          reason,
+          selectedDoc.name,
+          dayWord,
+          slot.scheduledDate.toLocaleDateString(),
+          timeStr
+        )
+      }
+    ],
+    options: text.nextDayOptions
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Facility selection.
 //
@@ -1221,6 +1361,50 @@ async function loadFacilityDoctors(currentHospId) {
 }
 
 /**
+ * What to say when a facility has no doctor to book with — which is the only
+ * way `loadFacilityDoctors` can come back empty, since it falls back to the
+ * whole roster before giving up.
+ *
+ * This used to be a full stop: one line of text, `options: []`, and a session
+ * left sitting in a state that could only be escaped by typing the right magic
+ * word. On WhatsApp, where the patient sees buttons and not a command line,
+ * that is a dead end — they reply, nothing understands them, and the same
+ * sentence comes back. Which is exactly the loop that was reported.
+ *
+ * So the answer is never just text. Where there are other facilities, the
+ * patient is handed the picker; where there is only one, they are given its
+ * phone number and put back on a menu that still works (queue status, reports,
+ * refills all function without a doctor on the roster).
+ */
+async function noDoctorsReply(
+  session,
+  text,
+  lang,
+  currentHospId,
+  { lead = [] as any[], waPhone = null as any } = {}
+) {
+  const facility = await Hospital.findOne({ id: currentHospId });
+  const message = { sender: 'bot', text: text.noDoctors(facility && facility.name) };
+
+  const others = (await searchFacilities('')).filter((h) => h.id !== currentHospId);
+  if (others.length > 0) {
+    // Unlock first: the patient is being moved off this facility on purpose, so
+    // a QR/number lock must not snap them straight back onto the empty one.
+    session.tempData = { ...session.tempData, facilityLocked: false, facilityChosen: false };
+    return await openStatePicker(session, text, {
+      waPhone,
+      lead: [...lead, message, { sender: 'bot', text: text.noDoctorsPickAnother }]
+    });
+  }
+
+  return await backToMenu(session, text, lang, currentHospId, [
+    ...lead,
+    message,
+    { sender: 'bot', text: text.noDoctorsCallDesk(facility && facility.phone) }
+  ]);
+}
+
+/**
  * SMART TRIAGE — the single place symptoms turn into a doctor recommendation.
  * Shared by the "describe your symptoms" step AND the shortcut where a patient
  * just types their problem straight into the menu, so both behave identically:
@@ -1250,7 +1434,13 @@ async function routeSymptoms({ session, symptoms, currentHospId, text, preMessag
   if (doctors.length === 0) {
     session.markModified && session.markModified('tempData');
     await session.save();
-    return { messages: [...preMessages, { sender: 'bot', text: text.noDoctors }], options: [] };
+    return await noDoctorsReply(
+      session,
+      text,
+      (session.tempData && session.tempData.language) || 'en',
+      currentHospId,
+      { lead: preMessages }
+    );
   }
 
   const triage = classifySymptoms(symptoms);
@@ -1494,6 +1684,8 @@ async function optionsForState(session, text, currentHospId) {
       return text.genderOptions;
     case 'AWAITING_TRIAGE_CONFIRM':
       return text.triageConfirmOptions;
+    case 'AWAITING_NEXTDAY_CONFIRM':
+      return text.nextDayOptions;
     case 'AWAITING_TRAVEL_TIME':
       return text.travelOptions;
     case 'AWAITING_DOCTOR_CHOICE': {
@@ -1724,6 +1916,11 @@ async function beginFlow({
   }
 
   session.tempData = { ...session.tempData, refillMode: intent === 'refill' };
+  // A new booking is a new decision about which day. Agreeing last time that
+  // tomorrow was fine says nothing about this visit, and carrying the flag over
+  // would silently skip the question for a patient booking twice in one hour.
+  delete session.tempData.nextDayAgreedFor;
+  delete session.tempData.pendingDoctorId;
   if (intent !== 'refill') session.tempData.tokenType = tokenType;
   if (pendingSymptoms) session.tempData.pendingSymptoms = pendingSymptoms;
 
@@ -1916,8 +2113,42 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     };
   }
 
-  const currentHospId = (session.tempData && session.tempData.hospitalId) || hospitalId || 'general-hospital';
-  const hospital = (await Hospital.findOne({ id: currentHospId })) || (await Hospital.findOne({}));
+  // The facility the conversation is ABOUT, and the facility every query in it
+  // is scoped to, have to be the same one.
+  //
+  // They were not. The id was taken from the session (or the literal default
+  // 'general-hospital'), while the facility document behind it fell back to
+  // `Hospital.findOne({})` — the first facility in the collection — whenever
+  // that id matched nothing. So a deployment whose only hospital is registered
+  // under some other id greeted the patient by that hospital's name, walked
+  // them through phone/name/age/gender/symptoms, and then ran
+  // `Doctor.find({ hospital: 'general-hospital' })`, which of course returned
+  // nothing. The patient got "No doctors are currently available" at the last
+  // step of every single attempt, forever, at a facility with a full roster.
+  //
+  // Resolve the document first and take the id FROM it. An id that resolves to
+  // no facility is not a tenant — it is a typo, a renamed facility, or a
+  // default that was never real — and there is no reading of it that is more
+  // correct than the facility actually in front of us.
+  const pinnedHospId = (session.tempData && session.tempData.hospitalId) || null;
+  const askedHospId = pinnedHospId || hospitalId || 'general-hospital';
+  const hospital = (await Hospital.findOne({ id: askedHospId })) || (await Hospital.findOne({}));
+  const currentHospId = (hospital && hospital.id) || askedHospId;
+
+  // Repair the session, so the mismatch is fixed once rather than re-derived on
+  // every message. Only when the session had actually pinned a dead id — a
+  // session that has not chosen yet must stay unchosen, or the facility picker
+  // would be skipped for a facility the patient never picked.
+  if (pinnedHospId && currentHospId !== pinnedHospId) {
+    logger.warn('Chat session pinned to an unknown facility — repaired', {
+      sessionId,
+      was: pinnedHospId,
+      now: currentHospId
+    });
+    session.tempData = { ...session.tempData, hospitalId: currentHospId };
+    session.markModified && session.markModified('tempData');
+    await session.save();
+  }
 
   const lowerMsg = norm(cleanMsg);
   // WhatsApp sessions carry the patient's own number in the session id, so on
@@ -2662,7 +2893,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
   if (session.currentState === 'AWAITING_DOCTOR_CHOICE') {
     const doctors = await loadFacilityDoctors(currentHospId);
     if (doctors.length === 0) {
-      return { messages: [{ sender: 'bot', text: text.noDoctors }], options: [] };
+      return await noDoctorsReply(session, text, lang, currentHospId, { waPhone });
     }
 
     const docNames = doctors.map((d) => `${d.name} (${d.department})`);
@@ -2698,8 +2929,65 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     }
 
     // Complete booking via the shared helper (same path as auto-triage) — after
-    // the one travel-time question, if this patient has not answered it before.
-    return await askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo });
+    // agreeing the day when it is not today, and after the one travel-time
+    // question if this patient has not answered it before.
+    return await confirmNextDayOrBook({ session, selectedDoc, currentHospId, text, socketIo });
+  }
+
+  // AWAITING_NEXTDAY_CONFIRM state — the doctor's day is over (or full) and the
+  // patient has been asked whether the next one will do. Nothing has been
+  // written yet, so "no" costs them nothing.
+  if (state === 'AWAITING_NEXTDAY_CONFIRM') {
+    const doctors = await loadFacilityDoctors(currentHospId);
+    if (doctors.length === 0) {
+      return await noDoctorsReply(session, text, lang, currentHospId, { waPhone });
+    }
+
+    const pendingId = session.tempData && session.tempData.pendingDoctorId;
+    const selectedDoc = doctors.find((d) => String(d._id) === String(pendingId));
+
+    const isYes =
+      cleanMsg === '1' ||
+      cleanMsg === text.nextDayOptions[0] ||
+      /^(yes|y|ok|okay|sure|confirm|book|haan|han|ha|हाँ|हां|ठीक|जी)/i.test(cleanMsg);
+    const isNo =
+      cleanMsg === '3' ||
+      cleanMsg === text.nextDayOptions[2] ||
+      /^(no|n|cancel|nahi|nhi|नहीं|नही|रद्द)/i.test(cleanMsg);
+
+    if (isYes && selectedDoc) {
+      // Remembered against THIS doctor, so the question is not asked twice on
+      // the way through the travel-time step — and is asked again if the
+      // patient later switches to a different doctor.
+      session.tempData = { ...session.tempData, nextDayAgreedFor: String(selectedDoc._id) };
+      session.markModified && session.markModified('tempData');
+      await session.save();
+      return await askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo });
+    }
+
+    if (isNo) {
+      session.currentState = 'COMPLETED';
+      session.tempData = { language: lang, hospitalId: currentHospId, facilityChosen: true };
+      session.markModified && session.markModified('tempData');
+      await session.save();
+      return { messages: [{ sender: 'bot', text: text.nextDayDeclined }], options: text.options };
+    }
+
+    // "Choose another doctor", a yes for a doctor who has since
+    // left the roster, and anything we could not read at all. All three are
+    // best answered with the list — it names who is still sitting today, which
+    // is the fact the patient is actually deciding on. Re-prompting instead
+    // would be the dead end this whole change exists to remove.
+    session.currentState = 'AWAITING_DOCTOR_CHOICE';
+    if (session.tempData) delete session.tempData.pendingDoctorId;
+    session.markModified && session.markModified('tempData');
+    await session.save();
+    const menu = await doctorChoiceMessage(doctors, text.selectDoctorPrompt, lang);
+    return {
+      messages: [{ sender: 'bot', text: menu.text }],
+      options: menu.options,
+      doctorCards: menu.doctorCards
+    };
   }
 
   // AWAITING_TRAVEL_TIME state — the answer that makes every later alert this
@@ -2721,7 +3009,7 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
 
     const doctors = await loadFacilityDoctors(currentHospId);
     if (doctors.length === 0) {
-      return { messages: [{ sender: 'bot', text: text.noDoctors }], options: [] };
+      return await noDoctorsReply(session, text, lang, currentHospId, { waPhone });
     }
     const pendingId = session.tempData.pendingDoctorId;
     const selectedDoc = doctors.find((d) => String(d._id) === String(pendingId)) || doctors[0];
@@ -2749,13 +3037,13 @@ async function processChatMessage({ sessionId, message, hospitalId, socketIo }) 
     // Load doctors for this facility once (tenant-safe) — needed for both paths.
     const doctors = await loadFacilityDoctors(currentHospId);
     if (doctors.length === 0) {
-      return { messages: [{ sender: 'bot', text: text.noDoctors }], options: [] };
+      return await noDoctorsReply(session, text, lang, currentHospId, { waPhone });
     }
 
     if (isConfirm) {
       const suggestedId = session.tempData && session.tempData.suggestedDoctorId;
       const selectedDoc = doctors.find((d) => String(d._id) === String(suggestedId)) || doctors[0];
-      return await askTravelTimeOrBook({ session, selectedDoc, currentHospId, text, socketIo });
+      return await confirmNextDayOrBook({ session, selectedDoc, currentHospId, text, socketIo });
     }
 
     if (isChange) {
@@ -3522,6 +3810,32 @@ router.get('/whatsapp/webhook/meta', (req, res) => {
 });
 
 // POST Meta WhatsApp Cloud API Webhook Event Handler (Incoming Messages)
+/**
+ * Message ids Meta has already delivered to this process.
+ *
+ * Bounded on purpose: a chat server that keeps every id it has ever seen is a
+ * memory leak with a long fuse, and on a 512 MB instance that fuse is short.
+ * A few hundred is far more than one retry window needs — Meta's redelivery
+ * arrives within seconds — and the oldest entries are dropped once it fills.
+ */
+const HANDLED_MESSAGE_LIMIT = 500;
+const handledMessageIds = new Set<string>();
+
+/** True when this exact WhatsApp message has already been answered. */
+function alreadyHandled(messageId?: string | null): boolean {
+  // No id means nothing to compare against; answering is the safe failure.
+  if (!messageId) return false;
+  if (handledMessageIds.has(messageId)) return true;
+
+  handledMessageIds.add(messageId);
+  if (handledMessageIds.size > HANDLED_MESSAGE_LIMIT) {
+    // Sets iterate in insertion order, so this is the oldest id.
+    const oldest = handledMessageIds.values().next().value;
+    if (oldest !== undefined) handledMessageIds.delete(oldest);
+  }
+  return false;
+}
+
 router.post('/whatsapp/webhook/meta', async (req, res) => {
   try {
     const body = req.body;
@@ -3543,6 +3857,28 @@ router.post('/whatsapp/webhook/meta', async (req, res) => {
           const receivingDisplayNumber = value && value.metadata && value.metadata.display_phone_number;
           if (value && value.messages && value.messages.length > 0) {
             for (const msg of value.messages) {
+              // Meta redelivers anything it did not get a 200 for, and on a free
+              // instance that is normal rather than exceptional: the container is
+              // shut down after a quarter-hour of quiet, so the first patient of
+              // the morning waits out a cold boot before the acknowledgement
+              // above can be sent. Meta gives up before the process is ready and
+              // sends the same message again.
+              //
+              // Processed twice, one reply becomes two, and — far worse — one
+              // answer advances the state machine two steps: the patient's name
+              // is also read as their age, or their doctor choice is also read as
+              // their travel time. Which looks exactly like a bot that has lost
+              // the thread, and is why the same conversation kept restarting.
+              //
+              // Deliberately in memory rather than a collection. The retry lands
+              // on the very process that was too slow the first time, so nothing
+              // needs to survive a restart, and a free instance has no spare
+              // database round trips to give.
+              if (alreadyHandled(msg.id)) {
+                console.log(`[META DUPLICATE] Ignoring a redelivery of message ${msg.id}`);
+                continue;
+              }
+
               const fromPhone = msg.from; // e.g. "15551234567" or "919876543210"
               let textContent = '';
 
@@ -3693,7 +4029,8 @@ export default router;
   normalizePhone,
   phoneVariants,
   isLikelyPhone,
-  parseAge
+  parseAge,
+  alreadyHandled
 };
 
 module.exports = router;

@@ -316,7 +316,42 @@ const at = (y, m, d, h, min = 0) => new Date(y, m - 1, d, h, min, 0, 0);
   for (const step of ['hi', 'English', '1', '+91 90000 11111', 'Meena Devi', '40', 'f', 'fever']) {
     await chat(cs, step);
   }
-  const listed = await chat(cs, '1');
+  // Picking the doctor no longer books anything. Their day is over, so the
+  // patient is ASKED whether the next one will do — the token is written only
+  // after they say yes.
+  const asked = await chat(cs, '1');
+  check(
+    'A doctor whose day is over triggers a question, not a booking',
+    /sits next on|OPD is over|tokens for/i.test(asked.flat),
+    asked.flat
+  );
+  check(
+    '…naming the day the token would be for',
+    /TOMORROW|Mon|Tue|Wed|Thu|Fri|Sat|Sun/.test(asked.flat),
+    asked.flat
+  );
+  check('…and the time that day starts', /9:00 AM/.test(asked.flat), asked.flat);
+  check('…with a way to say yes and a way out', (asked.options || []).length === 3, asked.options);
+  // Three choices reach WhatsApp as reply BUTTONS, whose titles Meta cuts at
+  // 20 characters — a label truncated mid-word is what the patient taps.
+  check(
+    '…in labels a WhatsApp button will not cut in half',
+    (asked.options || []).every((o) => o.length <= 20),
+    asked.options
+  );
+  check(
+    'Nothing has been written while the patient decides',
+    models.Token._rows.filter((t) => t.hospital === HOSP).length === 0,
+    models.Token._rows.filter((t) => t.hospital === HOSP)
+  );
+
+  const agreed = await chat(cs, '1');
+  check(
+    'Agreeing moves on to the travel-time question',
+    /reach the hospital/i.test(agreed.flat),
+    agreed.flat
+  );
+
   const finished = await chat(cs, '30 minutes');
   check('The booking completes', /Booking Complete/i.test(finished.flat), finished.flat);
   check(
@@ -345,7 +380,17 @@ const at = (y, m, d, h, min = 0) => new Date(y, m - 1, d, h, min, 0, 0);
 
   section('The doctor list shows when each doctor actually sits');
 
-  const menu = await doctorChoiceMessage([morningDoc, tomorrowOnlyDoc], 'Pick one:');
+  // Pinned to an instant inside the morning doctor's sitting, on TODAY's date.
+  //
+  // Read from the bare clock, "Sitting now" was only true if the suite happened
+  // to run between nine and one — so this section passed all morning and failed
+  // every afternoon, for a reason that has nothing to do with what it checks.
+  // The date has to stay today's, because the other doctor's sitting day is
+  // derived from the real tomorrow.
+  const DURING_MORNING = new Date();
+  DURING_MORNING.setHours(10, 30, 0, 0);
+
+  const menu = await doctorChoiceMessage([morningDoc, tomorrowOnlyDoc], 'Pick one:', 'en', DURING_MORNING);
   check('Every doctor is still tappable', menu.options.length === 2, menu.options);
   check(
     'The option label stays short enough for a WhatsApp list row',
@@ -364,7 +409,7 @@ const at = (y, m, d, h, min = 0) => new Date(y, m - 1, d, h, min, 0, 0);
     menu.text
   );
 
-  const hindiMenu = await doctorChoiceMessage([tomorrowOnlyDoc], 'चुनें:', 'hi');
+  const hindiMenu = await doctorChoiceMessage([tomorrowOnlyDoc], 'चुनें:', 'hi', DURING_MORNING);
   check(
     'The same list speaks Hindi when the patient does',
     /बंद|बैठे|समय/.test(hindiMenu.text),
