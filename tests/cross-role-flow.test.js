@@ -300,7 +300,11 @@ async function takeCabin(token, doctorId) {
   const levels = Object.fromEntries(availability.json.map((a) => [a.requested, a.level]));
   check('stocked medicine reads in-stock', levels['Paracetamol 500mg'] === 'in-stock', levels);
   check('empty medicine reads out', levels.Azithromycin === 'out', levels);
-  check('uncatalogued medicine reads unknown', levels['Vitamin D'] === 'unknown', levels);
+  // Not in the inventory is not the same as out of stock. A store carries
+  // thousands of items and types in a fraction of them, so an unlisted name
+  // reads as untracked — hand it over as normal — rather than as a shortage
+  // the patient gets warned about.
+  check('uncatalogued medicine reads untracked', levels['Vitamin D'] === 'untracked', levels);
 
   section('Doctor completes with a prescription');
   const completed = await api('/doctor/queue/complete', {
@@ -346,10 +350,31 @@ async function takeCabin(token, doctorId) {
     dispensed.json.shortages.some((s) => s.requested === 'Azithromycin'),
     dispensed.json.shortages
   );
+  // Azithromycin is out, so this is a PARTIAL handover. The counter has not
+  // finished with this patient, and nothing downstream may say it has — that
+  // was the bug where a patient walked out with none of their course while the
+  // tracker, the doctor's board and the feed all read "collected".
   check(
-    'stage becomes Dispensed',
-    dispensed.json.token.journeyStage === 'Dispensed',
+    'a partial handover is recorded as partial',
+    dispensed.json.state === 'partial',
+    dispensed.json.state
+  );
+  check(
+    'what is still owed is named',
+    (dispensed.json.pending || []).includes('Azithromycin'),
+    dispensed.json.pending
+  );
+  check(
+    'the patient is not moved on while medicines are owed',
+    dispensed.json.token.journeyStage === 'Pharmacy Pending',
     dispensed.json.token.journeyStage
+  );
+  check(
+    'the prescription stays on the counter list',
+    (await api('/pharmacy/prescriptions', { token: pharmacy })).json.some(
+      (t) => t.tokenNumber === token.tokenNumber && t.dispenseState === 'partial'
+    ),
+    'expected the half-filled prescription to still be pending'
   );
 
   section('Stock alerting');
@@ -378,7 +403,11 @@ async function takeCabin(token, doctorId) {
     overview.json.doctorLoad.every((d) => d.name !== 'Dr. Robert Chen'),
     overview.json.doctorLoad.map((d) => d.name)
   );
-  check('overview tracks the journey', Boolean(overview.json.byStage.Dispensed), overview.json.byStage);
+  check(
+    'overview tracks the journey',
+    Boolean(overview.json.byStage['Pharmacy Pending']),
+    overview.json.byStage
+  );
 
   const feed = await api('/ops/activity?limit=50', { token: lab });
   const kinds = feed.json.map((a) => a.type);
@@ -407,8 +436,53 @@ async function takeCabin(token, doctorId) {
 
   section('Patient-facing tracker');
   const publicView = await api(`/chat/token/${token._id}`);
-  check('patient sees their stage', publicView.json.journey.stage === 'Dispensed', publicView.json.journey);
+  check(
+    'patient sees their stage',
+    publicView.json.journey.stage === 'Pharmacy Pending',
+    publicView.json.journey
+  );
   check('instruction is bilingual', publicView.json.journey.message.includes('/'), publicView.json.journey);
+
+  section('The patient comes back for the rest');
+  // "Already dispensed" used to refuse the second visit outright, which left a
+  // half-filled prescription with no way to ever be finished.
+  const stockList = await api('/pharmacy/inventory', { token: pharmacy });
+  const azithro = stockList.json.find((m) => m.name === 'Azithromycin');
+  check(
+    'the empty medicine is in the inventory to restock',
+    Boolean(azithro),
+    stockList.json.map((m) => m.name)
+  );
+
+  const restocked = await api(`/pharmacy/inventory/${azithro._id}`, {
+    method: 'PATCH',
+    token: pharmacy,
+    body: { stockQty: 25 }
+  });
+  check('storekeeper restocks it', restocked.status === 200, restocked.json);
+
+  const rest = await api(`/pharmacy/prescriptions/${token._id}/dispense`, {
+    method: 'POST',
+    token: pharmacy
+  });
+  check('the rest is handed over', rest.status === 200, rest.json);
+  check('…and only the outstanding item is deducted', rest.json.deducted.length === 1, rest.json.deducted);
+  check(
+    '…without charging the patient twice for what they already had',
+    rest.json.deducted[0] &&
+      rest.json.deducted[0].name === 'Azithromycin' &&
+      rest.json.deducted[0].remaining === 24,
+    rest.json.deducted
+  );
+  check('the prescription is now complete', rest.json.state === 'full', rest.json.state);
+  check(
+    '…and only now does the stage become Dispensed',
+    rest.json.token.journeyStage === 'Dispensed',
+    rest.json.token.journeyStage
+  );
+
+  const finalView = await api(`/chat/token/${token._id}`);
+  check('the tracker agrees', finalView.json.journey.stage === 'Dispensed', finalView.json.journey);
 
   report();
 })().catch((err) => {
