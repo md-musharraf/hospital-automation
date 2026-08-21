@@ -31,6 +31,27 @@ services:
   # in queueHelper guards overlap WITHIN a process, not across two of them.
   # Scale this to more than one instance only after those jobs move behind a
   # lock.
+  #
+  # ── What `plan: free` costs, and what compensates for it ───────────────────
+  #
+  # A free instance is shut down after fifteen minutes without an inbound
+  # request and started again by the next one. Two consequences shape the code:
+  #
+  #  1. THE CRON JOBS DO NOT RUN AT NIGHT. Every night is fifteen quiet minutes,
+  #     so the 00:00 close-of-day never fired: yesterday's queue was still on the
+  #     board in the morning, and — invisibly — tokens booked for today were
+  #     never put into today's queue, so patients arrived to find themselves in
+  #     no line. `openTodaysBoards` (jobs/dailyReset.ts) closes a missed night on
+  #     the next boot instead, which on this plan is the first patient of the
+  #     day. Upgrading to a paid instance does not make it redundant; the cron
+  #     simply gets there first and the catch-up finds nothing to do.
+  #
+  #  2. THE FIRST REQUEST OF THE DAY WAITS FOR A COLD BOOT. Meta gives up on the
+  #     WhatsApp webhook and redelivers, so the same message arrives twice; the
+  #     handler drops the duplicate by message id (routes/chat.ts). If the wait
+  #     itself becomes the problem, point any external uptime pinger at
+  #     `/api/v1/health` every ten minutes — a free instance still gets 750
+  #     hours a month, which is more than a month.
   # ---------------------------------------------------------------------------
   - type: web
     name: careeai-api

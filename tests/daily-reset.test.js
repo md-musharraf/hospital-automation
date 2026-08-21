@@ -12,7 +12,8 @@ const { section, check, report } = require('./helpers/assert');
 
 const { BACKEND_DIST: BACKEND } = require('./helpers/backendPath');
 const { models } = installMockDb(BACKEND);
-const { runDailyReset } = require('../backend/dist/jobs/dailyReset');
+const { runDailyReset, openTodaysBoards, _forgetOpenedDay } = require('../backend/dist/jobs/dailyReset');
+const { localDateKey } = require('../backend/dist/utils/shiftHelper');
 
 /** Records every room an event was addressed to, so we can prove tenant scoping. */
 function fakeIo() {
@@ -129,6 +130,102 @@ function fakeIo() {
     'No facility failed',
     summaries.every((s) => !s.failed),
     summaries
+  );
+
+  // -------------------------------------------------------------------------
+  section('A night the server slept through is still closed in the morning');
+  // -------------------------------------------------------------------------
+  //
+  // The midnight cron only fires while the process is running, and on a free
+  // hosting plan it is not: the instance sleeps after fifteen minutes of
+  // silence, which every night is. So the job never ran — and the half nobody
+  // could see was that a token booked for TODAY never entered today's queue.
+  // The patient held a token, tracked it, arrived, and was in no line at all.
+
+  const todayKey = localDateKey(new Date());
+  const yesterdayKey = localDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+  const sleepyDoctor = await new models.Doctor({ name: 'Dr. Bose', hospital: 'sleepy-clinic' }).save();
+  await new models.Queue({ doctor: sleepyDoctor._id, activeQueue: ['left-over-from-yesterday'] }).save();
+  const sleepy = await new models.Hospital({
+    id: 'sleepy-clinic',
+    name: 'Sleepy Clinic',
+    slug: 'sleepy-clinic',
+    address: 'Station Road',
+    city: 'Ranchi',
+    phone: '+919000000009',
+    whatsappNumber: '+917484043690',
+    coordinates: { lat: 23.3, lng: 85.3 },
+    lastDailyReset: yesterdayKey
+  }).save();
+
+  // Booked last night for this morning's OPD, exactly as the chatbot writes it.
+  const dueThisMorning = await new models.Token({
+    _id: 'due-today',
+    tokenNumber: 'T-77',
+    hospital: 'sleepy-clinic',
+    doctor: sleepyDoctor._id,
+    patient: patient._id,
+    status: 'Waiting',
+    journeyStage: 'Waiting',
+    isNextDay: true,
+    appointmentDate: todayKey
+  }).save();
+
+  _forgetOpenedDay();
+  const opened = await openTodaysBoards(fakeIo());
+
+  check('The missed night is recognised and closed', opened.closed.includes('sleepy-clinic'), opened);
+  const sleepyQueue = await models.Queue.findOne({ doctor: sleepyDoctor._id });
+  check(
+    "Yesterday's leftovers are off the board",
+    !(sleepyQueue.activeQueue || []).includes('left-over-from-yesterday'),
+    sleepyQueue.activeQueue
+  );
+  check(
+    'The token booked last night is in this morning’s queue',
+    (sleepyQueue.activeQueue || []).some((id) => String(id) === String(dueThisMorning._id)),
+    sleepyQueue.activeQueue
+  );
+  const stamped = await models.Hospital.findOne({ id: 'sleepy-clinic' });
+  check(
+    'The facility is stamped so it is not reset twice',
+    stamped.lastDailyReset === todayKey,
+    stamped.lastDailyReset
+  );
+
+  // Same process, same day: the whole thing must cost nothing the second time.
+  const again = await openTodaysBoards(fakeIo());
+  check('A second call the same day does no work', again.closed.length === 0 && again.requeued === 0, again);
+
+  // A facility nobody has ever stamped has NOT necessarily missed a night —
+  // reading an empty marker as "yesterday was never closed" would archive a
+  // live morning's board on the deploy that introduced the marker.
+  const fresh = await new models.Hospital({
+    id: 'fresh-clinic',
+    name: 'Fresh Clinic',
+    slug: 'fresh-clinic',
+    address: 'New Road',
+    city: 'Gaya',
+    phone: '+919000000010',
+    whatsappNumber: '+917484043690',
+    coordinates: { lat: 24.8, lng: 85 }
+  }).save();
+  const freshDoctor = await new models.Doctor({ name: 'Dr. New', hospital: 'fresh-clinic' }).save();
+  await new models.Queue({ doctor: freshDoctor._id, activeQueue: ['this-mornings-patient'] }).save();
+
+  _forgetOpenedDay();
+  const firstSight = await openTodaysBoards(fakeIo());
+  check(
+    'A never-stamped facility is stamped, not wiped',
+    firstSight.seeded.includes('fresh-clinic') && !firstSight.closed.includes('fresh-clinic'),
+    firstSight
+  );
+  const freshQueue = await models.Queue.findOne({ doctor: freshDoctor._id });
+  check(
+    "…so this morning's live queue survives the upgrade",
+    (freshQueue.activeQueue || []).includes('this-mornings-patient'),
+    freshQueue.activeQueue
   );
 
   report();

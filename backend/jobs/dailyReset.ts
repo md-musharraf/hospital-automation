@@ -6,6 +6,7 @@
 import Token from '../models/Token';
 import Queue from '../models/Queue';
 import Doctor from '../models/Doctor';
+import Hospital from '../models/Hospital';
 import ArchivedToken from '../models/ArchivedToken';
 import logger from '../utils/logger';
 import { toFacility } from '../utils/realtime';
@@ -127,6 +128,19 @@ export async function requeueScheduledTokens(
   return requeued;
 }
 
+/** Record that `hospital`'s board has been closed for the local day `now` falls in. */
+async function markFacilityReset(hospital: string, now: Date = new Date()): Promise<void> {
+  try {
+    const doc = await (Hospital as any).findOne({ id: hospital });
+    if (!doc) return; // A tenant with tokens but no facility record — nothing to stamp.
+    doc.lastDailyReset = localDateKey(now);
+    await doc.save();
+  } catch (err) {
+    // A missed stamp costs one redundant reset attempt, which is idempotent.
+    logger.error('[DAILY-RESET] Could not record the close-of-day marker', { hospital, err });
+  }
+}
+
 export async function resetFacility(io: any, hospital: string, tokens: any[]): Promise<Record<string, any>> {
   const finished = tokens.filter(
     (t) => !CARRY_FORWARD_STAGES.has(t.journeyStage) && !hasUndeliveredAlert(t) && !isScheduledForFuture(t)
@@ -175,6 +189,10 @@ export async function resetFacility(io: any, hospital: string, tokens: any[]): P
     }
   }
 
+  // Stamp the day AFTER the work, never before: a facility whose reset threw
+  // half way through must be retried, not recorded as done.
+  await markFacilityReset(hospital);
+
   toFacility(io, hospital, 'queue-reset', { archived: finished.length, carried });
 
   return { hospital, archived: finished.length, carried, doctors: doctors.length };
@@ -218,4 +236,150 @@ export async function runDailyReset(io?: any): Promise<any[]> {
   });
 
   return summaries;
+}
+
+/* ── Recovering a night the process slept through ────────────────────────── */
+
+/**
+ * The local day this PROCESS has already opened, so the check below costs one
+ * string compare and no database round trip for the rest of the day.
+ *
+ * Deliberately in memory as well as on the facility record. The marker on the
+ * facility is what makes the recovery correct across restarts; this is what
+ * makes calling it from a request path free.
+ */
+let openedDayKey = '';
+
+/** Test seam: forget that this process has opened today. */
+export function _forgetOpenedDay(): void {
+  openedDayKey = '';
+}
+
+/**
+ * Open today, whether or not anybody was awake at midnight to do it.
+ *
+ * The close-of-day is a cron at 00:00, and a cron in a web process only fires
+ * while that process is running. On a free hosting plan it is not: the instance
+ * is shut down after fifteen minutes without a request, and every night is
+ * fifteen minutes without a request. So on that plan the job had never run at
+ * all — with two consequences, one visible and one not:
+ *
+ *   - Yesterday's queue was still on the board this morning. Visible, annoying,
+ *     and worked around by hand.
+ *   - A token booked for TODAY was never put into today's queue. Not visible to
+ *     anybody: the token existed, the tracker page worked, and the patient was
+ *     told to come. They arrived to find themselves in no line at all. This is
+ *     the half that makes next-day booking — the whole point of booking after
+ *     the OPD has closed — quietly not work.
+ *
+ * Two things happen here and they are deliberately not the same thing:
+ *
+ *   1. Requeue what is due. Idempotent, cheap, and safe at any hour, so it runs
+ *      whenever the day has turned — including the very first day, before any
+ *      marker exists. This is the half a patient feels.
+ *   2. Close a day that was genuinely missed: archive, clear the board, prune
+ *      yesterday's late-start overrides. Destructive, so it runs only when a
+ *      facility's own marker says a day boundary was crossed unattended. A
+ *      facility that has never been stamped is stamped without being reset —
+ *      an empty marker means "we have not been tracking", not "yesterday was
+ *      never closed", and reading it the second way would archive a live
+ *      morning's board on the deploy that introduced this.
+ */
+export async function openTodaysBoards(
+  io?: any,
+  now: Date = new Date()
+): Promise<{ ranFor: string; requeued: number; closed: string[]; seeded: string[] }> {
+  const todayKey = localDateKey(now);
+  const result = { ranFor: todayKey, requeued: 0, closed: [] as string[], seeded: [] as string[] };
+  if (openedDayKey === todayKey) return result;
+  // Set before the work, not after: a second caller arriving while this one is
+  // still running must not start the same sweep again.
+  openedDayKey = todayKey;
+
+  // ── 1. Close any day that turned while nothing was listening ──────────────
+  try {
+    const hospitals = (await (Hospital as any).find({})) || [];
+    const stale: any[] = [];
+
+    for (const hospital of hospitals) {
+      const marker = hospital.lastDailyReset || '';
+      if (!marker) {
+        hospital.lastDailyReset = todayKey;
+        await hospital.save();
+        result.seeded.push(hospital.id);
+      } else if (marker < todayKey) {
+        stale.push(hospital);
+      }
+    }
+
+    if (stale.length > 0) {
+      const ids = stale.map((h) => h.id);
+      const tokens =
+        (await (Token as any)
+          .find({ hospital: { $in: ids } }, null, { allTenants: true })
+          .populate('patient')
+          .populate('doctor')) || [];
+
+      const byFacility = new Map<string, any[]>();
+      for (const id of ids) byFacility.set(id, []);
+      for (const token of tokens) {
+        const bucket = byFacility.get(token.hospital);
+        if (bucket) bucket.push(token);
+      }
+
+      for (const hospital of stale) {
+        try {
+          await resetFacility(io, hospital.id, byFacility.get(hospital.id) || []);
+          result.closed.push(hospital.id);
+        } catch (err: any) {
+          // One facility's failure must not hold the rest of the platform shut.
+          logger.error('[DAILY-RESET] Catch-up failed for a facility', {
+            hospital: hospital.id,
+            err: err && err.message
+          });
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.error('[DAILY-RESET] Catch-up sweep failed', { err: err && err.message });
+  }
+
+  // ── 2. Put every token whose day has arrived into its queue ───────────────
+  //
+  // Runs even when nothing above was stale — `resetFacility` does this for the
+  // facilities it closed, but a facility closed on time by the cron and then
+  // booked into afterwards still needs it, and so does the very first day.
+  try {
+    const due =
+      (await (Token as any)
+        .find({ status: 'Waiting', isNextDay: true, appointmentDate: { $lte: todayKey } }, null, {
+          allTenants: true
+        })
+        .populate('doctor')) || [];
+
+    const byFacility = new Map<string, any[]>();
+    for (const token of due) {
+      const hospital = token.hospital || 'general-hospital';
+      if (!byFacility.has(hospital)) byFacility.set(hospital, []);
+      (byFacility.get(hospital) as any[]).push(token);
+    }
+
+    for (const [hospital, tokens] of byFacility) {
+      result.requeued += await requeueScheduledTokens(hospital, tokens, now);
+    }
+  } catch (err: any) {
+    logger.error('[DAILY-RESET] Could not requeue the day\u2019s scheduled tokens', {
+      err: err && err.message
+    });
+  }
+
+  if (result.closed.length > 0 || result.requeued > 0) {
+    logger.info('[DAILY-RESET] Opened today', {
+      day: todayKey,
+      closedLate: result.closed.length,
+      requeued: result.requeued
+    });
+  }
+
+  return result;
 }

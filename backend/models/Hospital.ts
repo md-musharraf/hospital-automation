@@ -45,6 +45,17 @@ const HospitalSchema = new mongoose.Schema(
     // picker; a password hash stored on it would be one forgotten projection
     // away from being published. See utils/facilityAuth.js.
 
+    // The local day this facility's board was last closed, as "YYYY-MM-DD".
+    //
+    // The close-of-day is a midnight cron, and a midnight cron only fires if the
+    // process is awake at midnight. On a free hosting tier it is not: the
+    // instance sleeps after a quarter-hour of silence, which every night is,
+    // so the job never ran, yesterday's queue was still on the board in the
+    // morning, and — worse — tokens booked for today were never put into it.
+    // This marker is what lets the next request of the day notice the night was
+    // missed and close it then. See jobs/dailyReset.ts.
+    lastDailyReset: { type: String, default: '' },
+
     logoUrl: { type: String },
     heroImage: { type: String },
     galleryImages: [{ type: String }],

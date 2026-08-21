@@ -55,7 +55,7 @@ const logger = require('./utils/logger');
 const { requestObservability, metricsSnapshot } = require('./middleware/observability');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
-const { runDailyReset } = require('./jobs/dailyReset');
+const { runDailyReset, openTodaysBoards } = require('./jobs/dailyReset');
 const { QUEUE_SWEEP_MINUTES } = require('./utils/queueHelper');
 const { apiLimiter } = require('./middleware/rateLimits');
 
@@ -343,6 +343,16 @@ cron.schedule(
 // would put that guarantee at the mercy of a stale edit.
 setInterval(
   async () => {
+    // Before anything reads a queue: make sure the day has actually been
+    // opened. Costs one string compare on every sweep but the first of each
+    // day (see openTodaysBoards), and it is what keeps a process that stayed up
+    // across midnight honest if the cron above ever misses.
+    try {
+      await openTodaysBoards(io);
+    } catch (error) {
+      logger.error('[DAILY-RESET] Day-open check failed', { err: error.message });
+    }
+
     try {
       const { trackWaitingPatients } = require('./utils/queueHelper');
       const notified = await trackWaitingPatients(io);
@@ -826,12 +836,36 @@ const repairDatabaseIndexes = async () => {
   }
 };
 
+/**
+ * Close any night that turned while this process was not running, and put the
+ * day's pre-booked tokens into their queues.
+ *
+ * Run at boot rather than only on a timer because on a free hosting plan boot
+ * IS the morning: the instance is shut down overnight for want of traffic, so
+ * the midnight cron never fires and the first patient of the day is what wakes
+ * the server up. Doing this before that request is answered is the difference
+ * between them finding their token in the queue and finding no line at all.
+ */
+const openDayAfterConnect = async () => {
+  try {
+    const summary = await openTodaysBoards(io);
+    if (summary.closed.length > 0 || summary.requeued > 0) {
+      console.log(
+        `[DAILY-RESET] Opened ${summary.ranFor} on boot — closed ${summary.closed.length} missed day(s), requeued ${summary.requeued} scheduled token(s).`
+      );
+    }
+  } catch (err) {
+    logger.error('[DAILY-RESET] Boot day-open failed', { err: err.message });
+  }
+};
+
 const connectWithFallback = async (uri) => {
   try {
     await mongoose.connect(uri);
     console.log('Successfully connected to MongoDB.');
     await repairDatabaseIndexes();
     await seedMockData();
+    await openDayAfterConnect();
   } catch (err) {
     console.error('Initial database connection failed:', err.message);
 
@@ -863,6 +897,7 @@ const connectWithFallback = async (uri) => {
             await mongoose.connect(fallbackUri);
             console.log('Successfully connected to MongoDB replica set directly via fallback!');
             await seedMockData();
+            await openDayAfterConnect();
             return;
           }
         }
