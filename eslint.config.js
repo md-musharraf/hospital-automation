@@ -51,7 +51,13 @@ module.exports = [
       '**/build/**',
       '**/coverage/**',
       '**/*.min.js',
-      'frontend/public/**'
+      'frontend/public/**',
+      // Git worktrees live here (`.claude/worktrees/<name>`). Each one is a
+      // full second copy of this repo with no node_modules of its own, so
+      // walking it lints every file twice and then fails on plugins it cannot
+      // resolve — turning `npm run verify` red for anyone who has a worktree
+      // checked out, with errors that point at files nobody edited.
+      '.claude/**'
     ]
   },
 
